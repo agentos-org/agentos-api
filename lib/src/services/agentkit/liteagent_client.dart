@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 
+import '../../contracts/service_locator.dart';
+import '../../contracts/default_service_locator.dart';
+
 class LiteagentClientResponse {
   LiteagentClientResponse({
     required this.statusCode,
@@ -16,12 +19,26 @@ class LiteagentClientResponse {
 }
 
 class LiteagentClient {
-  LiteagentClient({Uri? baseUri, HttpClient? httpClient})
-      : _baseUri = baseUri ?? _resolveBaseUri(),
-        _httpClient = httpClient ?? HttpClient();
+  /// Creates LiteagentClient
+  ///
+  /// Priority:
+  /// 1. Explicitly provided [baseUri]
+  /// 2. Obtained from [serviceLocator]
+  /// 3. Resolved from environment variables (default behavior)
+  LiteagentClient({
+    Uri? baseUri,
+    HttpClient? httpClient,
+    AgentOSServiceLocator? serviceLocator,
+  })  : _baseUri = baseUri ?? _resolveBaseUri(serviceLocator),
+        _httpClient = httpClient ?? HttpClient(),
+        _serviceLocator = serviceLocator;
 
   final Uri _baseUri;
   final HttpClient _httpClient;
+  final AgentOSServiceLocator? _serviceLocator;
+
+  /// Gets the currently used ServiceLocator
+  AgentOSServiceLocator? get serviceLocator => _serviceLocator;
 
   Future<LiteagentClientResponse> send({
     required String method,
@@ -126,9 +143,11 @@ class LiteagentClient {
     return '$normalizedBase$normalizedNext';
   }
 
-  static Uri _resolveBaseUri() {
-    final raw = Platform.environment['LITEAGENT_BASEURL'] ??
-        'http://127.0.0.1:9527/api/v1';
-    return Uri.parse(raw);
+  static Uri _resolveBaseUri(AgentOSServiceLocator? serviceLocator) {
+    if (serviceLocator != null) {
+      return Uri.parse(serviceLocator.liteagentBaseUrl);
+    }
+    // Use default implementation (based on environment variables)
+    return Uri.parse(DefaultServiceLocator().liteagentBaseUrl);
   }
 }

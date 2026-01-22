@@ -396,14 +396,114 @@ data: {"error":"invalid_token"}
 
 ## Root
 
+### GET /
+
+
+响应：`200 OK`
+
+```json
+{
+  "name": "AgentOS API Gateway",
+  "version": "1.0.0",
+  "description": "统一 API 网关，提供所有本地 AI 服务的统一访问入口",
+  "baseUrl": "http://localhost:20261",
+  "endpoints": {
+    "/version": "网关版本",
+    "/agentkit/*": "AgentKit API（智能体服务，需要 Token）",
+    "/appkit/*": "AppKit API（应用注册/订阅）",
+    "/toolkit/*": "ToolKit API（OpenTool）",
+    "/llmkit/text/*": "文本生成",
+    "/llmkit/vision/*": "图文理解",
+    "/llmkit/embedding/*": "文本嵌入",
+    "/llmkit/tts/*": "文本转语音",
+    "/llmkit/asr/*": "语音转文本"
+  }
+}
+```
+
 ### GET /version
 
 响应：`200 OK`
 
-```
+```json
 {"version":"1.0.0"}
+```
+
+## ToolKit（代理 OpenTool 服务）
+
+ToolKit 会透明代理所有请求到运行在端口 `19627` 的 OpenTool 服务
+（可通过 ServiceLocator 配置）。
+
+### 端点
+
+#### ALL /toolkit/*
+
+所有 `/toolkit/*` 请求会转发到 OpenTool 后端服务。
+请求/响应体、状态码、请求头和查询参数会原样透传。
+后端不可用时返回 `503`：
+
+```json
+{"error": "OpenTool 服务不可用"}
+```
+
+## LLMKit（代理 LLM 服务）
+
+LLMKit 代理请求到各种 LLM 服务。每种服务类型有独立的端点前缀。
+
+### 服务类型
+
+| 路径前缀 | 服务标识 | 默认端口 | 说明 |
+| --- | --- | --- | --- |
+| `/llmkit/text` | llm_text | 52010 | 文本生成（chat completions） |
+| `/llmkit/vision` | llm_vision | 52020 | 图文理解 |
+| `/llmkit/embedding` | llm_embedding | 52030 | 文本嵌入 |
+| `/llmkit/tts` | llm_tts | 52040 | 文本转语音 |
+| `/llmkit/asr` | llm_asr | 52050 | 语音转文本 |
+
+### 端点
+
+#### ALL /llmkit/text/*
+
+代理到文本生成服务。当请求头包含 `Accept: text/event-stream` 或
+请求体包含 `"stream": true` 时支持流式响应。
+
+#### ALL /llmkit/vision/*
+
+代理到图文理解服务。
+
+#### ALL /llmkit/embedding/*
+
+代理到文本嵌入服务。
+
+#### ALL /llmkit/tts/*
+
+代理到文本转语音服务。
+
+#### ALL /llmkit/asr/*
+
+代理到语音转文本服务。
+
+### 错误响应
+
+后端服务不可用时返回 `503`：
+
+```json
+{
+  "error": "文本生成 服务不可用",
+  "service": "llm_text"
+}
+```
+
+后端连接错误时返回 `502`：
+
+```json
+{
+  "error": "后端服务不可用",
+  "service": "llm_text",
+  "message": "Connection refused"
+}
 ```
 
 ## 已停用模块
 
-Toolkit 与 Intent 当前已停用且不对外提供接口。
+Intent 模块当前已停用且不对外提供接口。

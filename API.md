@@ -399,14 +399,116 @@ data: {"error":"invalid_token"}
 
 ## Root
 
+### GET /
+
+
+Response: `200 OK`
+
+```json
+{
+  "name": "AgentOS API Gateway",
+  "version": "1.0.0",
+  "description": "Unified API gateway for all local AI services",
+  "baseUrl": "http://localhost:20261",
+  "endpoints": {
+    "/version": "Gateway version",
+    "/agentkit/*": "AgentKit API (agent service, requires Token)",
+    "/appkit/*": "AppKit API (app registration/subscription)",
+    "/toolkit/*": "ToolKit API (OpenTool)",
+    "/llmkit/text/*": "Text generation",
+    "/llmkit/vision/*": "Image-text-to-text",
+    "/llmkit/embedding/*": "Text embedding",
+    "/llmkit/tts/*": "Text-to-speech",
+    "/llmkit/asr/*": "Speech-to-text"
+  }
+}
+```
+
 ### GET /version
 
 Response: `200 OK`
 
-```
+```json
 {"version":"1.0.0"}
+```
+
+## ToolKit (Proxy to OpenTool Service)
+
+ToolKit transparently proxies all requests to the OpenTool service running on
+port `19627` (configurable via ServiceLocator).
+
+### Endpoints
+
+#### ALL /toolkit/*
+
+All requests to `/toolkit/*` are forwarded to the OpenTool backend service.
+Request/response bodies, status codes, headers, and query parameters are
+proxied as-is. If the backend is unavailable, returns `503`:
+
+```json
+{"error": "OpenTool service unavailable"}
+```
+
+## LLMKit (Proxy to LLM Services)
+
+LLMKit proxies requests to various LLM services. Each service type has its own
+endpoint prefix.
+
+### Service Types
+
+| Path Prefix | Service | Default Port | Description |
+| --- | --- | --- | --- |
+| `/llmkit/text` | llm_text | 52010 | Text generation (chat completions) |
+| `/llmkit/vision` | llm_vision | 52020 | Image-text-to-text |
+| `/llmkit/embedding` | llm_embedding | 52030 | Text embeddings |
+| `/llmkit/tts` | llm_tts | 52040 | Text-to-speech |
+| `/llmkit/asr` | llm_asr | 52050 | Speech-to-text |
+
+### Endpoints
+
+#### ALL /llmkit/text/*
+
+Proxies to text generation service. Supports streaming responses when
+`Accept: text/event-stream` header is present or request body contains
+`"stream": true`.
+
+#### ALL /llmkit/vision/*
+
+Proxies to image-text-to-text service.
+
+#### ALL /llmkit/embedding/*
+
+Proxies to text embedding service.
+
+#### ALL /llmkit/tts/*
+
+Proxies to text-to-speech service.
+
+#### ALL /llmkit/asr/*
+
+Proxies to speech-to-text service.
+
+### Error Responses
+
+If a backend service is unavailable, returns `503`:
+
+```json
+{
+  "error": "Text generation service unavailable",
+  "service": "llm_text"
+}
+```
+
+If a backend connection error occurs, returns `502`:
+
+```json
+{
+  "error": "Backend service unavailable",
+  "service": "llm_text",
+  "message": "Connection refused"
+}
 ```
 
 ## Disabled Modules
 
-Toolkit and Intent are currently disabled and not exposed.
+Intent module is currently disabled and not exposed.

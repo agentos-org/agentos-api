@@ -1,7 +1,11 @@
 这是一个基于 [Shelf](https://pub.dev/packages/shelf) 的服务端应用，
 支持通过 [Docker](https://www.docker.com/) 运行。
 
-该服务提供 `/version` 端点用于健康检查与版本查询。
+该网关为所有本地 AI 服务提供统一入口：
+- **AgentKit**：智能体管理与对话（代理 LiteAgent）
+- **AppKit**：应用注册与订阅
+- **ToolKit**：工具执行（代理 OpenTool）
+- **LLMKit**：LLM 服务（文本生成、图文理解、文本嵌入、TTS、ASR）
 
 # 运行示例
 
@@ -57,8 +61,10 @@ $ curl http://0.0.0.0:20261/version
 
 ## Root API
 
-- `/version` 返回 `pubspec.yaml` 中的版本号：
-  `{"version": "1.0.0"}`。
+系统端点提供网关信息。
+
+- `GET /` 返回网关信息，包含所有可用端点。
+- `GET /version` 返回版本号：`{"version": "1.0.0"}`。
 
 ## AgentKit API
 
@@ -84,9 +90,19 @@ AgentKit 在 `/agentkit/` 下代理 LiteAgent Server 的接口。请设置
 - `POST /agentkit/callback`
 - `POST /agentkit/streamCallback`
 
-## Toolkit API
+## ToolKit API
 
-Toolkit 当前已停用。
+
+- `ALL /toolkit/*` - 透明代理所有请求到 OpenTool 后端。
+
+## LLMKit API
+
+
+- `ALL /llmkit/text/*` - 文本生成（chat completions）
+- `ALL /llmkit/vision/*` - 图文理解
+- `ALL /llmkit/embedding/*` - 文本嵌入
+- `ALL /llmkit/tts/*` - 文本转语音
+- `ALL /llmkit/asr/*` - 语音转文本
 
 ## AppKit API
 

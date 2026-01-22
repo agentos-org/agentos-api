@@ -11,8 +11,14 @@ void main() {
   late String host;
 
   setUp(() async {
+    // Use new Gateway API
+    final serviceLocator = DefaultServiceLocator();
+    final handler = createGatewayHandler(
+      serviceLocator: serviceLocator,
+      enableLogging: false,
+    );
     server = await shelf_io.serve(
-      createHandler(),
+      handler,
       InternetAddress.loopbackIPv4,
       0,
     );
@@ -26,6 +32,14 @@ void main() {
     expect(response.statusCode, 404);
   });
 
+  test('Root endpoint', () async {
+    final response = await get(Uri.parse('$host/'));
+    expect(response.statusCode, 200);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    expect(payload['name'], 'AgentOS API Gateway');
+    expect(payload['endpoints'], isNotEmpty);
+  });
+
   test('Root version', () async {
     final response = await get(Uri.parse('$host/version'));
     expect(response.statusCode, 200);
@@ -33,68 +47,11 @@ void main() {
     expect(payload['version'], _readPubspecVersion());
   });
 
-  test('Intent preset-intents', () async {
-    final response = await post(
-      Uri.parse('$host/api/intent/preset-intents'),
-      headers: {'content-type': 'application/json'},
-      body: jsonEncode(<String, String>{'appName': 'demo-app'}),
-    );
-    expect(response.statusCode, 200);
-    final payload = jsonDecode(response.body) as Map<String, dynamic>;
-    final presets = payload['presetIntents'] as List<dynamic>;
-    expect(presets.length, inInclusiveRange(0, 5));
-    if (presets.isNotEmpty) {
-      final first = presets.first as Map<String, dynamic>;
-      expect(first['source'], 'system');
-      expect(first['title'], isNotEmpty);
-    }
-  }, skip: 'Intent module disabled');
-
-  test('Intent suggestions', () async {
-    final response = await post(
-      Uri.parse('$host/api/intent/suggestions'),
-      headers: {'content-type': 'application/json'},
-      body: jsonEncode(<String, String>{
-        'appName': 'demo-app',
-        'raw': 'draft status update',
-      }),
-    );
-    expect(response.statusCode, 200);
-    final payload = jsonDecode(response.body) as Map<String, dynamic>;
-    final suggestions = payload['intentSuggestions'] as List<dynamic>;
-    expect(suggestions.length, inInclusiveRange(0, 5));
-    if (suggestions.isNotEmpty) {
-      final first = suggestions.first as Map<String, dynamic>;
-      expect(first['id'], isNotEmpty);
-      expect(first['source'], isIn(<String>['system', 'model']));
-    }
-  }, skip: 'Intent module disabled');
-
-  test('Intent candidates', () async {
-    final response = await post(
-      Uri.parse('$host/api/intent/candidates'),
-      headers: {'content-type': 'application/json'},
-      body: jsonEncode(<String, String>{
-        'appName': 'demo-app',
-        'full': 'Send daily metrics report',
-      }),
-    );
-    expect(response.statusCode, 200);
-    final payload = jsonDecode(response.body) as Map<String, dynamic>;
-    final candidates = payload['intentCandidates'] as List<dynamic>;
-    expect(candidates.length, 5);
-    for (final item in candidates) {
-      final candidate = item as Map<String, dynamic>;
-      expect(candidate['source'], 'model');
-      expect((candidate['confidence'] as num), inInclusiveRange(0, 1));
-      expect(candidate['title'], isNotEmpty);
-      expect(candidate['description'], isNotEmpty);
-    }
-  }, skip: 'Intent module disabled');
+  // Intent module disabled, skip related tests
 
   test('AgentKit create agent requires bearer', () async {
     final unauthorized = await post(
-      Uri.parse('$host/api/agentkit/agent/create'),
+      Uri.parse('$host/agentkit/agent/create'),
       headers: {'content-type': 'application/json'},
       body: jsonEncode(<String, dynamic>{'name': 'demo-agent'}),
     );
@@ -102,34 +59,40 @@ void main() {
   });
 
   test('AgentKit endpoints require bearer', () async {
-    final initRes = await post(Uri.parse('$host/api/agentkit/initSession'));
+    final initRes = await post(Uri.parse('$host/agentkit/initSession'));
     expect(initRes.statusCode, 401);
 
     final chatRes = await post(
-      Uri.parse('$host/api/agentkit/chat'),
+      Uri.parse('$host/agentkit/chat'),
       headers: {'content-type': 'application/json'},
       body: jsonEncode(<String, dynamic>{'content': []}),
     );
     expect(chatRes.statusCode, 401);
   });
 
-  test('Toolkit tool list requires bearer', () async {
-    final unauthorized = await get(Uri.parse('$host/api/toolkit/tools'));
-    expect(unauthorized.statusCode, 401);
+  test('Toolkit no auth required', () async {
+    // ToolKit no longer requires authentication, direct access allowed
+    final response = await get(Uri.parse('$host/toolkit/tools'));
+    // Should not return 401 (would return 401 when auth was required)
+    // May return 404 (path not found), 502 (proxy error), 503 (service unavailable) or 200 (ok)
+    expect(response.statusCode, isNot(401));
+  });
 
-    final response = await get(
-      Uri.parse('$host/api/toolkit/tools'),
-      headers: {'authorization': 'Bearer token-123'},
+  test('LLMKit no auth required', () async {
+    // LLMKit no longer requires authentication, direct access allowed
+    final response = await post(
+      Uri.parse('$host/llmkit/text/v1/chat/completions'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({'messages': []}),
     );
-    expect(response.statusCode, 200);
-    final payload = jsonDecode(response.body) as Map<String, dynamic>;
-    final tools = payload['tools'] as List<dynamic>;
-    expect(tools, isNotEmpty);
+    // Should not return 401 (would return 401 when auth was required)
+    // May return 502 (proxy error), 503 (service unavailable) or 200 (ok)
+    expect(response.statusCode, isNot(401));
   });
 
   test('AppKit register bundle', () async {
     final registerRes = await post(
-      Uri.parse('$host/api/appkit/register'),
+      Uri.parse('$host/appkit/register'),
       headers: {'content-type': 'application/json'},
       body: jsonEncode(<String, String>{'bundleId': 'com.demo.app'}),
     );

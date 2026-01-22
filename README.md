@@ -1,7 +1,11 @@
 A server app built using [Shelf](https://pub.dev/packages/shelf),
 configured to enable running with [Docker](https://www.docker.com/).
 
-This app exposes a version endpoint for basic health/version checks.
+This gateway provides a single entry point for all local AI services:
+- **AgentKit**: Agent management and chat (proxies to LiteAgent)
+- **AppKit**: Application registration and subscription
+- **ToolKit**: Tool execution (proxies to OpenTool)
+- **LLMKit**: LLM services (text generation, vision, embedding, TTS, ASR)
 
 # Running the sample
 
@@ -63,8 +67,10 @@ You should see the logging printed in the first terminal:
 
 ## Root API
 
-- `/version` returns the package version from `pubspec.yaml`:
-  `{"version": "1.0.0"}`.
+System endpoints provide gateway information.
+
+- `GET /` returns gateway information including all available endpoints.
+- `GET /version` returns the package version: `{"version": "1.0.0"}`.
 
 ## AgentKit API
 
@@ -90,9 +96,19 @@ Supported proxy routes:
 - `POST /agentkit/callback`
 - `POST /agentkit/streamCallback`
 
-## Toolkit API
+## ToolKit API
 
-Toolkit is currently disabled.
+
+- `ALL /toolkit/*` - Transparently proxies all requests to OpenTool backend.
+
+## LLMKit API
+
+
+- `ALL /llmkit/text/*` - Text generation (chat completions)
+- `ALL /llmkit/vision/*` - Image-text-to-text
+- `ALL /llmkit/embedding/*` - Text embeddings
+- `ALL /llmkit/tts/*` - Text-to-speech
+- `ALL /llmkit/asr/*` - Speech-to-text
 
 ## AppKit API
 
