@@ -92,7 +92,6 @@ Supported proxy routes:
 - `GET /agentkit/history`
 - `GET /agentkit/stop`
 - `GET /agentkit/clear`
-- `GET /agentkit/opentool-list`
 - `POST /agentkit/callback`
 - `POST /agentkit/streamCallback`
 

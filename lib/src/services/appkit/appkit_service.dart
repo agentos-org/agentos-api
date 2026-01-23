@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import '../../models/agent/agent_models.dart';
@@ -10,6 +11,10 @@ class AppKitService {
   final Map<String, List<String>> _bundleAgents = {};
 
   List<String> listApps() => List.unmodifiable(_apps);
+
+  bool isTokenValid(String token) => _bundleIdForToken(token) != null;
+
+  String? bundleIdForToken(String token) => _bundleIdForToken(token);
 
   void registerApp(String rawDefinition) {
     // Legacy placeholder registration.
@@ -33,26 +38,27 @@ class AppKitService {
     return true;
   }
 
-  Stream<EventDto> subscribe(String token) async* {
+  Stream<EventDto> subscribe(String token) {
     final bundleId = _bundleIdForToken(token);
     if (bundleId == null) {
-      yield EventDto(
-        event: 'error',
-        data: jsonEncode({'error': 'invalid_token'}),
-      );
-      return;
+      return const Stream<EventDto>.empty();
     }
 
-    yield EventDto(
-      event: 'welcome',
-      data: jsonEncode({'bundleId': bundleId, 'token': token}),
+    late final StreamController<EventDto> controller;
+    controller = StreamController<EventDto>(
+      onListen: () {
+        controller.add(
+          EventDto(
+            event: 'welcome',
+            data: jsonEncode({'bundleId': bundleId}),
+          ),
+        );
+      },
+      onCancel: () {
+        controller.close();
+      },
     );
-
-    final agents = _bundleAgents[bundleId] ?? <String>[];
-    yield EventDto(
-      event: 'agents',
-      data: jsonEncode({'bundleId': bundleId, 'agents': agents}),
-    );
+    return controller.stream;
   }
 
   String _issueToken() {

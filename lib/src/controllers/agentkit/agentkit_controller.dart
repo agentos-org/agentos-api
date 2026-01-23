@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
@@ -25,7 +27,6 @@ class AgentKitController {
     router.get('/history', guard(_forward('/history')));
     router.get('/stop', guard(_forward('/stop')));
     router.get('/clear', guard(_forward('/clear')));
-    router.get('/opentool-list', guard(_forward('/opentool-list')));
     router.post('/callback', guard(_forward('/callback')));
     router.post('/streamCallback', guard(_forward('/streamCallback')));
     return router;
@@ -42,6 +43,13 @@ class AgentKitController {
   }) async {
     try {
       final bodyBytes = await _readBodyBytes(request);
+      requestLogger.info(
+        'AgentKit proxy ${request.method} $path '
+        'query=${request.url.queryParameters} '
+        'headers=${_redactHeaders(request.headers)} '
+        'bodyBytes=${bodyBytes?.length ?? 0} '
+        'stream=$stream',
+      );
       final response = await _client.send(
         method: request.method,
         path: path,
@@ -50,6 +58,16 @@ class AgentKitController {
         body: bodyBytes,
         streamResponse: stream,
       );
+      if (response.statusCode >= 500) {
+        requestLogger.warning(
+          'LiteAgent error ${response.statusCode} for $path '
+          'body=${_previewBody(response.bodyBytes)}',
+        );
+      } else {
+        requestLogger.info(
+          'LiteAgent response ${response.statusCode} for $path',
+        );
+      }
       if (response.bodyStream != null) {
         return Response(
           response.statusCode,
@@ -64,6 +82,7 @@ class AgentKitController {
         headers: response.headers,
       );
     } on Exception catch (error) {
+      requestLogger.severe('Liteagent proxy error for $path: $error');
       return Response(502, body: 'Liteagent proxy error: $error');
     }
   }
@@ -80,5 +99,28 @@ class AgentKitController {
       },
     );
     return bytes.isEmpty ? null : bytes;
+  }
+
+  Map<String, String> _redactHeaders(Map<String, String> headers) {
+    final redacted = <String, String>{};
+    headers.forEach((name, value) {
+      if (name.toLowerCase() == 'authorization') {
+        redacted[name] = 'Bearer ***';
+      } else {
+        redacted[name] = value;
+      }
+    });
+    return redacted;
+  }
+
+  String _previewBody(List<int>? bytes) {
+    if (bytes == null || bytes.isEmpty) {
+      return '';
+    }
+    final decoded = utf8.decode(bytes, allowMalformed: true);
+    if (decoded.length <= 500) {
+      return decoded;
+    }
+    return '${decoded.substring(0, 500)}...';
   }
 }

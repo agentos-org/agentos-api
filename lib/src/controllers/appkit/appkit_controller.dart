@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:shelf/shelf.dart';
@@ -23,13 +24,16 @@ class AppKitController {
   Future<Response> _registerBundle(Request request) async {
     final payload = await _readJsonBody(request);
     if (payload == null) {
+      requestLogger.warning('AppKit register: invalid JSON payload.');
       return Response(400, body: 'Invalid JSON payload.');
     }
     final bundle = AppBundleDto.fromJson(payload);
     if (bundle.bundleId.isEmpty) {
+      requestLogger.warning('AppKit register: missing bundleId.');
       return Response(400, body: 'bundleId is required');
     }
     final token = _service.registerBundle(bundle);
+    requestLogger.info('AppKit register: bundleId=${bundle.bundleId}');
     final body = jsonEncode(token.toJson());
     return Response.ok(body, headers: {'content-type': 'application/json'});
   }
@@ -37,13 +41,55 @@ class AppKitController {
   Response _subscribe(Request request) {
     final token = bearerTokenFrom(request);
     if (token == null || token.isEmpty) {
+      requestLogger.warning('AppKit subscribe: missing bearer token.');
       return unauthorizedResponse();
     }
-    final stream = _service.subscribe(token).map((event) {
-      final payload = 'event: ${event.event}\ndata: ${event.data}\n\n';
-      return utf8.encode(payload);
-    });
-    return Response.ok(stream, headers: {'content-type': 'text/event-stream'});
+    if (!_service.isTokenValid(token)) {
+      requestLogger.warning('AppKit subscribe: invalid bearer token.');
+      return unauthorizedResponse();
+    }
+    final bundleId = _service.bundleIdForToken(token);
+    requestLogger.info('AppKit subscribe: accepted bundleId=$bundleId');
+    final source = _service.subscribe(token);
+    final controller = StreamController<List<int>>();
+    StreamSubscription<EventDto>? subscription;
+    Timer? keepAlive;
+
+    void stop() {
+      keepAlive?.cancel();
+      keepAlive = null;
+      subscription?.cancel();
+      subscription = null;
+      if (!controller.isClosed) {
+        controller.close();
+      }
+    }
+
+    controller.onListen = () {
+      subscription = source.listen(
+        (event) {
+          final payload = 'event: ${event.event}\ndata: ${event.data}\n\n';
+          controller.add(utf8.encode(payload));
+        },
+        onError: controller.addError,
+        onDone: stop,
+      );
+      keepAlive = Timer.periodic(
+        const Duration(seconds: 15),
+        (_) => controller.add(utf8.encode(': keep-alive\n\n')),
+      );
+    };
+    controller.onCancel = stop;
+
+    return Response.ok(
+      controller.stream,
+      headers: const {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        'connection': 'keep-alive',
+      },
+      context: const {'shelf.io.buffer_output': false},
+    );
   }
 
   Future<Map<String, dynamic>?> _readJsonBody(Request request) async {

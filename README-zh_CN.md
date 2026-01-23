@@ -86,7 +86,6 @@ AgentKit 在 `/agentkit/` 下代理 LiteAgent Server 的接口。请设置
 - `GET /agentkit/history`
 - `GET /agentkit/stop`
 - `GET /agentkit/clear`
-- `GET /agentkit/opentool-list`
 - `POST /agentkit/callback`
 - `POST /agentkit/streamCallback`
 
@@ -107,7 +106,7 @@ AgentKit 在 `/agentkit/` 下代理 LiteAgent Server 的接口。请设置
 ## AppKit API
 
 - `POST /appkit/register` 注册 app bundle：`{"bundleId": "com.demo"}` -> `{"token": "sk-..."}`。
-- `GET /appkit/subscribe`（Bearer required）以 SSE 形式输出事件：
+- `GET /appkit/subscribe`（需 Bearer token）以 SSE 形式输出事件：
   `event: welcome\ndata: {"bundleId": "..."}\n\n`。
 
 ## Intent API
