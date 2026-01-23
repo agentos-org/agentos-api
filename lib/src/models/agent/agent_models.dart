@@ -20,36 +20,92 @@ class AgentInfoDto {
   Map<String, dynamic> toJson() => {'id': id};
 }
 
-class SessionInitResponse {
-  SessionInitResponse({required this.sessionId, this.status = 'initialized'});
+class PresetOpenSpec {
+  PresetOpenSpec({required this.systemPrompt, this.openSpec});
 
-  final String sessionId;
-  final String status;
+  final String systemPrompt;
+  final OpenSpec? openSpec;
 
-  Map<String, dynamic> toJson() => {'sessionId': sessionId, 'status': status};
-}
-
-class ChatRequestDto {
-  ChatRequestDto({this.sessionId, this.message});
-
-  final String? sessionId;
-  final String? message;
-
-  factory ChatRequestDto.fromJson(Map<String, dynamic> json) {
-    return ChatRequestDto(
-      sessionId: (json['sessionId'] ?? '').toString().trim().isEmpty
-          ? null
-          : (json['sessionId'] ?? '').toString(),
-      message: (json['message'] ?? '').toString(),
+  factory PresetOpenSpec.fromJson(Map<String, dynamic> json) {
+    return PresetOpenSpec(
+      systemPrompt: (json['systemPrompt'] ?? '').toString(),
+      openSpec: json['openSpec'] is Map<String, dynamic>
+          ? OpenSpec.fromJson(json['openSpec'] as Map<String, dynamic>)
+          : json['openSpec'] is Map
+              ? OpenSpec.fromJson(
+                  Map<String, dynamic>.from(json['openSpec'] as Map),
+                )
+              : null,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    final payload = <String, dynamic>{'systemPrompt': systemPrompt};
+    if (openSpec != null) {
+      payload['openSpec'] = openSpec!.toJson();
+    }
+    return payload;
   }
 }
 
-class ChatResponseDto {
-  ChatResponseDto({required this.sessionId, required this.reply});
+class OpenSpec {
+  OpenSpec({
+    required this.openSpec,
+    required this.protocol,
+    this.serverUrl,
+    this.apiKey,
+  });
 
-  final String sessionId;
-  final String reply;
+  final String openSpec;
+  final String protocol;
+  final String? serverUrl;
+  final ApiKey? apiKey;
 
-  Map<String, dynamic> toJson() => {'sessionId': sessionId, 'reply': reply};
+  factory OpenSpec.fromJson(Map<String, dynamic> json) {
+    return OpenSpec(
+      openSpec: (json['openSpec'] ?? '').toString(),
+      protocol: (json['protocol'] ?? '').toString(),
+      serverUrl: (json['serverUrl'] ?? '').toString().trim().isEmpty
+          ? null
+          : (json['serverUrl'] ?? '').toString(),
+      apiKey: json['apiKey'] is Map<String, dynamic>
+          ? ApiKey.fromJson(json['apiKey'] as Map<String, dynamic>)
+          : json['apiKey'] is Map
+              ? ApiKey.fromJson(Map<String, dynamic>.from(json['apiKey'] as Map))
+              : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    final payload = <String, dynamic>{
+      'openSpec': openSpec,
+      'protocol': protocol,
+    };
+    if (serverUrl != null) {
+      payload['serverUrl'] = serverUrl;
+    }
+    if (apiKey != null) {
+      payload['apiKey'] = apiKey!.toJson();
+    }
+    return payload;
+  }
+}
+
+class ApiKey {
+  ApiKey({required this.type, required this.apiKey});
+
+  final String type;
+  final String apiKey;
+
+  factory ApiKey.fromJson(Map<String, dynamic> json) {
+    return ApiKey(
+      type: (json['type'] ?? '').toString(),
+      apiKey: (json['apiKey'] ?? '').toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'type': type,
+        'apiKey': apiKey,
+      };
 }

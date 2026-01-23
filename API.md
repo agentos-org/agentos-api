@@ -324,10 +324,6 @@ Query:
 
 Response: `200 OK` (`Session`)
 
-#### GET /agentkit/opentool-list
-
-Response: `200 OK` (`OpenTool[]`)
-
 #### POST /agentkit/callback
 
 Query:

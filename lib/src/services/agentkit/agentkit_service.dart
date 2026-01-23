@@ -1,32 +1,23 @@
-import '../../controllers/dto.dart';
+import 'dart:convert';
+
 import '../../models/agent/agent_models.dart';
-import 'package:unique_id_dart/unique_id_dart.dart';
+import 'liteagent_client.dart';
 
 class AgentKitService {
-  AgentKitStatusResponse getStatus() {
-    return AgentKitStatusResponse(status: 'ready', version: '0.0.1');
-  }
+  AgentKitService({LiteagentClient? client})
+      : _client = client ?? LiteagentClient();
 
-  AgentInfoDto createAgent(AgentConfigDto config) {
-    final id = _nextId('agent');
-    return AgentInfoDto(id: id);
-  }
+  final LiteagentClient _client;
 
-  SessionInitResponse initSession() {
-    final sessionId = _nextId('sess');
-    return SessionInitResponse(sessionId: sessionId);
-  }
-
-  ChatResponseDto chat(ChatRequestDto request) {
-    final sessionId = request.sessionId ?? _nextId('sess');
-    final reply = request.message?.isNotEmpty == true
-        ? 'echo: ${request.message}'
-        : 'no message provided';
-    return ChatResponseDto(sessionId: sessionId, reply: reply);
-  }
-
-  String _nextId(String prefix) {
-    final value = uniqueId(shorter: true);
-    return '$prefix-$value';
+  Future<LiteagentClientResponse> presetOpenSpec(
+    PresetOpenSpec presetOpenSpec,
+  ) {
+    final body = utf8.encode(jsonEncode(presetOpenSpec.toJson()));
+    return _client.send(
+      method: 'POST',
+      path: '/presetOpenSpec',
+      headers: const {'content-type': 'application/json'},
+      body: body,
+    );
   }
 }
