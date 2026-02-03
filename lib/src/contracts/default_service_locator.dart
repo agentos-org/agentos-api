@@ -121,6 +121,16 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
     );
   }
 
+  @override
+  Future<List<AppInfo>> getAppInfoList() async {
+    return const [];
+  }
+
+  @override
+  Future<List<LlmModelInfo>> getLlmModelList() async {
+    return const [];
+  }
+
   /// Service name mapping
   static const Map<String, String> _serviceNames = {
     'liteagent': 'LiteAgent Server',

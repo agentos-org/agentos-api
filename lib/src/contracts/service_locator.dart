@@ -50,6 +50,17 @@ abstract class AgentOSServiceLocator {
   ///
   /// Returns complete service list including port ranges, instance info, etc.
   Future<ServicesDiscovery> getServicesDiscovery();
+
+  /// Gets registered app info list
+  ///
+  /// Returns app metadata for AppKit/intent routing usage
+  Future<List<AppInfo>> getAppInfoList();
+
+  /// Gets available LLM model list
+  ///
+  /// Returns LLM models registered by external implementations.
+  /// Default implementation returns empty list.
+  Future<List<LlmModelInfo>> getLlmModelList();
 }
 
 /// Health status
@@ -208,5 +219,73 @@ class ServiceInfo {
         'port': port,
         'isRunning': isRunning,
         if (description != null) 'description': description,
+      };
+}
+
+/// App information
+class AppInfo {
+  final String bundleId;
+  final String version;
+  final String description;
+  final String name;
+
+  const AppInfo({
+    required this.bundleId,
+    required this.version,
+    required this.description,
+    required this.name,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'bundleId': bundleId,
+        'version': version,
+        'description': description,
+        'name': name,
+      };
+}
+
+/// LLM model information
+class LlmModelInfo {
+  final String id;
+  final String name;
+  final String description;
+  final String parameters;
+  final num paramsB;
+  final String quantization;
+  final num sizeGB;
+  final num minRAMGB;
+  final String downloadUrl;
+  final List<String> tags;
+  final String repoId;
+  final String type;
+
+  const LlmModelInfo({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.parameters,
+    required this.paramsB,
+    required this.quantization,
+    required this.sizeGB,
+    required this.minRAMGB,
+    required this.downloadUrl,
+    required this.tags,
+    required this.repoId,
+    required this.type,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'description': description,
+        'parameters': parameters,
+        'paramsB': paramsB,
+        'quantization': quantization,
+        'sizeGB': sizeGB,
+        'minRAMGB': minRAMGB,
+        'downloadUrl': downloadUrl,
+        'tags': tags,
+        'repoId': repoId,
+        'type': type,
       };
 }
