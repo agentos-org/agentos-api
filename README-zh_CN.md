@@ -3,6 +3,7 @@
 
 该网关为所有本地 AI 服务提供统一入口：
 - **AgentKit**：智能体管理与对话（代理 LiteAgent）
+- **IntentKit**：意图识别（基于 agentos_kernel）
 - **AppKit**：应用注册与订阅
 - **ToolKit**：工具执行（代理 OpenTool）
 - **LLMKit**：LLM 服务（文本生成、图文理解、文本嵌入、TTS、ASR）
@@ -14,8 +15,6 @@
 - `PORT`: 绑定端口；默认 `20261`。
 - `AGENTOS_BASEURL`: 服务对外宣告的 base URL；默认
   `http://127.0.0.1:20261`。辅助脚本会自动设置。
-- `LITEAGENT_BASEURL`: AgentKit 代理的 LiteAgent Server base URL；默认
-  `http://127.0.0.1:9527/api/v1`。
 
 ## 使用 Dart SDK 运行
 
@@ -89,6 +88,16 @@ AgentKit 在 `/agentkit/` 下代理 LiteAgent Server 的接口。请设置
 - `POST /agentkit/callback`
 - `POST /agentkit/streamCallback`
 
+## IntentKit API
+
+IntentKit 提供内核驱动的意图识别接口，供意图检测类 App 使用。
+所有 IntentKit 路由均需要 Bearer Token。
+
+- `POST /intentkit/submitRaw`
+- `POST /intentkit/submitIntent`
+- `POST /intentkit/confirmJob`
+- `POST /intentkit/suggestNextAction`
+
 ## ToolKit API
 
 
@@ -108,7 +117,3 @@ AgentKit 在 `/agentkit/` 下代理 LiteAgent Server 的接口。请设置
 - `POST /appkit/register` 注册 app bundle：`{"bundleId": "com.demo"}` -> `{"token": "sk-..."}`。
 - `GET /appkit/subscribe`（需 Bearer token）以 SSE 形式输出事件：
   `event: welcome\ndata: {"bundleId": "..."}\n\n`。
-
-## Intent API
-
-Intent 当前已停用。

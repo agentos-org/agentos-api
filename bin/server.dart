@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:agentos_api/agentos_api.dart';
 import 'package:logging/logging.dart';
 import 'package:shelf/shelf_io.dart';
+import 'package:agentos_api/src/services/kernel/kernel_bootstrap.dart';
 
 void main(List<String> args) async {
   Logger.root.level = Level.INFO;
@@ -16,7 +17,13 @@ void main(List<String> args) async {
   // Use any available host or container IP (usually `0.0.0.0`).
   final ip = InternetAddress.anyIPv4;
 
-  final handler = createHandler();
+  final serviceLocator = DefaultServiceLocator();
+  final kernelService = await KernelBootstrap.createKernel(serviceLocator);
+
+  final handler = createGatewayHandler(
+    serviceLocator: serviceLocator,
+    kernelService: kernelService,
+  );
 
   // For running in containers, we respect the PORT environment variable.
   final port = int.parse(Platform.environment['PORT'] ?? '20261');

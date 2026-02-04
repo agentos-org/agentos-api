@@ -17,6 +17,8 @@ dependencies:
     path: ../liteagent_sdk_dart
   opentool_dart:
     path: ../opentool-hub/opentool-dart
+  agentos_kernel:
+    path: ../agentos_kernel
 
 dev_dependencies:
   http: ^1.2.2

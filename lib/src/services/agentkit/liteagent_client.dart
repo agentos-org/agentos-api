@@ -4,6 +4,9 @@ import 'dart:io';
 import '../../contracts/service_locator.dart';
 import '../../contracts/default_service_locator.dart';
 
+/// TODO
+/// add `KernelService.recordAgentMessage({userId, bundleId, agentMessage})`
+
 class LiteagentClientResponse {
   LiteagentClientResponse({
     required this.statusCode,

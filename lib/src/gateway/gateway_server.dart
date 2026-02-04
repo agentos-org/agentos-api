@@ -1,17 +1,19 @@
 import 'dart:async';
 import 'dart:io';
-
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
+import 'package:agentos_kernel/agentos_kernel.dart';
 import '../contracts/service_locator.dart';
 import '../controllers/agentkit/agentkit_controller.dart';
 import '../controllers/appkit/appkit_controller.dart';
+import '../controllers/intentkit/intentkit_controller.dart';
 import '../controllers/llmkit/llmkit_controller.dart';
 import '../controllers/system_controller.dart';
 import '../controllers/toolkit/toolkit_controller.dart';
 import '../services/agentkit/liteagent_client.dart';
+import '../services/intentkit/intentkit_service.dart';
 import '../services/llmkit/llm_client.dart';
 import '../services/toolkit/opentool_client.dart';
 import 'gateway_config.dart';
@@ -47,11 +49,14 @@ class GatewayServerStatus {
 class GatewayServer {
   GatewayServer({
     required AgentOSServiceLocator serviceLocator,
+    KernelService? kernelService,
     int? port,
   })  : _serviceLocator = serviceLocator,
+        _kernelService = kernelService,
         _port = port ?? GatewayConfig.defaultPort;
 
   final AgentOSServiceLocator _serviceLocator;
+  final KernelService? _kernelService;
   final int _port;
 
   HttpServer? _server;
@@ -155,6 +160,13 @@ class GatewayServer {
     final liteagentClient = LiteagentClient(serviceLocator: _serviceLocator);
     final agentKitController = AgentKitController(client: liteagentClient);
     router.mount('${GatewayConfig.agentkitPath}/', agentKitController.router.call);
+
+    // IntentKit API
+    final intentKitService = IntentKitService(
+      kernelFuture: Future.value(_kernelService),
+    );
+    final intentKitController = IntentKitController(service: intentKitService);
+    router.mount('${GatewayConfig.intentkitPath}/', intentKitController.router.call);
 
     // AppKit API
     final appKitController = AppKitController();

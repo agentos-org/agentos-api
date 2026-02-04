@@ -6,6 +6,9 @@ import '../../contracts/service_locator.dart';
 import '../../contracts/default_service_locator.dart';
 import '../../gateway/gateway_config.dart';
 
+/// TODO
+/// add `createLlmMetrics` and `LlmMetrics.start, setFirstToken, setTokenPerSecond, completed, failed` to set Metric data to Kernel
+
 /// LLM client response
 class LLMClientResponse {
   LLMClientResponse({

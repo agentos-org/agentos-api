@@ -35,6 +35,7 @@ class SystemController {
       'endpoints': {
         '/version': 'Gateway version',
         '${GatewayConfig.agentkitPath}/*': 'AgentKit API (Agent service, requires Token)',
+        '${GatewayConfig.intentkitPath}/*': 'IntentKit API (Intent detection, requires Token)',
         '${GatewayConfig.appkitPath}/*': 'AppKit API (App registration/subscription)',
         '${GatewayConfig.toolkitPath}/*': 'ToolKit API (${ServiceDisplayNames.opentool})',
         '${GatewayConfig.llmTextPath}/*': ServiceDisplayNames.llmText,

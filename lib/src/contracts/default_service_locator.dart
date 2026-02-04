@@ -1,10 +1,8 @@
-import 'dart:io';
-
 import 'service_locator.dart';
 
 /// Default Service Locator Implementation
 ///
-/// Static configuration based on environment variables, suitable for:
+/// Static configuration based on defaults, suitable for:
 /// - Standalone agentos-api server deployment
 /// - Development and testing environments
 /// - Simple single-machine deployment scenarios
@@ -29,10 +27,9 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
     'llm_asr': 52050,
   };
 
-  /// Resolves LiteAgent base URL from environment variables
+  /// Resolves LiteAgent base URL from defaults
   static String _resolveFromEnv() {
-    return Platform.environment['LITEAGENT_BASEURL'] ??
-        'http://127.0.0.1:9527/api/v1';
+    return 'http://127.0.0.1:9527/api/v1';
   }
 
   @override

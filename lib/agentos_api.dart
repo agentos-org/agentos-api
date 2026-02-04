@@ -15,6 +15,7 @@ export 'src/contracts/default_service_locator.dart';
 export 'src/controllers/system_controller.dart';
 export 'src/controllers/agentkit/agentkit_controller.dart';
 export 'src/controllers/appkit/appkit_controller.dart';
+export 'src/controllers/intentkit/intentkit_controller.dart';
 export 'src/controllers/toolkit/toolkit_controller.dart';
 export 'src/controllers/llmkit/llmkit_controller.dart';
 
@@ -23,3 +24,5 @@ export 'src/services/agentkit/liteagent_client.dart';
 export 'src/services/appkit/appkit_service.dart';
 export 'src/services/toolkit/opentool_client.dart';
 export 'src/services/llmkit/llm_client.dart';
+export 'src/services/intentkit/intentkit_service.dart';
+export 'src/services/intentkit/intentkit_initializer.dart';

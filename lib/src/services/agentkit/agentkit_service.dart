@@ -9,6 +9,7 @@ class AgentKitService {
 
   final LiteagentClient _client;
 
+  //TODO 需要通过kernel来管理调用时机 -> Jan
   Future<LiteagentClientResponse> presetOpenSpec(
     PresetOpenSpec presetOpenSpec,
   ) {

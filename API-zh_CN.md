@@ -500,6 +500,126 @@ LLMKit 代理请求到各种 LLM 服务。每种服务类型有独立的端点�
 }
 ```
 
-## 已停用模块
+## IntentKit API
 
-Intent 模块当前已停用且不对外提供接口。
+IntentKit 提供内核驱动的意图识别接口，供意图检测类 App 使用。所有路由
+都需要 Bearer Token。
+
+### POST /intentkit/submitRaw
+
+提交原始意图检测请求，返回任务句柄用于跟踪。
+
+请求体：
+
+```json
+{
+  "source": "api",
+  "content": [
+    { "type": "text", "message": "帮我订一张今晚的票" }
+  ],
+  "data": {
+    "locale": "zh-CN"
+  }
+}
+```
+
+响应体：
+
+```json
+{
+  "jobId": "job-1700000000-0",
+  "status": "CREATED"
+}
+```
+
+若内核未配置，则返回 `503`。
+
+### POST /intentkit/submitIntent
+
+提交已选择的意图候选（绕过感知流程），返回任务句柄用于跟踪。
+
+请求体：
+
+```json
+{
+  "source": "api",
+  "intent": {
+    "action": "call_app",
+    "payload": {
+      "target": "calendar.create_event",
+      "title": "和 Sam 吃饭",
+      "time": "2025-06-01T19:00:00-07:00"
+    },
+    "confidence": 0.92
+  }
+}
+```
+
+响应体：
+
+```json
+{
+  "jobId": "job-1700000000-1",
+  "status": "CREATED"
+}
+```
+
+若内核未配置，则返回 `503`。
+
+### POST /intentkit/confirmJob
+
+确认或拒绝需要用户确认的任务。
+
+请求体：
+
+```json
+{
+  "jobId": "job-1700000000-1",
+  "confirmed": true
+}
+```
+
+响应体：
+
+```json
+{
+  "jobId": "job-1700000000-1",
+  "status": "RUNNING"
+}
+```
+
+若内核未配置，则返回 `503`。
+
+### POST /intentkit/suggestNextAction
+
+无用户输入时，请求内核建议下一步动作。
+
+请求体：
+
+```json
+{
+  "source": "api",
+  "allowedActions": ["call_app", "reject_intent"],
+  "memoryLimit": 5
+}
+```
+
+响应体：
+
+```json
+{
+  "candidates": [
+    {
+      "action": "call_app",
+      "payload": {
+        "target": "calendar.create_event",
+        "title": "和 Sam 吃饭",
+        "time": "2025-06-01T19:00:00-07:00"
+      },
+      "confidence": 0.84
+    }
+  ]
+}
+```
+
+若内核未配置，则返回 `503`。

@@ -29,6 +29,9 @@ class GatewayConfig {
   /// LLMKit API path (proxy to LLM services)
   static const String llmkitPath = '/llmkit';
 
+  /// IntentKit API path (intent detection)
+  static const String intentkitPath = '/intentkit';
+
   // ============ LLMKit Sub-paths ============
 
   /// LLM text generation path

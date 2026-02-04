@@ -3,6 +3,7 @@ configured to enable running with [Docker](https://www.docker.com/).
 
 This gateway provides a single entry point for all local AI services:
 - **AgentKit**: Agent management and chat (proxies to LiteAgent)
+- **IntentKit**: Intent detection (powered by agentos_kernel)
 - **AppKit**: Application registration and subscription
 - **ToolKit**: Tool execution (proxies to OpenTool)
 - **LLMKit**: LLM services (text generation, vision, embedding, TTS, ASR)
@@ -14,8 +15,6 @@ This gateway provides a single entry point for all local AI services:
 - `PORT`: Port to bind; defaults to `20261` when not provided.
 - `AGENTOS_BASEURL`: Base URL advertised by the service; defaults to
   `http://127.0.0.1:20261`. The helper script below sets it for you.
-- `LITEAGENT_BASEURL`: Base URL for the LiteAgent Server proxy used by
-  AgentKit; defaults to `http://127.0.0.1:9527/api/v1`.
 
 ## Running with the Dart SDK
 
@@ -95,6 +94,16 @@ Supported proxy routes:
 - `POST /agentkit/callback`
 - `POST /agentkit/streamCallback`
 
+## IntentKit API
+
+IntentKit exposes kernel-backed intent detection endpoints for intent apps.
+All IntentKit routes require a Bearer token.
+
+- `POST /intentkit/submitRaw`
+- `POST /intentkit/submitIntent`
+- `POST /intentkit/confirmJob`
+- `POST /intentkit/suggestNextAction`
+
 ## ToolKit API
 
 
@@ -114,7 +123,3 @@ Supported proxy routes:
 - `POST /appkit/register` registers an app bundle: `{"bundleId": "com.demo"}` -> `{"token": "sk-..."}`.
 - `GET /appkit/subscribe` (Bearer required) streams SSE events shaped like
   `event: welcome\ndata: {"bundleId": "..."}\n\n`.
-
-## Intent API
-
-Intent is currently disabled.

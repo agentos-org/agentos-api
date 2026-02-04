@@ -47,7 +47,18 @@ void main() {
     expect(payload['version'], _readPubspecVersion());
   });
 
-  // Intent module disabled, skip related tests
+  test('IntentKit submitRaw requires bearer', () async {
+    final response = await post(
+      Uri.parse('$host/intentkit/submitRaw'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'content': [
+          {'type': 'text', 'message': 'hello'},
+        ],
+      }),
+    );
+    expect(response.statusCode, 401);
+  });
 
   test('AgentKit create agent requires bearer', () async {
     final unauthorized = await post(

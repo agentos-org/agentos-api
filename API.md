@@ -505,6 +505,126 @@ If a backend connection error occurs, returns `502`:
 }
 ```
 
-## Disabled Modules
+## IntentKit API
 
-Intent module is currently disabled and not exposed.
+IntentKit exposes kernel-backed intent detection for intent apps. All routes
+require a Bearer token.
+
+### POST /intentkit/submitRaw
+
+Submit a raw intent detection request. Returns a job handle for tracking.
+
+Request body:
+
+```json
+{
+  "source": "api",
+  "content": [
+    { "type": "text", "message": "Book a table for two" }
+  ],
+  "data": {
+    "locale": "en-US"
+  }
+}
+```
+
+Response body:
+
+```json
+{
+  "jobId": "job-1700000000-0",
+  "status": "CREATED"
+}
+```
+
+If the kernel is not configured, returns `503`.
+
+### POST /intentkit/submitIntent
+
+Submit a selected intent candidate directly (bypasses perception). Returns a job handle for tracking.
+
+Request body:
+
+```json
+{
+  "source": "api",
+  "intent": {
+    "action": "call_app",
+    "payload": {
+      "target": "calendar.create_event",
+      "title": "Dinner with Sam",
+      "time": "2025-06-01T19:00:00-07:00"
+    },
+    "confidence": 0.92
+  }
+}
+```
+
+Response body:
+
+```json
+{
+  "jobId": "job-1700000000-1",
+  "status": "CREATED"
+}
+```
+
+If the kernel is not configured, returns `503`.
+
+### POST /intentkit/confirmJob
+
+Confirm or reject a pending job that requires user confirmation.
+
+Request body:
+
+```json
+{
+  "jobId": "job-1700000000-1",
+  "confirmed": true
+}
+```
+
+Response body:
+
+```json
+{
+  "jobId": "job-1700000000-1",
+  "status": "RUNNING"
+}
+```
+
+If the kernel is not configured, returns `503`.
+
+### POST /intentkit/suggestNextAction
+
+Ask the kernel to suggest the next action when there is no user input.
+
+Request body:
+
+```json
+{
+  "source": "api",
+  "allowedActions": ["call_app", "reject_intent"],
+  "memoryLimit": 5
+}
+```
+
+Response body:
+
+```json
+{
+  "candidates": [
+    {
+      "action": "call_app",
+      "payload": {
+        "target": "calendar.create_event",
+        "title": "Dinner with Sam",
+        "time": "2025-06-01T19:00:00-07:00"
+      },
+      "confidence": 0.84
+    }
+  ]
+}
+```
+
+If the kernel is not configured, returns `503`.

@@ -9,6 +9,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "67.0.0"
+  agentos_kernel:
+    dependency: "direct main"
+    description:
+      path: "../agentos_kernel"
+      relative: true
+    source: path
+    version: "1.0.0"
   analyzer:
     dependency: transitive
     description:
@@ -161,6 +168,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.7"
+  dart_openai_sdk:
+    dependency: transitive
+    description:
+      name: dart_openai_sdk
+      sha256: "2d0b6d593da2f469655609a68bfa38aacf08d3b20ce8954cef36755c74b49fca"
+      url: "https://pub.dev"
+    source: hosted
+    version: "6.0.0"
   dart_style:
     dependency: transitive
     description:
@@ -185,6 +200,38 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.1"
+  drift:
+    dependency: transitive
+    description:
+      name: drift
+      sha256: "5ea2f718558c0b31d4b8c36a3d8e5b7016f1265f46ceb5a5920e16117f0c0d6a"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.30.1"
+  fetch_api:
+    dependency: transitive
+    description:
+      name: fetch_api
+      sha256: "24cbd5616f3d4008c335c197bb90bfa0eb43b9e55c6de5c60d1f805092636034"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.3.1"
+  fetch_client:
+    dependency: transitive
+    description:
+      name: fetch_client
+      sha256: "3766964cc49ad1d007c261d7acecea61a73581e31fdbd948b446025851766bc8"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.2.0"
+  ffi:
+    dependency: transitive
+    description:
+      name: ffi
+      sha256: d07d37192dbf97461359c1518788f203b0c9102cfd2c35a716b823741219542c
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.5"
   file:
     dependency: transitive
     description:
@@ -313,6 +360,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "6.0.0"
+  lite_embeddings_sdk_dart:
+    dependency: transitive
+    description:
+      path: "../lite_embeddings_sdk_dart"
+      relative: true
+    source: path
+    version: "1.0.0"
   liteagent_sdk_dart:
     dependency: "direct main"
     description:
@@ -367,6 +421,14 @@ packages:
       relative: true
     source: path
     version: "2.0.0"
+  ovo:
+    dependency: transitive
+    description:
+      name: ovo
+      sha256: f11cc3e6998a2792c23d969b2369d9f308ba2c8e7cfcefd5ea7e9d052d4e9dc4
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.2"
   package_config:
     dependency: transitive
     description:
@@ -503,6 +565,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.10.1"
+  sqlite3:
+    dependency: transitive
+    description:
+      name: sqlite3
+      sha256: "3145bd74dcdb4fd6f5c6dda4d4e4490a8087d7f286a14dee5d37087290f0f8a2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.9.4"
   sse_client_dart:
     dependency: transitive
     description:

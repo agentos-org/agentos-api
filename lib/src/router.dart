@@ -1,8 +1,11 @@
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
+import 'package:agentos_kernel/agentos_kernel.dart';
+import 'contracts/default_service_locator.dart';
 import 'contracts/service_locator.dart';
 import 'controllers/agentkit/agentkit_controller.dart';
 import 'controllers/appkit/appkit_controller.dart';
+import 'controllers/intentkit/intentkit_controller.dart';
 import 'controllers/llmkit/llmkit_controller.dart';
 import 'controllers/root_controller.dart';
 import 'controllers/system_controller.dart';
@@ -10,6 +13,7 @@ import 'controllers/toolkit/toolkit_controller.dart';
 import 'gateway/gateway_config.dart';
 import 'middleware.dart';
 import 'services/agentkit/liteagent_client.dart';
+import 'services/intentkit/intentkit_service.dart';
 import 'services/llmkit/llm_client.dart';
 import 'services/toolkit/opentool_client.dart';
 
@@ -22,11 +26,13 @@ import 'services/toolkit/opentool_client.dart';
 /// [gatewayPort] Gateway port (used for service discovery response)
 Handler createGatewayHandler({
   required AgentOSServiceLocator serviceLocator,
+  KernelService? kernelService,
   bool enableLogging = true,
   int gatewayPort = GatewayConfig.defaultPort,
 }) {
   final router = createGatewayRouter(
     serviceLocator: serviceLocator,
+    kernelService: kernelService,
     gatewayPort: gatewayPort,
   );
 
@@ -54,6 +60,7 @@ Handler createGatewayHandler({
 /// Includes all routes: system endpoints, AgentKit, AppKit, proxy routes
 Router createGatewayRouter({
   required AgentOSServiceLocator serviceLocator,
+  KernelService? kernelService,
   int gatewayPort = GatewayConfig.defaultPort,
 }) {
   final router = Router();
@@ -68,6 +75,13 @@ Router createGatewayRouter({
   final liteagentClient = LiteagentClient(serviceLocator: serviceLocator);
   final agentKitController = AgentKitController(client: liteagentClient);
   router.mount('${GatewayConfig.agentkitPath}/', agentKitController.router.call);
+
+  // IntentKit API (intent detection, requires Token)
+  final intentKitService = IntentKitService(
+    kernelFuture: Future.value(kernelService),
+  );
+  final intentKitController = IntentKitController(service: intentKitService);
+  router.mount('${GatewayConfig.intentkitPath}/', intentKitController.router.call);
 
   // AppKit API (app registration/subscription)
   final appKitController = AppKitController();
@@ -94,15 +108,26 @@ Router createGatewayRouter({
 @Deprecated('Use createGatewayHandler instead')
 Handler createHandler({
   AgentOSServiceLocator? serviceLocator,
+  KernelService? kernelService,
   bool enableLogging = true,
   String pathPrefix = '',
 }) {
   // Create LiteagentClient with ServiceLocator
-  final liteagentClient = LiteagentClient(serviceLocator: serviceLocator);
+  final resolvedLocator = serviceLocator ?? DefaultServiceLocator();
+  final liteagentClient = LiteagentClient(serviceLocator: resolvedLocator);
+  final resolvedKernel = kernelService;
 
   final router = Router()
     ..mount('$pathPrefix/', RootController().router.call)
     ..mount('$pathPrefix/agentkit/', AgentKitController(client: liteagentClient).router.call)
+    ..mount(
+      '$pathPrefix/intentkit/',
+      IntentKitController(
+        service: IntentKitService(
+          kernelFuture: Future.value(resolvedKernel),
+        ),
+      ).router.call,
+    )
     ..mount('$pathPrefix/appkit/', AppKitController().router.call);
 
   var pipeline = const Pipeline();
@@ -130,12 +155,23 @@ Handler createHandler({
 @Deprecated('Use createGatewayRouter instead')
 Router createRouter({
   AgentOSServiceLocator? serviceLocator,
+  KernelService? kernelService,
   String pathPrefix = '',
 }) {
-  final liteagentClient = LiteagentClient(serviceLocator: serviceLocator);
+  final resolvedLocator = serviceLocator ?? DefaultServiceLocator();
+  final liteagentClient = LiteagentClient(serviceLocator: resolvedLocator);
+  final resolvedKernel = kernelService;
 
   return Router()
     ..mount('$pathPrefix/', RootController().router.call)
     ..mount('$pathPrefix/agentkit/', AgentKitController(client: liteagentClient).router.call)
+    ..mount(
+      '$pathPrefix/intentkit/',
+      IntentKitController(
+        service: IntentKitService(
+          kernelFuture: Future.value(resolvedKernel),
+        ),
+      ).router.call,
+    )
     ..mount('$pathPrefix/appkit/', AppKitController().router.call);
 }
