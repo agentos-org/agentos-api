@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'service_locator.dart';
-import '../gateway/gateway_config.dart';
 
 /// Default Service Locator Implementation
 ///
@@ -13,14 +12,11 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
   DefaultServiceLocator({
     String? liteagentBaseUrl,
     Map<String, int>? servicePorts,
-    int? gatewayPort,
   })  : _liteagentBaseUrl = liteagentBaseUrl ?? _resolveFromEnv(),
-        _servicePorts = servicePorts ?? _defaultPorts,
-        _gatewayPort = gatewayPort ?? GatewayConfig.defaultPort;
+        _servicePorts = servicePorts ?? _defaultPorts;
 
   final String _liteagentBaseUrl;
   final Map<String, int> _servicePorts;
-  final int _gatewayPort;
 
   /// Default service port configuration
   static const Map<String, int> _defaultPorts = {
@@ -48,27 +44,6 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
   }
 
   @override
-  Future<bool> isServiceHealthy(String serviceKey) async {
-    // Default implementation skips health check, assumes service is available
-    // Actual health check is done by specific implementation classes
-    return _servicePorts.containsKey(serviceKey);
-  }
-
-  @override
-  Future<List<ServiceInfo>> getRunningServices() async {
-    // Default implementation returns all configured services (assuming all are running)
-    return _servicePorts.entries.map((e) {
-      return ServiceInfo(
-        name: _serviceNames[e.key] ?? e.key,
-        key: e.key,
-        port: e.value,
-        isRunning: true,
-        description: _serviceDescriptions[e.key],
-      );
-    }).toList();
-  }
-
-  @override
   Future<int?> resolveLLMPort(
     String serviceKey,
     List<int>? requestBody,
@@ -78,50 +53,7 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
     return _servicePorts[serviceKey];
   }
 
-  @override
-  Future<HealthStatus> getHealthStatus() async {
-    // Default implementation returns all services as healthy
-    final services = <String, ServiceHealthInfo>{};
-
-    for (final entry in _servicePorts.entries) {
-      services[entry.key] = ServiceHealthInfo(
-        name: _serviceNames[entry.key] ?? entry.key,
-        healthy: true,
-        port: entry.value,
-      );
-    }
-
-    return HealthStatus(
-      status: 'healthy',
-      timestamp: DateTime.now(),
-      services: services,
-    );
-  }
-
-  @override
-  Future<ServicesDiscovery> getServicesDiscovery() async {
-    final services = <ServiceDiscoveryInfo>[];
-
-    for (final entry in _servicePorts.entries) {
-      final kitPath = GatewayConfig.getKitPath(entry.key);
-      services.add(ServiceDiscoveryInfo(
-        name: _serviceNames[entry.key] ?? entry.key,
-        key: entry.key,
-        path: kitPath ?? '/${entry.key}',
-        port: entry.value,
-        isRunning: true,
-        description: _serviceDescriptions[entry.key],
-      ));
-    }
-
-    return ServicesDiscovery(
-      gatewayPort: _gatewayPort,
-      baseUrl: GatewayConfig.getBaseUrl(_gatewayPort),
-      services: services,
-    );
-  }
-
-  @override
+   @override
   Future<List<AppInfo>> getAppInfoList() async {
     return const [];
   }
@@ -130,26 +62,4 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
   Future<List<LlmModelInfo>> getLlmModelList() async {
     return const [];
   }
-
-  /// Service name mapping
-  static const Map<String, String> _serviceNames = {
-    'liteagent': 'LiteAgent Server',
-    'opentool': 'OpenTool Daemon',
-    'llm_text': 'Text Generation',
-    'llm_vision': 'Image-Text-to-Text',
-    'llm_embedding': 'Embedding',
-    'llm_tts': 'Text-to-Speech',
-    'llm_asr': 'Audio-Text-to-Text',
-  };
-
-  /// Service description mapping
-  static const Map<String, String> _serviceDescriptions = {
-    'liteagent': 'LiteAgent agent service',
-    'opentool': 'OpenTool tool service',
-    'llm_text': 'Text generation service',
-    'llm_vision': 'Image-text understanding service',
-    'llm_embedding': 'Text embedding service',
-    'llm_tts': 'Text-to-speech service',
-    'llm_asr': 'Speech-to-text service',
-  };
 }
