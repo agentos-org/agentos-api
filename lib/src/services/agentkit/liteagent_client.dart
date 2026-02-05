@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import '../../contracts/service_locator.dart';
-import '../../contracts/default_service_locator.dart';
+import '../../locator.dart';
 
 /// TODO
 /// add `KernelService.recordAgentMessage({userId, bundleId, agentMessage})`

@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
-import '../gateway/gateway_config.dart';
+import '../config.dart';
 import '../version.dart';
 
 /// System Controller
@@ -31,18 +31,18 @@ class SystemController {
       'name': 'AgentOS API Gateway',
       'version': packageVersion,
       'description': 'Unified API Gateway providing single access point for all local AI services',
-      'baseUrl': GatewayConfig.getBaseUrl(_gatewayPort),
+      'baseUrl': ApiConfig.getBaseUrl(_gatewayPort),
       'endpoints': {
         '/version': 'Gateway version',
-        '${GatewayConfig.agentkitPath}/*': 'AgentKit API (Agent service, requires Token)',
-        '${GatewayConfig.intentkitPath}/*': 'IntentKit API (Intent detection, requires Token)',
-        '${GatewayConfig.appkitPath}/*': 'AppKit API (App registration/subscription)',
-        '${GatewayConfig.toolkitPath}/*': 'ToolKit API (${ServiceDisplayNames.opentool})',
-        '${GatewayConfig.llmTextPath}/*': ServiceDisplayNames.llmText,
-        '${GatewayConfig.llmVisionPath}/*': ServiceDisplayNames.llmVision,
-        '${GatewayConfig.llmEmbeddingPath}/*': ServiceDisplayNames.llmEmbedding,
-        '${GatewayConfig.llmTtsPath}/*': ServiceDisplayNames.llmTts,
-        '${GatewayConfig.llmAsrPath}/*': ServiceDisplayNames.llmAsr,
+        '${ApiConfig.agentkitPath}/*': 'AgentKit API (Agent service, requires Token)',
+        '${ApiConfig.intentkitPath}/*': 'IntentKit API (Intent detection, requires Token)',
+        '${ApiConfig.appkitPath}/*': 'AppKit API (App registration/subscription)',
+        '${ApiConfig.toolkitPath}/*': 'ToolKit API (${ApiConfig.opentoolName})',
+        '${ApiConfig.llmTextPath}/*': ApiConfig.llmTextName,
+        '${ApiConfig.llmVisionPath}/*': ApiConfig.llmVisionName,
+        '${ApiConfig.llmEmbeddingPath}/*': ApiConfig.llmEmbeddingName,
+        '${ApiConfig.llmTtsPath}/*': ApiConfig.llmTtsName,
+        '${ApiConfig.llmAsrPath}/*': ApiConfig.llmAsrName,
       },
     };
 

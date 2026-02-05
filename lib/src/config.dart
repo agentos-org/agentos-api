@@ -1,10 +1,10 @@
-/// AgentOS API Gateway Configuration
+/// AgentOS API Configuration
 ///
-/// Centralized management of gateway-related constants and configurations
+/// Centralized management of API constants and configurations
 
-/// Gateway configuration constants
-class GatewayConfig {
-  GatewayConfig._();
+/// API configuration constants
+class ApiConfig {
+  ApiConfig._();
 
   /// Default port
   static const int defaultPort = 20261;
@@ -98,37 +98,64 @@ class GatewayConfig {
         return null;
     }
   }
-}
 
-/// Service display names
-class ServiceDisplayNames {
-  ServiceDisplayNames._();
+  // ============ Service Display Names (English) ============
 
-  static const String liteagent = 'LiteAgent';
-  static const String opentool = 'OpenTool';
-  static const String llmText = '文本生成';
-  static const String llmVision = '图文理解';
-  static const String llmEmbedding = '文本嵌入';
-  static const String llmTts = '文本转语音';
-  static const String llmAsr = '语音转文本';
+  static const String liteagentName = 'LiteAgent';
+  static const String opentoolName = 'OpenTool';
+  static const String llmTextName = 'Text Generation';
+  static const String llmVisionName = 'Image-Text-to-Text';
+  static const String llmEmbeddingName = 'Text Embedding';
+  static const String llmTtsName = 'Text-to-Speech';
+  static const String llmAsrName = 'Speech-to-Text';
 
-  /// Gets display name by service identifier
+  // ============ Service Display Names (Chinese) ============
+
+  static const String liteagentNameZh = 'LiteAgent';
+  static const String opentoolNameZh = 'OpenTool';
+  static const String llmTextNameZh = '文本生成';
+  static const String llmVisionNameZh = '图文理解';
+  static const String llmEmbeddingNameZh = '文本嵌入';
+  static const String llmTtsNameZh = '文本转语音';
+  static const String llmAsrNameZh = '语音转文本';
+
   static String getDisplayName(String serviceKey) {
     switch (serviceKey) {
-      case GatewayConfig.serviceLiteagent:
-        return liteagent;
-      case GatewayConfig.serviceOpentool:
-        return opentool;
-      case GatewayConfig.serviceLlmText:
-        return llmText;
-      case GatewayConfig.serviceLlmVision:
-        return llmVision;
-      case GatewayConfig.serviceLlmEmbedding:
-        return llmEmbedding;
-      case GatewayConfig.serviceLlmTts:
-        return llmTts;
-      case GatewayConfig.serviceLlmAsr:
-        return llmAsr;
+      case serviceLiteagent:
+        return liteagentName;
+      case serviceOpentool:
+        return opentoolName;
+      case serviceLlmText:
+        return llmTextName;
+      case serviceLlmVision:
+        return llmVisionName;
+      case serviceLlmEmbedding:
+        return llmEmbeddingName;
+      case serviceLlmTts:
+        return llmTtsName;
+      case serviceLlmAsr:
+        return llmAsrName;
+      default:
+        return serviceKey;
+    }
+  }
+
+  static String getDisplayNameZh(String serviceKey) {
+    switch (serviceKey) {
+      case serviceLiteagent:
+        return liteagentNameZh;
+      case serviceOpentool:
+        return opentoolNameZh;
+      case serviceLlmText:
+        return llmTextNameZh;
+      case serviceLlmVision:
+        return llmVisionNameZh;
+      case serviceLlmEmbedding:
+        return llmEmbeddingNameZh;
+      case serviceLlmTts:
+        return llmTtsNameZh;
+      case serviceLlmAsr:
+        return llmAsrNameZh;
       default:
         return serviceKey;
     }

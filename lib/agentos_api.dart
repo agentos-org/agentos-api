@@ -3,13 +3,11 @@ export 'src/router.dart';
 export 'src/version.dart';
 export 'src/middleware.dart';
 
-// Gateway
-export 'src/gateway/gateway_config.dart';
-export 'src/gateway/gateway_server.dart';
+// Configuration
+export 'src/config.dart';
 
-// Service Locator Interface
-export 'src/contracts/service_locator.dart';
-export 'src/contracts/default_service_locator.dart';
+// Service Locator
+export 'src/locator.dart';
 
 // Controllers
 export 'src/controllers/system_controller.dart';

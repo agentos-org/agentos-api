@@ -1,6 +1,6 @@
 import 'package:agentos_kernel/agentos_kernel.dart' as kernel;
 
-import '../../contracts/service_locator.dart';
+import '../../locator.dart';
 
 class IntentKitInitializer {
   IntentKitInitializer._();

@@ -1,3 +1,4 @@
+import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
@@ -7,7 +8,14 @@ import '../../services/llmkit/llm_client.dart';
 ///
 /// Proxies requests to various LLM services
 class LLMKitController {
-  LLMKitController({LLMClient? client}) : _client = client ?? LLMClient();
+  /// Creates LLMKitController
+  ///
+  /// [kernelFuture] Future that resolves to KernelService for metrics tracking
+  /// [client] Optional LLMClient instance (created automatically if not provided)
+  LLMKitController({
+    required Future<KernelService?> kernelFuture,
+    LLMClient? client,
+  }) : _client = client ?? LLMClient(kernelFuture: kernelFuture);
 
   final LLMClient _client;
 

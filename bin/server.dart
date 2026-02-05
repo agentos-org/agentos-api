@@ -18,11 +18,11 @@ void main(List<String> args) async {
   final ip = InternetAddress.anyIPv4;
 
   final serviceLocator = DefaultServiceLocator();
-  final kernelService = await KernelBootstrap.createKernel(serviceLocator);
+  final kernelFuture = KernelBootstrap.createKernel(serviceLocator);
 
   final handler = createGatewayHandler(
     serviceLocator: serviceLocator,
-    kernelService: kernelService,
+    kernelFuture: kernelFuture,
   );
 
   // For running in containers, we respect the PORT environment variable.

@@ -1,8 +1,8 @@
 import 'package:agentos_kernel/agentos_kernel.dart' as kernel;
 
-import '../../contracts/service_locator.dart';
+import '../../locator.dart';
 import '../intentkit/intentkit_initializer.dart';
-import '../../gateway/gateway_config.dart';
+import '../../config.dart';
 
 class KernelBootstrap {
   KernelBootstrap._();
@@ -46,11 +46,11 @@ class KernelBootstrap {
     AgentOSServiceLocator serviceLocator,
   ) async {
     final liteagentPort =
-        await serviceLocator.getServicePort(GatewayConfig.serviceLiteagent);
+        await serviceLocator.getServicePort(ApiConfig.serviceLiteagent);
     final llmPort =
-        await serviceLocator.getServicePort(GatewayConfig.serviceLlmText);
+        await serviceLocator.getServicePort(ApiConfig.serviceLlmText);
     final embeddingsPort =
-        await serviceLocator.getServicePort(GatewayConfig.serviceLlmEmbedding);
+        await serviceLocator.getServicePort(ApiConfig.serviceLlmEmbedding);
     if (liteagentPort == null || llmPort == null || embeddingsPort == null) {
       return null;
     }

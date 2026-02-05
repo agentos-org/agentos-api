@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:agentos_api/agentos_api.dart';
+import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:http/http.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:test/test.dart';
@@ -13,8 +15,11 @@ void main() {
   setUp(() async {
     // Use new Gateway API
     final serviceLocator = DefaultServiceLocator();
+    // Create a Future that resolves to null (no kernel in tests)
+    final kernelFuture = Future<KernelService?>.value(null);
     final handler = createGatewayHandler(
       serviceLocator: serviceLocator,
+      kernelFuture: kernelFuture,
       enableLogging: false,
     );
     server = await shelf_io.serve(

@@ -1,9 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
-import '../../contracts/service_locator.dart';
-import '../../contracts/default_service_locator.dart';
-import '../../gateway/gateway_config.dart';
+import '../../locator.dart';
+import '../../config.dart';
 
 /// OpenTool client response
 class OpenToolClientResponse {
@@ -94,12 +93,12 @@ class OpenToolClient {
       return _baseUri;
     }
     final port = await _serviceLocator.getServicePort(
-      GatewayConfig.serviceOpentool,
+      ApiConfig.serviceOpentool,
     );
     if (port == null) {
       return null;
     }
-    return Uri.parse(GatewayConfig.getInternalUrl(port));
+    return Uri.parse(ApiConfig.getInternalUrl(port));
   }
 
   Uri _buildUri(Uri baseUri, String path, Map<String, String>? queryParameters) {
