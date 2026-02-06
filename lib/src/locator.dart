@@ -35,6 +35,7 @@ class LlmModelInfo {
   final List<String> tags;
   final String repoId;
   final String type;
+  final int contextWindowSize;
 
   const LlmModelInfo({
     required this.id,
@@ -49,6 +50,7 @@ class LlmModelInfo {
     required this.tags,
     required this.repoId,
     required this.type,
+    required this.contextWindowSize,
   });
 
   Map<String, dynamic> toJson() => {
@@ -64,6 +66,7 @@ class LlmModelInfo {
         'tags': tags,
         'repoId': repoId,
         'type': type,
+        'contextWindowSize': contextWindowSize,
       };
 }
 
@@ -94,12 +97,12 @@ abstract class AgentOSServiceLocator {
 
   /// Resolves LLM service port
   ///
-  /// LLM services may have multiple instances (different models), routes to corresponding instance based on model field in request body
+  /// LLM services may have multiple instances (different models), routes to corresponding instance based on model identifier
   /// [serviceKey] Service identifier (e.g., 'llm_text', 'llm_vision', etc.)
-  /// [requestBody] Request body bytes (used to parse model field)
+  /// [modelId] Model identifier (model id or name, used to locate the specific running instance)
   ///
   /// Returns target port, or null if service is unavailable
-  Future<int?> resolveLLMPort(String serviceKey, List<int>? requestBody);
+  Future<int?> resolveLLMPort(String serviceKey, String? modelId);
 
   /// Gets registered app info list
   ///
@@ -155,7 +158,7 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
   @override
   Future<int?> resolveLLMPort(
     String serviceKey,
-    List<int>? requestBody,
+    String? modelId,
   ) async {
     return _servicePorts[serviceKey];
   }

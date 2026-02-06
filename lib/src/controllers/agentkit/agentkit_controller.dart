@@ -5,12 +5,17 @@ import 'package:shelf_router/shelf_router.dart';
 
 import '../../middleware.dart';
 import '../../services/agentkit/liteagent_client.dart';
+import '../../services/appkit/appkit_service.dart';
 
 class AgentKitController {
-  AgentKitController({LiteagentClient? client})
-      : _client = client ?? LiteagentClient();
+  AgentKitController({
+    LiteagentClient? client,
+    AppKitService? appKitService,
+  })  : _client = client ?? LiteagentClient(),
+        _appKitService = appKitService;
 
   final LiteagentClient _client;
+  final AppKitService? _appKitService;
 
   Router get router {
     final router = Router();
@@ -50,6 +55,12 @@ class AgentKitController {
         'bodyBytes=${bodyBytes?.length ?? 0} '
         'stream=$stream',
       );
+
+      final token = bearerTokenFrom(request);
+      final bundleId = (token != null && _appKitService != null)
+          ? _appKitService.bundleIdForToken(token)
+          : null;
+
       final response = await _client.send(
         method: request.method,
         path: path,
@@ -57,6 +68,8 @@ class AgentKitController {
         headers: request.headers,
         body: bodyBytes,
         streamResponse: stream,
+        userId: token,
+        bundleId: bundleId,
       );
       if (response.statusCode >= 500) {
         requestLogger.warning(

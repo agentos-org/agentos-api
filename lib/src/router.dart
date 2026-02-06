@@ -11,6 +11,7 @@ import 'controllers/toolkit/toolkit_controller.dart';
 import 'config.dart';
 import 'middleware.dart';
 import 'services/agentkit/liteagent_client.dart';
+import 'services/appkit/appkit_service.dart';
 import 'services/intentkit/intentkit_service.dart';
 import 'services/llmkit/llm_client.dart';
 import 'services/toolkit/opentool_client.dart';
@@ -72,9 +73,18 @@ Router createGatewayRouter({
   );
   router.mount('/', systemController.router.call);
 
+  // AppKit service (shared instance for token-bundleId resolution)
+  final appKitService = AppKitService();
+
   // AgentKit API (proxy to LiteAgent, requires Token)
-  final liteagentClient = LiteagentClient(serviceLocator: serviceLocator);
-  final agentKitController = AgentKitController(client: liteagentClient);
+  final liteagentClient = LiteagentClient(
+    serviceLocator: serviceLocator,
+    kernelFuture: kernelFuture,
+  );
+  final agentKitController = AgentKitController(
+    client: liteagentClient,
+    appKitService: appKitService,
+  );
   router.mount('${ApiConfig.agentkitPath}/', agentKitController.router.call);
 
   // IntentKit API (intent detection, requires Token)
@@ -85,7 +95,7 @@ Router createGatewayRouter({
   router.mount('${ApiConfig.intentkitPath}/', intentKitController.router.call);
 
   // AppKit API (app registration/subscription)
-  final appKitController = AppKitController();
+  final appKitController = AppKitController(service: appKitService);
   router.mount('${ApiConfig.appkitPath}/', appKitController.router.call);
 
   // ToolKit API (proxy to OpenTool, requires Token)

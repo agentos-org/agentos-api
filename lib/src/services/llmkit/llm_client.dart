@@ -135,10 +135,10 @@ class LLMClient {
       metrics.start();
     }
 
-    // Resolve target port (LLM services need dynamic routing based on model field)
+    // Resolve target port (LLM services need dynamic routing based on model identifier)
     final port = await _serviceLocator.resolveLLMPort(
       serviceType.serviceKey,
-      body,
+      modelName,
     );
 
     if (port == null) {
