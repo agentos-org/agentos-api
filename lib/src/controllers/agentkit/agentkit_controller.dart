@@ -8,11 +8,9 @@ import '../../services/agentkit/liteagent_client.dart';
 import '../../services/appkit/appkit_service.dart';
 
 class AgentKitController {
-  AgentKitController({
-    LiteagentClient? client,
-    AppKitService? appKitService,
-  })  : _client = client ?? LiteagentClient(),
-        _appKitService = appKitService;
+  AgentKitController({LiteagentClient? client, AppKitService? appKitService})
+    : _client = client ?? LiteagentClient(),
+      _appKitService = appKitService;
 
   final LiteagentClient _client;
   final AppKitService? _appKitService;
@@ -55,6 +53,11 @@ class AgentKitController {
         'bodyBytes=${bodyBytes?.length ?? 0} '
         'stream=$stream',
       );
+      final forwardedBodyBytes = await _injectAvailableLlmConfigIfNeeded(
+        request: request,
+        path: path,
+        bodyBytes: bodyBytes,
+      );
 
       final token = bearerTokenFrom(request);
       final bundleId = (token != null && _appKitService != null)
@@ -66,7 +69,7 @@ class AgentKitController {
         path: path,
         queryParameters: request.url.queryParameters,
         headers: request.headers,
-        body: bodyBytes,
+        body: forwardedBodyBytes,
         streamResponse: stream,
         userId: token,
         bundleId: bundleId,
@@ -104,14 +107,113 @@ class AgentKitController {
     if (request.method == 'GET' || request.method == 'HEAD') {
       return null;
     }
-    final bytes = await request.read().fold<List<int>>(
-      <int>[],
-      (buffer, data) {
-        buffer.addAll(data);
-        return buffer;
-      },
-    );
+    final bytes = await request.read().fold<List<int>>(<int>[], (buffer, data) {
+      buffer.addAll(data);
+      return buffer;
+    });
     return bytes.isEmpty ? null : bytes;
+  }
+
+  Future<List<int>?> _injectAvailableLlmConfigIfNeeded({
+    required Request request,
+    required String path,
+    required List<int>? bodyBytes,
+  }) async {
+    if (bodyBytes == null || bodyBytes.isEmpty) {
+      return bodyBytes;
+    }
+    if (!_needsLlmConfigInjection(path)) {
+      return bodyBytes;
+    }
+    if (path == '/initSession' &&
+        request.url.queryParameters['agentId'] != null) {
+      return bodyBytes;
+    }
+
+    Map<String, dynamic>? jsonBody;
+    try {
+      final decoded = jsonDecode(utf8.decode(bodyBytes, allowMalformed: true));
+      if (decoded is Map<String, dynamic>) {
+        jsonBody = decoded;
+      } else if (decoded is Map) {
+        jsonBody = Map<String, dynamic>.from(decoded);
+      }
+    } catch (_) {
+      return bodyBytes;
+    }
+    if (jsonBody == null) {
+      return bodyBytes;
+    }
+
+    final availableLlmConfig = await _client.getAvailableLlmConfigJson();
+    if (availableLlmConfig == null || availableLlmConfig.isEmpty) {
+      return bodyBytes;
+    }
+
+    final changed = _applyLlmConfigFallback(
+      path: path,
+      jsonBody: jsonBody,
+      llmConfig: availableLlmConfig,
+    );
+    if (!changed) {
+      return bodyBytes;
+    }
+
+    requestLogger.info('AgentKit injected llmConfig fallback for $path');
+    return utf8.encode(jsonEncode(jsonBody));
+  }
+
+  bool _needsLlmConfigInjection(String path) {
+    switch (path) {
+      case '/chat':
+      case '/chat/simple':
+      case '/initSimple':
+      case '/initSession':
+      case '/agent/create':
+      case '/agent/update':
+        return true;
+    }
+    return false;
+  }
+
+  bool _applyLlmConfigFallback({
+    required String path,
+    required Map<String, dynamic> jsonBody,
+    required Map<String, dynamic> llmConfig,
+  }) {
+    switch (path) {
+      case '/chat':
+      case '/chat/simple':
+      case '/initSimple':
+      case '/initSession':
+        final current = jsonBody['llmConfig'];
+        if (current != null) {
+          return false;
+        }
+        jsonBody['llmConfig'] = llmConfig;
+        return true;
+      case '/agent/create':
+      case '/agent/update':
+        final capability = jsonBody['capability'];
+        if (capability is Map<String, dynamic>) {
+          if (capability['llmConfig'] != null) {
+            return false;
+          }
+          capability['llmConfig'] = llmConfig;
+          return true;
+        }
+        if (capability is Map) {
+          final mapped = Map<String, dynamic>.from(capability);
+          if (mapped['llmConfig'] != null) {
+            return false;
+          }
+          mapped['llmConfig'] = llmConfig;
+          jsonBody['capability'] = mapped;
+          return true;
+        }
+        return false;
+    }
+    return false;
   }
 
   Map<String, String> _redactHeaders(Map<String, String> headers) {

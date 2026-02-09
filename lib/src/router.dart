@@ -40,6 +40,10 @@ Handler createGatewayHandler({
 
   var pipeline = const Pipeline();
 
+  if (enableCors) {
+    pipeline = pipeline.addMiddleware(cors());
+  }
+
   if (enableLogging) {
     pipeline = pipeline.addMiddleware(
       logRequests(
@@ -68,9 +72,7 @@ Router createGatewayRouter({
   final router = Router();
 
   // System endpoints (version)
-  final systemController = SystemController(
-    gatewayPort: gatewayPort,
-  );
+  final systemController = SystemController(gatewayPort: gatewayPort);
   router.mount('/', systemController.router.call);
 
   // AppKit service (shared instance for token-bundleId resolution)
@@ -88,9 +90,7 @@ Router createGatewayRouter({
   router.mount('${ApiConfig.agentkitPath}/', agentKitController.router.call);
 
   // IntentKit API (intent detection, requires Token)
-  final intentKitService = IntentKitService(
-    kernelFuture: kernelFuture,
-  );
+  final intentKitService = IntentKitService(kernelFuture: kernelFuture);
   final intentKitController = IntentKitController(service: intentKitService);
   router.mount('${ApiConfig.intentkitPath}/', intentKitController.router.call);
 

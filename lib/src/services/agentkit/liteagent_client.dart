@@ -35,10 +35,10 @@ class LiteagentClient {
     HttpClient? httpClient,
     AgentOSServiceLocator? serviceLocator,
     Future<KernelService?>? kernelFuture,
-  })  : _baseUri = baseUri ?? _resolveBaseUri(serviceLocator),
-        _httpClient = httpClient ?? HttpClient(),
-        _serviceLocator = serviceLocator,
-        _kernelFuture = kernelFuture ?? Future.value(null);
+  }) : _baseUri = baseUri ?? _resolveBaseUri(serviceLocator),
+       _httpClient = httpClient ?? HttpClient(),
+       _serviceLocator = serviceLocator,
+       _kernelFuture = kernelFuture ?? Future.value(null);
 
   final Uri _baseUri;
   final HttpClient _httpClient;
@@ -47,6 +47,35 @@ class LiteagentClient {
 
   /// Gets the currently used ServiceLocator
   AgentOSServiceLocator? get serviceLocator => _serviceLocator;
+
+  /// Returns an available LLM config from kernel as LiteAgent-compatible JSON.
+  ///
+  /// Returns null when kernel is unavailable or no model is currently available.
+  Future<Map<String, dynamic>?> getAvailableLlmConfigJson() async {
+    final kernel = await _kernelFuture;
+    if (kernel == null) {
+      return null;
+    }
+    final config = kernel.getAvailableLlmConfig();
+    if (config == null) {
+      return null;
+    }
+
+    final dynamic llm = config;
+    final result = <String, dynamic>{
+      'baseUrl': llm.baseUrl,
+      'apiKey': llm.apiKey,
+      'model': llm.model,
+      'temperature': llm.temperature,
+      'maxTokens': llm.maxTokens,
+      'contextWindowSize': llm.contextWindowSize,
+      'topP': llm.topP,
+      'supportsToolCalling': llm.supportsToolCalling,
+      'supportsDeepThinking': llm.supportsDeepThinking,
+    };
+    result.removeWhere((_, value) => value == null);
+    return result;
+  }
 
   /// Sends request to LiteAgent service
   ///
@@ -195,16 +224,18 @@ class LiteagentClient {
       final json = jsonDecode(jsonStr) as Map<String, dynamic>;
       final agentMessage = AgentMessage.fromJson(json);
 
-      _kernelFuture.then((kernel) {
-        if (kernel == null) return;
-        kernel.recordAgentMessage(
-          userId: userId,
-          bundleId: bundleId,
-          agentMessage: agentMessage,
-        );
-      }).catchError((_) {
-        //
-      });
+      _kernelFuture
+          .then((kernel) {
+            if (kernel == null) return;
+            kernel.recordAgentMessage(
+              userId: userId,
+              bundleId: bundleId,
+              agentMessage: agentMessage,
+            );
+          })
+          .catchError((_) {
+            //
+          });
     } catch (_) {
       //
     }
@@ -249,10 +280,9 @@ class LiteagentClient {
     final joinedPath = _joinPaths(_baseUri.path, path);
     return _baseUri.replace(
       path: joinedPath,
-      queryParameters:
-          (queryParameters == null || queryParameters.isEmpty)
-              ? null
-              : queryParameters,
+      queryParameters: (queryParameters == null || queryParameters.isEmpty)
+          ? null
+          : queryParameters,
     );
   }
 
@@ -304,8 +334,7 @@ class LiteagentClient {
   }
 
   String _joinPaths(String basePath, String path) {
-    final normalizedBase =
-        basePath.isEmpty || basePath == '/' ? '' : basePath;
+    final normalizedBase = basePath.isEmpty || basePath == '/' ? '' : basePath;
     final normalizedNext = path.startsWith('/') ? path : '/$path';
     if (normalizedBase.endsWith('/')) {
       return '${normalizedBase.substring(0, normalizedBase.length - 1)}'

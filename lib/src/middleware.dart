@@ -5,6 +5,26 @@ const String bearerTokenContextKey = 'bearerToken';
 
 final Logger requestLogger = Logger('agentos_server');
 
+Middleware cors() {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers':
+        'Origin, Content-Type, Accept, Authorization',
+    'Access-Control-Max-Age': '86400',
+  };
+
+  return (Handler innerHandler) {
+    return (Request request) async {
+      if (request.method == 'OPTIONS') {
+        return Response.ok('', headers: corsHeaders);
+      }
+      final response = await innerHandler(request);
+      return response.change(headers: corsHeaders);
+    };
+  };
+}
+
 String? extractBearerToken(Request request) {
   final header =
       request.headers['authorization'] ?? request.headers['Authorization'];

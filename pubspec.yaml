@@ -18,7 +18,7 @@ dependencies:
   opentool_dart:
     path: ../opentool-hub/opentool-dart
   agentos_kernel:
-    path: ../agentos_kernel
+    path: ../agentos-kernel
 
 dev_dependencies:
   http: ^1.2.2

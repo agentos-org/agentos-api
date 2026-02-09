@@ -25,13 +25,7 @@ class LLMClientResponse {
 }
 
 /// LLM service type
-enum LLMServiceType {
-  text,
-  vision,
-  embedding,
-  tts,
-  asr,
-}
+enum LLMServiceType { text, vision, embedding, tts, asr }
 
 /// LLM service type extension
 extension LLMServiceTypeExtension on LLMServiceType {
@@ -81,9 +75,9 @@ class LLMClient {
     HttpClient? httpClient,
     AgentOSServiceLocator? serviceLocator,
     required Future<KernelService?> kernelFuture,
-  })  : _httpClient = httpClient ?? HttpClient(),
-        _serviceLocator = serviceLocator ?? DefaultServiceLocator(),
-        _kernelFuture = kernelFuture;
+  }) : _httpClient = httpClient ?? HttpClient(),
+       _serviceLocator = serviceLocator ?? DefaultServiceLocator(),
+       _kernelFuture = kernelFuture;
 
   final HttpClient _httpClient;
   final AgentOSServiceLocator _serviceLocator;
@@ -116,12 +110,23 @@ class LLMClient {
     final requestStartTime = DateTime.now();
 
     // Extract model name and baseUrl from request body if possible
-    final modelName = _extractModelName(body);
-    final baseUrl = _extractBaseUrl(body);
+    var modelName = _extractModelName(body);
+    var baseUrl = _extractBaseUrl(body);
 
     // Try to get kernel for metrics tracking
     final kernel = await _kernelFuture;
     LlmMetrics? metrics;
+
+    // For text requests without explicit model, ask kernel for an available one.
+    if (kernel != null &&
+        serviceType == LLMServiceType.text &&
+        (modelName == null || modelName.isEmpty)) {
+      final availableConfig = kernel.getAvailableLlmConfig();
+      if (availableConfig != null) {
+        modelName = availableConfig.model;
+        baseUrl ??= availableConfig.baseUrl;
+      }
+    }
 
     if (kernel != null && modelName != null) {
       metrics = kernel.createLlmMetrics(
@@ -138,17 +143,19 @@ class LLMClient {
     // Resolve target port (LLM services need dynamic routing based on model identifier)
     final port = await _serviceLocator.resolveLLMPort(
       serviceType.serviceKey,
-      modelName,
+      modelName!,
     );
 
     if (port == null) {
       final errorResponse = LLMClientResponse(
         statusCode: 503,
         headers: {'content-type': 'application/json'},
-        bodyBytes: utf8.encode(jsonEncode({
-          'error': '${serviceType.displayName} service unavailable',
-          'service': serviceType.serviceKey,
-        })),
+        bodyBytes: utf8.encode(
+          jsonEncode({
+            'error': '${serviceType.displayName} service unavailable',
+            'service': serviceType.serviceKey,
+          }),
+        ),
       );
 
       // Mark as failed
@@ -210,11 +217,13 @@ class LLMClient {
       return LLMClientResponse(
         statusCode: 502,
         headers: {'content-type': 'application/json'},
-        bodyBytes: utf8.encode(jsonEncode({
-          'error': 'Backend service unavailable',
-          'service': serviceType.serviceKey,
-          'message': e.toString(),
-        })),
+        bodyBytes: utf8.encode(
+          jsonEncode({
+            'error': 'Backend service unavailable',
+            'service': serviceType.serviceKey,
+            'message': e.toString(),
+          }),
+        ),
       );
     }
   }
@@ -248,8 +257,16 @@ class LLMClient {
         handleData: (data, sink) {
           // Parse SSE events to count tokens
           final parseResult = _parseSSETokens(data, buffer);
-          final tokens = parseResult.tokenCount;
-          totalTokenCount += tokens;
+          var tokens = parseResult.incrementalTokens;
+          final absoluteCompletionTokens = parseResult.absoluteCompletionTokens;
+          if (absoluteCompletionTokens != null) {
+            if (absoluteCompletionTokens > totalTokenCount) {
+              tokens += absoluteCompletionTokens - totalTokenCount;
+              totalTokenCount = absoluteCompletionTokens;
+            }
+          } else {
+            totalTokenCount += tokens;
+          }
           tokensSinceLastReport += tokens;
 
           final now = DateTime.now();
@@ -263,10 +280,12 @@ class LLMClient {
           }
 
           // TPS reporting - report periodically
-          if (lastReportTime != null && tokensSinceLastReport >= minTokensForReport) {
+          if (lastReportTime != null &&
+              tokensSinceLastReport >= minTokensForReport) {
             final elapsed = now.difference(lastReportTime!);
             if (elapsed.inMilliseconds >= reportIntervalMs) {
-              final tps = tokensSinceLastReport / max(1, elapsed.inMilliseconds) * 1000;
+              final tps =
+                  tokensSinceLastReport / max(1, elapsed.inMilliseconds) * 1000;
               // Kernel's LlmMetrics.setTokenPerSecond expects only double tps
               metrics?.setTokenPerSecond(tps);
               lastReportTime = now;
@@ -301,7 +320,8 @@ class LLMClient {
   /// - Regular chunks: {"choices":[{"delta":{"content":"..."}}]}
   /// - Final chunk: {"choices":[{"delta":{}}],"usage":{"completion_tokens":N}}
   _SSEParseResult _parseSSETokens(List<int> data, StringBuffer buffer) {
-    int tokenCount = 0;
+    int incrementalTokens = 0;
+    int? absoluteCompletionTokens;
     bool hasContent = false;
 
     try {
@@ -335,9 +355,12 @@ class LLMClient {
               final usage = json['usage'] as Map<String, dynamic>?;
               if (usage != null) {
                 final completionTokens = usage['completion_tokens'];
-                if (completionTokens is int && completionTokens > tokenCount) {
-                  // Use the server-provided token count
-                  tokenCount = completionTokens;
+                if (completionTokens is int && completionTokens > 0) {
+                  // completion_tokens is usually absolute total, not delta.
+                  final previous = absoluteCompletionTokens ?? 0;
+                  if (completionTokens > previous) {
+                    absoluteCompletionTokens = completionTokens;
+                  }
                   hasContent = true;
                   continue;
                 }
@@ -352,7 +375,7 @@ class LLMClient {
                     if (delta != null && delta.containsKey('content')) {
                       final content = delta['content'];
                       if (content != null && content.toString().isNotEmpty) {
-                        tokenCount++;
+                        incrementalTokens++;
                         hasContent = true;
                       }
                     }
@@ -368,12 +391,16 @@ class LLMClient {
     } catch (_) {
       // UTF-8 decode error - return minimal count based on data presence
       if (data.isNotEmpty) {
-        tokenCount = 1;
+        incrementalTokens = 1;
         hasContent = true;
       }
     }
 
-    return _SSEParseResult(tokenCount: tokenCount, hasContent: hasContent);
+    return _SSEParseResult(
+      incrementalTokens: incrementalTokens,
+      absoluteCompletionTokens: absoluteCompletionTokens,
+      hasContent: hasContent,
+    );
   }
 
   /// Extracts model name from request body
@@ -428,14 +455,17 @@ class LLMClient {
     return null;
   }
 
-  Uri _buildUri(Uri baseUri, String path, Map<String, String>? queryParameters) {
+  Uri _buildUri(
+    Uri baseUri,
+    String path,
+    Map<String, String>? queryParameters,
+  ) {
     final joinedPath = _joinPaths(baseUri.path, path);
     return baseUri.replace(
       path: joinedPath,
-      queryParameters:
-          (queryParameters == null || queryParameters.isEmpty)
-              ? null
-              : queryParameters,
+      queryParameters: (queryParameters == null || queryParameters.isEmpty)
+          ? null
+          : queryParameters,
     );
   }
 
@@ -487,8 +517,7 @@ class LLMClient {
   }
 
   String _joinPaths(String basePath, String path) {
-    final normalizedBase =
-        basePath.isEmpty || basePath == '/' ? '' : basePath;
+    final normalizedBase = basePath.isEmpty || basePath == '/' ? '' : basePath;
     final normalizedNext = path.startsWith('/') ? path : '/$path';
     if (normalizedBase.endsWith('/')) {
       return '${normalizedBase.substring(0, normalizedBase.length - 1)}'
@@ -500,11 +529,13 @@ class LLMClient {
 
 /// Result of parsing SSE data for tokens
 class _SSEParseResult {
-  final int tokenCount;
+  final int incrementalTokens;
+  final int? absoluteCompletionTokens;
   final bool hasContent;
 
   const _SSEParseResult({
-    required this.tokenCount,
+    required this.incrementalTokens,
+    this.absoluteCompletionTokens,
     required this.hasContent,
   });
 }
