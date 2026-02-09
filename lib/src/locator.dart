@@ -102,7 +102,7 @@ abstract class AgentOSServiceLocator {
   /// [modelId] Model identifier (model id or name, used to locate the specific running instance)
   ///
   /// Returns target port, or null if service is unavailable
-  Future<int?> resolveLLMPort(String serviceKey, String modelId);
+  Future<int?> resolveLLMPort(String serviceKey, String? modelId);
 
   /// Gets registered app info list
   ///
@@ -158,7 +158,7 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
   @override
   Future<int?> resolveLLMPort(
     String serviceKey,
-    String modelId,
+    String? modelId,
   ) async {
     return _servicePorts[serviceKey];
   }
