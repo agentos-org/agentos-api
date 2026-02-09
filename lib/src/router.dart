@@ -1,6 +1,7 @@
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:agentos_kernel/agentos_kernel.dart';
+import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'locator.dart';
 import 'controllers/agentkit/agentkit_controller.dart';
 import 'controllers/appkit/appkit_controller.dart';
@@ -10,7 +11,6 @@ import 'controllers/system_controller.dart';
 import 'controllers/toolkit/toolkit_controller.dart';
 import 'config.dart';
 import 'middleware.dart';
-import 'services/agentkit/liteagent_client.dart';
 import 'services/appkit/appkit_service.dart';
 import 'services/intentkit/intentkit_service.dart';
 import 'services/llmkit/llm_client.dart';
@@ -28,6 +28,7 @@ import 'services/toolkit/opentool_client.dart';
 Handler createGatewayHandler({
   required AgentOSServiceLocator serviceLocator,
   required Future<KernelService?> kernelFuture,
+  required LiteAgentSDK liteAgentSdk,
   bool enableLogging = true,
   bool enableCors = true,
   int gatewayPort = ApiConfig.defaultPort,
@@ -35,6 +36,7 @@ Handler createGatewayHandler({
   final router = createGatewayRouter(
     serviceLocator: serviceLocator,
     kernelFuture: kernelFuture,
+    liteAgentSdk: liteAgentSdk,
     gatewayPort: gatewayPort,
   );
 
@@ -67,6 +69,7 @@ Handler createGatewayHandler({
 Router createGatewayRouter({
   required AgentOSServiceLocator serviceLocator,
   required Future<KernelService?> kernelFuture,
+  required LiteAgentSDK liteAgentSdk,
   int gatewayPort = ApiConfig.defaultPort,
 }) {
   final router = Router();
@@ -78,14 +81,11 @@ Router createGatewayRouter({
   // AppKit service (shared instance for token-bundleId resolution)
   final appKitService = AppKitService();
 
-  // AgentKit API (proxy to LiteAgent, requires Token)
-  final liteagentClient = LiteagentClient(
-    serviceLocator: serviceLocator,
-    kernelFuture: kernelFuture,
-  );
+  // AgentKit API (LiteAgent SDK, requires Token)
   final agentKitController = AgentKitController(
-    client: liteagentClient,
+    sdk: liteAgentSdk,
     appKitService: appKitService,
+    kernelFuture: kernelFuture,
   );
   router.mount('${ApiConfig.agentkitPath}/', agentKitController.router.call);
 

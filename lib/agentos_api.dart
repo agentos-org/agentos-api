@@ -18,7 +18,6 @@ export 'src/controllers/toolkit/toolkit_controller.dart';
 export 'src/controllers/llmkit/llmkit_controller.dart';
 
 // Services
-export 'src/services/agentkit/liteagent_client.dart';
 export 'src/services/appkit/appkit_service.dart';
 export 'src/services/toolkit/opentool_client.dart';
 export 'src/services/llmkit/llm_client.dart';

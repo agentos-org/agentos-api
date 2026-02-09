@@ -1,241 +1,478 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:agentos_kernel/agentos_kernel.dart';
+import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
+import 'package:opentool_dart/opentool_client.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
 import '../../middleware.dart';
-import '../../services/agentkit/liteagent_client.dart';
 import '../../services/appkit/appkit_service.dart';
 
 class AgentKitController {
-  AgentKitController({LiteagentClient? client, AppKitService? appKitService})
-    : _client = client ?? LiteagentClient(),
-      _appKitService = appKitService;
+  AgentKitController({
+    required LiteAgentSDK sdk,
+    AppKitService? appKitService,
+    Future<KernelService?>? kernelFuture,
+  })  : _sdk = sdk,
+        _appKitService = appKitService,
+        _kernelFuture = kernelFuture ?? Future.value(null);
 
-  final LiteagentClient _client;
+  final LiteAgentSDK _sdk;
   final AppKitService? _appKitService;
+  final Future<KernelService?> _kernelFuture;
 
   Router get router {
     final router = Router();
     final guard = requireBearer();
-    router.get('/version', guard(_forward('/version')));
-    router.get('/agent', guard(_forward('/agent')));
-    router.post('/agent/create', guard(_forward('/agent/create')));
-    router.post('/agent/update', guard(_forward('/agent/update')));
-    router.get('/agent/delete', guard(_forward('/agent/delete')));
-    router.post('/initSession', guard(_forward('/initSession')));
-    router.post('/initSimple', guard(_forward('/initSimple')));
-    router.post('/chat', guard(_forward('/chat', stream: true)));
-    router.post('/chat/simple', guard(_forward('/chat/simple')));
-    router.get('/history', guard(_forward('/history')));
-    router.get('/stop', guard(_forward('/stop')));
-    router.get('/clear', guard(_forward('/clear')));
-    router.post('/callback', guard(_forward('/callback')));
-    router.post('/streamCallback', guard(_forward('/streamCallback')));
+    router.get('/version', guard(_handleVersion));
+    router.get('/agent', guard(_handleGetAgent));
+    router.post('/agent/create', guard(_handleCreateAgent));
+    router.post('/agent/update', guard(_handleUpdateAgent));
+    router.get('/agent/delete', guard(_handleDeleteAgent));
+    router.post('/initSession', guard(_handleInitSession));
+    router.post('/initSimple', guard(_handleInitSimple));
+    router.post('/chat', guard(_handleChat));
+    router.post('/chat/simple', guard(_handleChatSimple));
+    router.get('/history', guard(_handleHistory));
+    router.get('/stop', guard(_handleStop));
+    router.get('/clear', guard(_handleClear));
+    router.post('/callback', guard(_handleCallback));
+    router.post('/streamCallback', guard(_handleStreamCallback));
     return router;
   }
 
-  Handler _forward(String path, {bool stream = false}) {
-    return (Request request) => _proxy(request, path: path, stream: stream);
+  // GET /version
+  Future<Response> _handleVersion(Request request) async {
+    try {
+      final version = await _sdk.getVersion();
+      return _jsonResponse(version.toJson());
+    } catch (e) {
+      return _errorResponse(e, 'version');
+    }
   }
 
-  Future<Response> _proxy(
-    Request request, {
-    required String path,
-    bool stream = false,
-  }) async {
+  // GET /agent?agentId=xxx
+  Future<Response> _handleGetAgent(Request request) async {
     try {
-      final bodyBytes = await _readBodyBytes(request);
-      requestLogger.info(
-        'AgentKit proxy ${request.method} $path '
-        'query=${request.url.queryParameters} '
-        'headers=${_redactHeaders(request.headers)} '
-        'bodyBytes=${bodyBytes?.length ?? 0} '
-        'stream=$stream',
+      final agentId = request.url.queryParameters['agentId'];
+      if (agentId == null || agentId.isEmpty) {
+        return Response(400, body: jsonEncode({'error': 'agentId is required'}));
+      }
+      final agent = await _sdk.getAgent(agentId);
+      return _jsonResponse(agent.toJson());
+    } catch (e) {
+      return _errorResponse(e, 'getAgent');
+    }
+  }
+
+  // POST /agent/create
+  Future<Response> _handleCreateAgent(Request request) async {
+    try {
+      final body = await _readJsonBody(request);
+      await _injectLlmConfigForAgentBody(body);
+      final agent = Agent.fromJson(body);
+      final result = await _sdk.createAgent(agent);
+      return _jsonResponse(result.toJson());
+    } catch (e) {
+      return _errorResponse(e, 'createAgent');
+    }
+  }
+
+  // POST /agent/update?agentId=xxx
+  Future<Response> _handleUpdateAgent(Request request) async {
+    try {
+      final agentId = request.url.queryParameters['agentId'];
+      if (agentId == null || agentId.isEmpty) {
+        return Response(400, body: jsonEncode({'error': 'agentId is required'}));
+      }
+      final body = await _readJsonBody(request);
+      await _injectLlmConfigForAgentBody(body);
+      final agent = Agent.fromJson(body);
+      final result = await _sdk.updateAgent(agentId, agent);
+      return _jsonResponse(result.toJson());
+    } catch (e) {
+      return _errorResponse(e, 'updateAgent');
+    }
+  }
+
+  // GET /agent/delete?agentId=xxx
+  Future<Response> _handleDeleteAgent(Request request) async {
+    try {
+      final agentId = request.url.queryParameters['agentId'];
+      if (agentId == null || agentId.isEmpty) {
+        return Response(400, body: jsonEncode({'error': 'agentId is required'}));
+      }
+      final result = await _sdk.deleteAgent(agentId);
+      return _jsonResponse(result.toJson());
+    } catch (e) {
+      return _errorResponse(e, 'deleteAgent');
+    }
+  }
+
+  // POST /initSession
+  Future<Response> _handleInitSession(Request request) async {
+    try {
+      final agentId = request.url.queryParameters['agentId'];
+      Capability? capability;
+      if (agentId == null || agentId.isEmpty) {
+        final body = await _readJsonBody(request);
+        await _injectLlmConfigForCapabilityBody(body);
+        capability = Capability.fromJson(body);
+      }
+      final session = await _sdk.initSession(
+        capability: capability,
+        agentId: agentId,
       );
-      final forwardedBodyBytes = await _injectAvailableLlmConfigIfNeeded(
-        request: request,
-        path: path,
-        bodyBytes: bodyBytes,
-      );
+      return _jsonResponse(session.toJson());
+    } catch (e) {
+      return _errorResponse(e, 'initSession');
+    }
+  }
+
+  // POST /initSimple
+  Future<Response> _handleInitSimple(Request request) async {
+    try {
+      final body = await _readJsonBody(request);
+      await _injectLlmConfigForCapabilityBody(body);
+      final simpleCapability = SimpleCapability.fromJson(body);
+      final session = await _sdk.initSimple(simpleCapability);
+      return _jsonResponse(session.toJson());
+    } catch (e) {
+      return _errorResponse(e, 'initSimple');
+    }
+  }
+
+  // POST /chat (SSE streaming)
+  Future<Response> _handleChat(Request request) async {
+    try {
+      final sessionId = request.url.queryParameters['sessionId'];
+      if (sessionId == null || sessionId.isEmpty) {
+        return Response(
+          400,
+          body: jsonEncode({'error': 'sessionId is required'}),
+        );
+      }
+      final body = await _readJsonBody(request);
+      final userTask = UserTask.fromJson(body);
+      final session = Session(sessionId: sessionId);
 
       final token = bearerTokenFrom(request);
       final bundleId = (token != null && _appKitService != null)
           ? _appKitService.bundleIdForToken(token)
           : null;
 
-      final response = await _client.send(
-        method: request.method,
-        path: path,
-        queryParameters: request.url.queryParameters,
-        headers: request.headers,
-        body: forwardedBodyBytes,
-        streamResponse: stream,
-        userId: token,
-        bundleId: bundleId,
+      final controller = StreamController<List<int>>();
+
+      final handler = _GatewayAgentMessageHandler(
+        onMessage: (agentMessage) {
+          final json = jsonEncode(agentMessage.toJson());
+          controller.add(utf8.encode('event:message\ndata:$json\n\n'));
+          _recordAgentMessage(agentMessage, userId: token, bundleId: bundleId);
+        },
+        onChunk: (chunk) {
+          final json = jsonEncode(chunk.toJson());
+          controller.add(utf8.encode('event:chunk\ndata:$json\n\n'));
+        },
+        onDone: () {
+          controller.close();
+        },
+        onError: (e) {
+          controller.addError(e);
+          controller.close();
+        },
       );
-      if (response.statusCode >= 500) {
-        requestLogger.warning(
-          'LiteAgent error ${response.statusCode} for $path '
-          'body=${_previewBody(response.bodyBytes)}',
-        );
-      } else {
-        requestLogger.info(
-          'LiteAgent response ${response.statusCode} for $path',
-        );
-      }
-      if (response.bodyStream != null) {
-        return Response(
-          response.statusCode,
-          body: response.bodyStream,
-          headers: response.headers,
-          context: const {'shelf.io.buffer_output': false},
-        );
-      }
-      return Response(
-        response.statusCode,
-        body: response.bodyBytes,
-        headers: response.headers,
+
+      // Don't await — sdk.chat completes when SSE stream ends
+      _sdk.chat(session, userTask, handler);
+
+      return Response.ok(
+        controller.stream,
+        headers: {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          'connection': 'keep-alive',
+        },
+        context: const {'shelf.io.buffer_output': false},
       );
-    } on Exception catch (error) {
-      requestLogger.severe('Liteagent proxy error for $path: $error');
-      return Response(502, body: 'Liteagent proxy error: $error');
+    } catch (e) {
+      return _errorResponse(e, 'chat');
     }
   }
 
-  Future<List<int>?> _readBodyBytes(Request request) async {
-    if (request.method == 'GET' || request.method == 'HEAD') {
-      return null;
-    }
-    final bytes = await request.read().fold<List<int>>(<int>[], (buffer, data) {
-      buffer.addAll(data);
-      return buffer;
-    });
-    return bytes.isEmpty ? null : bytes;
-  }
-
-  Future<List<int>?> _injectAvailableLlmConfigIfNeeded({
-    required Request request,
-    required String path,
-    required List<int>? bodyBytes,
-  }) async {
-    if (bodyBytes == null || bodyBytes.isEmpty) {
-      return bodyBytes;
-    }
-    if (!_needsLlmConfigInjection(path)) {
-      return bodyBytes;
-    }
-    if (path == '/initSession' &&
-        request.url.queryParameters['agentId'] != null) {
-      return bodyBytes;
-    }
-
-    Map<String, dynamic>? jsonBody;
+  // POST /chat/simple
+  Future<Response> _handleChatSimple(Request request) async {
     try {
-      final decoded = jsonDecode(utf8.decode(bodyBytes, allowMalformed: true));
-      if (decoded is Map<String, dynamic>) {
-        jsonBody = decoded;
-      } else if (decoded is Map) {
-        jsonBody = Map<String, dynamic>.from(decoded);
+      final sessionId = request.url.queryParameters['sessionId'];
+      if (sessionId == null || sessionId.isEmpty) {
+        return Response(
+          400,
+          body: jsonEncode({'error': 'sessionId is required'}),
+        );
       }
-    } catch (_) {
-      return bodyBytes;
-    }
-    if (jsonBody == null) {
-      return bodyBytes;
-    }
+      final body = await _readJsonBody(request);
+      final userTask = UserTask.fromJson(body);
+      final session = Session(sessionId: sessionId);
+      final message = await _sdk.chatSimple(session, userTask);
 
-    final availableLlmConfig = await _client.getAvailableLlmConfigJson();
-    if (availableLlmConfig == null || availableLlmConfig.isEmpty) {
-      return bodyBytes;
-    }
+      final token = bearerTokenFrom(request);
+      final bundleId = (token != null && _appKitService != null)
+          ? _appKitService.bundleIdForToken(token)
+          : null;
+      _recordAgentMessage(message, userId: token, bundleId: bundleId);
 
-    final changed = _applyLlmConfigFallback(
-      path: path,
-      jsonBody: jsonBody,
-      llmConfig: availableLlmConfig,
+      return _jsonResponse(message.toJson());
+    } catch (e) {
+      return _errorResponse(e, 'chatSimple');
+    }
+  }
+
+  // GET /history?sessionId=xxx
+  Future<Response> _handleHistory(Request request) async {
+    try {
+      final sessionId = request.url.queryParameters['sessionId'];
+      if (sessionId == null || sessionId.isEmpty) {
+        return Response(
+          400,
+          body: jsonEncode({'error': 'sessionId is required'}),
+        );
+      }
+      final session = Session(sessionId: sessionId);
+      final messages = await _sdk.getHistory(session);
+      return _jsonResponse(messages.map((m) => m.toJson()).toList());
+    } catch (e) {
+      return _errorResponse(e, 'history');
+    }
+  }
+
+  // GET /stop?sessionId=xxx&taskId=xxx
+  Future<Response> _handleStop(Request request) async {
+    try {
+      final sessionId = request.url.queryParameters['sessionId'];
+      if (sessionId == null || sessionId.isEmpty) {
+        return Response(
+          400,
+          body: jsonEncode({'error': 'sessionId is required'}),
+        );
+      }
+      final taskId = request.url.queryParameters['taskId'];
+      final session = Session(sessionId: sessionId);
+      await _sdk.stop(session, taskId: taskId);
+      return _jsonResponse({'status': 'ok'});
+    } catch (e) {
+      return _errorResponse(e, 'stop');
+    }
+  }
+
+  // GET /clear?sessionId=xxx
+  Future<Response> _handleClear(Request request) async {
+    try {
+      final sessionId = request.url.queryParameters['sessionId'];
+      if (sessionId == null || sessionId.isEmpty) {
+        return Response(
+          400,
+          body: jsonEncode({'error': 'sessionId is required'}),
+        );
+      }
+      final session = Session(sessionId: sessionId);
+      await _sdk.clear(session);
+      return _jsonResponse({'status': 'ok'});
+    } catch (e) {
+      return _errorResponse(e, 'clear');
+    }
+  }
+
+  // POST /callback?sessionId=xxx
+  Future<Response> _handleCallback(Request request) async {
+    try {
+      final sessionId = request.url.queryParameters['sessionId'];
+      if (sessionId == null || sessionId.isEmpty) {
+        return Response(
+          400,
+          body: jsonEncode({'error': 'sessionId is required'}),
+        );
+      }
+      final body = await _readJsonBody(request);
+      final toolReturn = ToolReturn.fromJson(body);
+      final session = Session(sessionId: sessionId);
+      await _sdk.callback(session, toolReturn);
+      return _jsonResponse({'status': 'ok'});
+    } catch (e) {
+      return _errorResponse(e, 'callback');
+    }
+  }
+
+  // POST /streamCallback?sessionId=xxx
+  Future<Response> _handleStreamCallback(Request request) async {
+    try {
+      final sessionId = request.url.queryParameters['sessionId'];
+      if (sessionId == null || sessionId.isEmpty) {
+        return Response(
+          400,
+          body: jsonEncode({'error': 'sessionId is required'}),
+        );
+      }
+      final body = await _readJsonBody(request);
+      final streamToolReturn = EventToolReturn.fromJson(body);
+      final session = Session(sessionId: sessionId);
+      await _sdk.streamCallback(session, streamToolReturn);
+      return _jsonResponse({'status': 'ok'});
+    } catch (e) {
+      return _errorResponse(e, 'streamCallback');
+    }
+  }
+
+  // --- LLM Config Injection ---
+
+  /// Returns an available LLM config from kernel as LiteAgent-compatible JSON.
+  ///
+  /// Returns null when kernel is unavailable or no model is currently available.
+  Future<Map<String, dynamic>?> _getAvailableLlmConfigJson() async {
+    final kernel = await _kernelFuture;
+    if (kernel == null) return null;
+
+    final config = kernel.getAvailableLlmConfig();
+    if (config == null) return null;
+
+    final result = <String, dynamic>{
+      'baseUrl': config.baseUrl,
+      'apiKey': config.apiKey,
+      'model': config.model,
+      'temperature': config.temperature,
+      'maxTokens': config.maxTokens,
+      'contextWindowSize': config.contextWindowSize,
+      'topP': config.topP,
+      'supportsToolCalling': config.supportsToolCalling,
+      'supportsDeepThinking': config.supportsDeepThinking,
+    };
+    result.removeWhere((_, value) => value == null);
+    return result;
+  }
+
+  /// Injects llmConfig fallback into capability-level body
+  /// (for /initSession, /initSimple, /chat, /chat/simple).
+  ///
+  /// Only injects when no llmConfig is present.
+  Future<void> _injectLlmConfigForCapabilityBody(
+    Map<String, dynamic> body,
+  ) async {
+    if (body['llmConfig'] != null) return;
+
+    final llmConfig = await _getAvailableLlmConfigJson();
+    if (llmConfig == null || llmConfig.isEmpty) return;
+
+    body['llmConfig'] = llmConfig;
+    requestLogger.info('AgentKit injected llmConfig fallback for capability');
+  }
+
+  /// Injects llmConfig fallback into agent body
+  /// (for /agent/create, /agent/update).
+  ///
+  /// Only injects when capability.llmConfig is not present.
+  Future<void> _injectLlmConfigForAgentBody(
+    Map<String, dynamic> body,
+  ) async {
+    final capability = body['capability'];
+    if (capability is Map<String, dynamic>) {
+      if (capability['llmConfig'] != null) return;
+
+      final llmConfig = await _getAvailableLlmConfigJson();
+      if (llmConfig == null || llmConfig.isEmpty) return;
+
+      capability['llmConfig'] = llmConfig;
+      requestLogger.info('AgentKit injected llmConfig fallback for agent');
+    } else if (capability is Map) {
+      final mapped = Map<String, dynamic>.from(capability);
+      if (mapped['llmConfig'] != null) return;
+
+      final llmConfig = await _getAvailableLlmConfigJson();
+      if (llmConfig == null || llmConfig.isEmpty) return;
+
+      mapped['llmConfig'] = llmConfig;
+      body['capability'] = mapped;
+      requestLogger.info('AgentKit injected llmConfig fallback for agent');
+    }
+  }
+
+  // --- Helpers ---
+
+  Future<Map<String, dynamic>> _readJsonBody(Request request) async {
+    final bodyStr = await request.readAsString();
+    return jsonDecode(bodyStr) as Map<String, dynamic>;
+  }
+
+  Response _jsonResponse(dynamic data) {
+    return Response.ok(
+      jsonEncode(data),
+      headers: {'content-type': 'application/json'},
     );
-    if (!changed) {
-      return bodyBytes;
-    }
-
-    requestLogger.info('AgentKit injected llmConfig fallback for $path');
-    return utf8.encode(jsonEncode(jsonBody));
   }
 
-  bool _needsLlmConfigInjection(String path) {
-    switch (path) {
-      case '/chat':
-      case '/chat/simple':
-      case '/initSimple':
-      case '/initSession':
-      case '/agent/create':
-      case '/agent/update':
-        return true;
-    }
-    return false;
+  Response _errorResponse(dynamic error, String operation) {
+    requestLogger.severe('AgentKit $operation error: $error');
+    final message = error.toString();
+    return Response(
+      502,
+      body: jsonEncode({'error': message}),
+      headers: {'content-type': 'application/json'},
+    );
   }
 
-  bool _applyLlmConfigFallback({
-    required String path,
-    required Map<String, dynamic> jsonBody,
-    required Map<String, dynamic> llmConfig,
+  void _recordAgentMessage(
+    AgentMessage agentMessage, {
+    String? userId,
+    String? bundleId,
   }) {
-    switch (path) {
-      case '/chat':
-      case '/chat/simple':
-      case '/initSimple':
-      case '/initSession':
-        final current = jsonBody['llmConfig'];
-        if (current != null) {
-          return false;
-        }
-        jsonBody['llmConfig'] = llmConfig;
-        return true;
-      case '/agent/create':
-      case '/agent/update':
-        final capability = jsonBody['capability'];
-        if (capability is Map<String, dynamic>) {
-          if (capability['llmConfig'] != null) {
-            return false;
-          }
-          capability['llmConfig'] = llmConfig;
-          return true;
-        }
-        if (capability is Map) {
-          final mapped = Map<String, dynamic>.from(capability);
-          if (mapped['llmConfig'] != null) {
-            return false;
-          }
-          mapped['llmConfig'] = llmConfig;
-          jsonBody['capability'] = mapped;
-          return true;
-        }
-        return false;
-    }
-    return false;
+    if (userId == null || bundleId == null) return;
+    _kernelFuture.then((kernel) {
+      if (kernel == null) return;
+      kernel.recordAgentMessage(
+        userId: userId,
+        bundleId: bundleId,
+        agentMessage: agentMessage,
+      );
+    }).catchError((_) {});
+  }
+}
+
+/// AgentMessageHandler for gateway SSE streaming
+class _GatewayAgentMessageHandler extends AgentMessageHandler {
+  final void Function(AgentMessage) _onMessage;
+  final void Function(AgentMessageChunk) _onChunk;
+  final void Function() _onDone;
+  final void Function(Exception) _onError;
+
+  _GatewayAgentMessageHandler({
+    required void Function(AgentMessage) onMessage,
+    required void Function(AgentMessageChunk) onChunk,
+    required void Function() onDone,
+    required void Function(Exception) onError,
+  })  : _onMessage = onMessage,
+        _onChunk = onChunk,
+        _onDone = onDone,
+        _onError = onError;
+
+  @override
+  Future<void> onMessage(String sessionId, AgentMessage agentMessage) async {
+    _onMessage(agentMessage);
   }
 
-  Map<String, String> _redactHeaders(Map<String, String> headers) {
-    final redacted = <String, String>{};
-    headers.forEach((name, value) {
-      if (name.toLowerCase() == 'authorization') {
-        redacted[name] = 'Bearer ***';
-      } else {
-        redacted[name] = value;
-      }
-    });
-    return redacted;
+  @override
+  Future<void> onChunk(
+    String sessionId,
+    AgentMessageChunk agentMessageChunk,
+  ) async {
+    _onChunk(agentMessageChunk);
   }
 
-  String _previewBody(List<int>? bytes) {
-    if (bytes == null || bytes.isEmpty) {
-      return '';
-    }
-    final decoded = utf8.decode(bytes, allowMalformed: true);
-    if (decoded.length <= 500) {
-      return decoded;
-    }
-    return '${decoded.substring(0, 500)}...';
+  @override
+  Future<void> onDone() async {
+    _onDone();
+  }
+
+  @override
+  Future<void> onError(Exception e) async {
+    _onError(e);
   }
 }

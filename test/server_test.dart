@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:agentos_api/agentos_api.dart';
 import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:http/http.dart';
+import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:test/test.dart';
 
@@ -17,9 +18,12 @@ void main() {
     final serviceLocator = DefaultServiceLocator();
     // Create a Future that resolves to null (no kernel in tests)
     final kernelFuture = Future<KernelService?>.value(null);
+    // Create SDK with dummy baseUrl (no real backend in tests)
+    final liteAgentSdk = LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1');
     final handler = createGatewayHandler(
       serviceLocator: serviceLocator,
       kernelFuture: kernelFuture,
+      liteAgentSdk: liteAgentSdk,
       enableLogging: false,
     );
     server = await shelf_io.serve(

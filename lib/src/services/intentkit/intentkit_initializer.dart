@@ -1,4 +1,5 @@
 import 'package:agentos_kernel/agentos_kernel.dart' as kernel;
+import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 
 import '../../locator.dart';
 
@@ -7,8 +8,7 @@ class IntentKitInitializer {
 
   static Future<kernel.KernelServiceConfig?> buildKernelConfig({
     required AgentOSServiceLocator serviceLocator,
-    required String liteAgentBaseUrl,
-    String? liteAgentApiKey,
+    required LiteAgentSDK liteAgentSdk,
     required String llmBaseUrl,
     required String llmApiKey,
     String? fallbackModel,
@@ -37,10 +37,7 @@ class IntentKitInitializer {
     }
 
     return kernel.KernelServiceConfig(
-      liteAgent: kernel.LiteAgentConfig(
-        baseUrl: liteAgentBaseUrl,
-        apiKey: liteAgentApiKey,
-      ),
+      liteAgentSdk: liteAgentSdk,
       llm: kernel.LlmConfigGroup(models: llmModels),
       embeddings: kernel.EmbeddingsConfig(
         baseUrl: embeddingsBaseUrl,

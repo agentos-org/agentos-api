@@ -1,23 +1,49 @@
 import 'package:agentos_kernel/agentos_kernel.dart' as kernel;
+import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 
 import '../../locator.dart';
 import '../intentkit/intentkit_initializer.dart';
 import '../../config.dart';
 
+/// Result of kernel bootstrap containing both the kernel service and
+/// the shared LiteAgentSDK instance.
+class KernelBootstrapResult {
+  final kernel.KernelService? kernelService;
+  final LiteAgentSDK liteAgentSdk;
+
+  const KernelBootstrapResult({
+    this.kernelService,
+    required this.liteAgentSdk,
+  });
+}
+
 class KernelBootstrap {
   KernelBootstrap._();
 
-  static Future<kernel.KernelService?> createKernel(
+  /// Creates the kernel and a shared LiteAgentSDK instance.
+  ///
+  /// The returned [KernelBootstrapResult] contains both the kernel service
+  /// (which may be null if LLM models are not configured) and the
+  /// [LiteAgentSDK] instance that should be shared across the application.
+  static Future<KernelBootstrapResult> createKernel(
     AgentOSServiceLocator serviceLocator,
   ) async {
-    final kernelConfig =
-        await _buildKernelConfigFromServiceLocator(serviceLocator);
+    final liteagentBaseUrl = serviceLocator.liteagentBaseUrl;
+    final liteAgentSdk = LiteAgentSDK(baseUrl: liteagentBaseUrl);
+
+    final kernelConfig = await _buildKernelConfigFromServiceLocator(
+      serviceLocator,
+      liteAgentSdk,
+    );
     if (kernelConfig == null) {
-      return null;
+      return KernelBootstrapResult(liteAgentSdk: liteAgentSdk);
     }
     final kernelService = await kernel.KernelService.create(kernelConfig);
     await applyAppInfoList(serviceLocator, kernelService);
-    return kernelService;
+    return KernelBootstrapResult(
+      kernelService: kernelService,
+      liteAgentSdk: liteAgentSdk,
+    );
   }
 
   static Future<void> applyAppInfoList(
@@ -44,24 +70,22 @@ class KernelBootstrap {
   static Future<kernel.KernelServiceConfig?>
       _buildKernelConfigFromServiceLocator(
     AgentOSServiceLocator serviceLocator,
+    LiteAgentSDK liteAgentSdk,
   ) async {
-    final liteagentPort =
-        await serviceLocator.getServicePort(ApiConfig.serviceLiteagent);
     final llmPort =
         await serviceLocator.getServicePort(ApiConfig.serviceLlmText);
     final embeddingsPort =
         await serviceLocator.getServicePort(ApiConfig.serviceLlmEmbedding);
-    if (liteagentPort == null || llmPort == null || embeddingsPort == null) {
+    if (llmPort == null || embeddingsPort == null) {
       return null;
     }
-    final liteAgentBaseUrl = 'http://localhost:$liteagentPort/api/v1';
     final llmBaseUrl = 'http://localhost:$llmPort';
     final embeddingsBaseUrl = 'http://localhost:$embeddingsPort';
     const embeddingsDocsName = 'agentos_default_embeddings';
 
     return IntentKitInitializer.buildKernelConfig(
       serviceLocator: serviceLocator,
-      liteAgentBaseUrl: liteAgentBaseUrl,
+      liteAgentSdk: liteAgentSdk,
       llmBaseUrl: llmBaseUrl,
       llmApiKey: '',
       embeddingsBaseUrl: embeddingsBaseUrl,
