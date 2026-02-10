@@ -11,6 +11,7 @@ import 'controllers/system_controller.dart';
 import 'controllers/toolkit/toolkit_controller.dart';
 import 'config.dart';
 import 'middleware.dart';
+import 'services/appkit/app_called_handler_impl.dart';
 import 'services/appkit/appkit_service.dart';
 import 'services/intentkit/intentkit_service.dart';
 import 'services/llmkit/llm_client.dart';
@@ -80,6 +81,14 @@ Router createGatewayRouter({
 
   // AppKit service (shared instance for token-bundleId resolution)
   final appKitService = AppKitService();
+
+  // register AppCalledHandler to KernelService
+  kernelFuture.then((kernelService) {
+    if (kernelService != null) {
+      final handler = AppCalledHandlerImpl(appKitService: appKitService);
+      kernelService.setAppCalledHandler(handler);
+    }
+  });
 
   // AgentKit API (LiteAgent SDK, requires Token)
   final agentKitController = AgentKitController(

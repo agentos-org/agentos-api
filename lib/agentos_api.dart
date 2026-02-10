@@ -23,3 +23,4 @@ export 'src/services/toolkit/opentool_client.dart';
 export 'src/services/llmkit/llm_client.dart';
 export 'src/services/intentkit/intentkit_service.dart';
 export 'src/services/intentkit/intentkit_initializer.dart';
+export 'src/services/kernel/kernel_bootstrap.dart';

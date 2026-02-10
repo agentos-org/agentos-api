@@ -10,6 +10,8 @@ class AppKitService {
   final Map<String, String> _bundleTokens = {};
   final Map<String, List<String>> _bundleAgents = {};
 
+  final Map<String, StreamController<EventDto>> _subscribers = {};
+
   List<String> listApps() => List.unmodifiable(_apps);
 
   bool isTokenValid(String token) => _bundleIdForToken(token) != null;
@@ -44,6 +46,11 @@ class AppKitService {
       return const Stream<EventDto>.empty();
     }
 
+    final existing = _subscribers[bundleId];
+    if (existing != null && !existing.isClosed) {
+      existing.close();
+    }
+
     late final StreamController<EventDto> controller;
     controller = StreamController<EventDto>(
       onListen: () {
@@ -55,10 +62,27 @@ class AppKitService {
         );
       },
       onCancel: () {
+        _subscribers.remove(bundleId);
         controller.close();
       },
     );
+
+    _subscribers[bundleId] = controller;
     return controller.stream;
+  }
+
+  bool isAppOnline(String bundleId) {
+    final controller = _subscribers[bundleId];
+    return controller != null && !controller.isClosed;
+  }
+
+  bool pushEvent(String bundleId, EventDto event) {
+    final controller = _subscribers[bundleId];
+    if (controller == null || controller.isClosed) {
+      return false;
+    }
+    controller.add(event);
+    return true;
   }
 
   String _issueToken() {

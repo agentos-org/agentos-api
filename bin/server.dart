@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:agentos_api/agentos_api.dart';
 import 'package:logging/logging.dart';
 import 'package:shelf/shelf_io.dart';
-import 'package:agentos_api/src/services/kernel/kernel_bootstrap.dart';
 
 void main(List<String> args) async {
   Logger.root.level = Level.INFO;
