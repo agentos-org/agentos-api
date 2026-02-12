@@ -99,7 +99,7 @@ class KernelBootstrapResult {
       return false;
     }
     final embeddingsPort = await serviceLocator.getServicePort(
-      ApiConfig.serviceLlmEmbedding,
+      ApiConfig.serviceEmbeddings,
     );
     if (embeddingsPort == null) {
       return false;

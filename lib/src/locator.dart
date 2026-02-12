@@ -86,9 +86,10 @@ abstract class AgentOSServiceLocator {
   /// [serviceKey] Service identifier, supported values:
   /// - 'liteagent': LiteAgent agent service
   /// - 'opentool': OpenTool tool service
+  /// - 'embeddings': Embeddings server
   /// - 'llm_text': Text generation service
   /// - 'llm_vision': Image-text understanding service
-  /// - 'llm_embedding': Text embedding service
+  /// - 'llm_embedding': LLM embedding model service
   /// - 'llm_tts': Text-to-speech service
   /// - 'llm_asr': Speech-to-text service
   ///
@@ -140,6 +141,7 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
   static const Map<String, int> _defaultPorts = {
     'liteagent': 9527,
     'opentool': 19627,
+    'embeddings': 9537,
     'llm_text': 52010,
     'llm_vision': 52020,
     'llm_embedding': 52030,

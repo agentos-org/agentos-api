@@ -54,6 +54,7 @@ class ApiConfig {
   /// Service identifier constants
   static const String serviceLiteagent = 'liteagent';
   static const String serviceOpentool = 'opentool';
+  static const String serviceEmbeddings = 'embeddings';
   static const String serviceLlmText = 'llm_text';
   static const String serviceLlmVision = 'llm_vision';
   static const String serviceLlmEmbedding = 'llm_embedding';
@@ -67,6 +68,9 @@ class ApiConfig {
 
   /// OpenTool default port
   static const int defaultOpentoolPort = 19627;
+
+  /// Embeddings server default port
+  static const int defaultEmbeddingsPort = 9537;
 
   /// LLM text service default port
   static const int defaultLlmTextPort = 52010;
@@ -109,6 +113,7 @@ class ApiConfig {
 
   static const String liteagentName = 'LiteAgent';
   static const String opentoolName = 'OpenTool';
+  static const String embeddingsName = 'Embeddings';
   static const String llmTextName = 'Text Generation';
   static const String llmVisionName = 'Image-Text-to-Text';
   static const String llmEmbeddingName = 'Text Embedding';
@@ -119,6 +124,7 @@ class ApiConfig {
 
   static const String liteagentNameZh = 'LiteAgent';
   static const String opentoolNameZh = 'OpenTool';
+  static const String embeddingsNameZh = 'Embeddings';
   static const String llmTextNameZh = '文本生成';
   static const String llmVisionNameZh = '图文理解';
   static const String llmEmbeddingNameZh = '文本嵌入';
@@ -131,6 +137,8 @@ class ApiConfig {
         return liteagentName;
       case serviceOpentool:
         return opentoolName;
+      case serviceEmbeddings:
+        return embeddingsName;
       case serviceLlmText:
         return llmTextName;
       case serviceLlmVision:
@@ -152,6 +160,8 @@ class ApiConfig {
         return liteagentNameZh;
       case serviceOpentool:
         return opentoolNameZh;
+      case serviceEmbeddings:
+        return embeddingsNameZh;
       case serviceLlmText:
         return llmTextNameZh;
       case serviceLlmVision:
