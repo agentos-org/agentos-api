@@ -11,13 +11,13 @@ Bearer token is required for all `/agentkit/*` routes and for
 Authorization: Bearer <token>
 ```
 
-## AgentKit (Proxy to LiteAgent Server)
+## AgentKit (LiteAgent-Compatible Gateway)
 
-AgentKit forwards requests to the LiteAgent Server configured by
-`LITEAGENT_BASEURL` (default: `http://127.0.0.1:9527/api/v1`).
-All routes below require a Bearer token. Request/response bodies, status
-codes, and query parameters are proxied as-is to/from LiteAgent Server.
-If the upstream is unavailable, the proxy may return `502`.
+AgentKit exposes LiteAgent-compatible routes and executes them via
+LiteAgent SDK. Default LiteAgent endpoint is
+`http://127.0.0.1:9527/api/v1` from `DefaultServiceLocator`.
+All routes below require a Bearer token.
+If backend/sdk operation fails, the gateway may return `502`.
 
 ### Schemas
 
@@ -76,7 +76,7 @@ If the upstream is unavailable, the proxy may return `502`.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `llmConfig` | `LLMConfig` | Yes | LLM config. |
+| `llmConfig` | `LLMConfig` | No | LLM config. If omitted, gateway may inject an available config from kernel. |
 | `systemPrompt` | `string` | Yes | System prompt. |
 | `openSpecList` | `OpenSpec[]` | No | Tool specs. |
 | `callbackOpenTool` | `CallbackOpenTool` | No | Client callback tool. |
@@ -86,14 +86,13 @@ If the upstream is unavailable, the proxy may return `502`.
 | `taskPipelineStrategy` | `string` | No | `parallel`, `serial`, `reject`. |
 | `toolPipelineStrategy` | `string` | No | `parallel`, `serial`, `reject`. |
 | `auto` | `boolean` | No | Auto-run tasks. |
-| `llmConfigList` | `LLMConfig[]` | No | Alternative LLM configs. |
 | `enableThinking` | `boolean` | No | Enable reasoning output. |
 
 #### SimpleCapability
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `llmConfig` | `LLMConfig` | Yes | LLM config. |
+| `llmConfig` | `LLMConfig` | No | LLM config. If omitted, gateway may inject an available config from kernel. |
 | `systemPrompt` | `string` | Yes | System prompt. |
 
 #### Agent
@@ -143,19 +142,12 @@ If the upstream is unavailable, the proxy may return `502`.
 | `id` | `string` | Yes | Tool call ID. |
 | `result` | `object` | Yes | Tool result payload. |
 
-#### StreamCallback
+#### EventToolReturn
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `event` | `string` | Yes | Stream event name. |
 | `toolReturn` | `ToolReturn` | Yes | Tool return payload. |
-
-#### OpenTool
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `openToolId` | `string` | Yes | OpenTool ID. |
-| `description` | `string` | Yes | OpenTool description. |
 
 #### AgentMessage
 
@@ -279,7 +271,7 @@ Response: `200 OK`, `text/event-stream`
 Events:
 - `message`: `AgentMessage`
 - `chunk`: `AgentMessageChunk`
-- `functionCall`: `AgentMessage`
+- `functionCall`: `{"sessionId":"<string>","functionCall":FunctionCall}`
 
 #### POST /agentkit/chat/simple
 
@@ -312,7 +304,11 @@ Query:
 | `sessionId` | `string` | Yes |
 | `taskId` | `string` | No |
 
-Response: `200 OK` (`SessionTask`)
+Response: `200 OK`
+
+```json
+{"status":"ok"}
+```
 
 #### GET /agentkit/clear
 
@@ -322,7 +318,11 @@ Query:
 | --- | --- | --- |
 | `sessionId` | `string` | Yes |
 
-Response: `200 OK` (`Session`)
+Response: `200 OK`
+
+```json
+{"status":"ok"}
+```
 
 #### POST /agentkit/callback
 
@@ -334,7 +334,15 @@ Query:
 
 Request body: `ToolReturn`
 
-Response: `200 OK` (`Session`)
+Response: `200 OK`
+
+```json
+{"status":"ok"}
+```
+
+Notes:
+- If there is a pending external `functionCall` for the same `sessionId` + `toolReturn.id`, this endpoint completes that pending call.
+- Otherwise, the request is forwarded to LiteAgent `/callback` (legacy behavior).
 
 #### POST /agentkit/streamCallback
 
@@ -344,9 +352,13 @@ Query:
 | --- | --- | --- |
 | `sessionId` | `string` | Yes |
 
-Request body: `StreamCallback`
+Request body: `EventToolReturn`
 
-Response: `200 OK` (`Session`)
+Response: `200 OK`
+
+```json
+{"status":"ok"}
+```
 
 ## AppKit
 
@@ -374,24 +386,17 @@ Event examples:
 
 ```
 event: welcome
-data: {"bundleId":"com.demo.app","token":"sk-..."}
+data: {"bundleId":"com.demo.app"}
 
 ```
 
 ```
-event: agents
-data: {"bundleId":"com.demo.app","agents":[]}
+event: callApp
+data: {"bundleId":"com.demo.app","contentList":[{"type":"text","message":"..."}]}
 
 ```
 
-If the token is missing, returns `401`. If the token is invalid, the stream
-emits:
-
-```
-event: error
-data: {"error":"invalid_token"}
-
-```
+If the token is missing or invalid, returns `401`.
 
 ## Root
 

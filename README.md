@@ -2,7 +2,7 @@ A server app built using [Shelf](https://pub.dev/packages/shelf),
 configured to enable running with [Docker](https://www.docker.com/).
 
 This gateway provides a single entry point for all local AI services:
-- **AgentKit**: Agent management and chat (proxies to LiteAgent)
+- **AgentKit**: Agent management and chat (implemented via LiteAgent SDK)
 - **IntentKit**: Intent detection (powered by agentos_kernel)
 - **AppKit**: Application registration and subscription
 - **ToolKit**: Tool execution (proxies to OpenTool)
@@ -73,11 +73,12 @@ System endpoints provide gateway information.
 
 ## AgentKit API
 
-AgentKit proxies LiteAgent Server endpoints under `/agentkit/`. Set
-`LITEAGENT_BASEURL` to the LiteAgent server base URL (for example
-`http://127.0.0.1:9527/api/v1`). All AgentKit routes require a Bearer token.
+AgentKit exposes LiteAgent-compatible routes under `/agentkit/` and executes
+them via LiteAgent SDK. By default, LiteAgent endpoint is
+`http://127.0.0.1:9527/api/v1` from `DefaultServiceLocator`. All AgentKit
+routes require a Bearer token.
 
-Supported proxy routes:
+Supported routes:
 
 - `GET /agentkit/version`
 - `GET /agentkit/agent`
@@ -93,6 +94,10 @@ Supported proxy routes:
 - `GET /agentkit/clear`
 - `POST /agentkit/callback`
 - `POST /agentkit/streamCallback`
+
+`POST /agentkit/chat` SSE emits `message`, `chunk`, and `functionCall`.
+When receiving `functionCall`, external callers can post a `ToolReturn` to
+`POST /agentkit/callback?sessionId=...` to complete the pending callback.
 
 ## IntentKit API
 
@@ -123,3 +128,5 @@ All IntentKit routes require a Bearer token.
 - `POST /appkit/register` registers an app bundle: `{"bundleId": "com.demo"}` -> `{"token": "sk-..."}`.
 - `GET /appkit/subscribe` (Bearer required) streams SSE events shaped like
   `event: welcome\ndata: {"bundleId": "..."}\n\n`.
+- When kernel triggers app invocation, subscribed app may receive
+  `event: callApp\ndata: {"bundleId":"...","contentList":[...]}\n\n`.

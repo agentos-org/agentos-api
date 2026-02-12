@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
@@ -28,6 +29,13 @@ class IntentKitController {
       requestLogger.warning('IntentKit submitRaw: missing kernel config.');
       return Response(503, body: 'IntentKit not configured.');
     }
+    final readinessResponse = _intentKitReadinessResponse(
+      kernel,
+      action: 'submitRaw',
+    );
+    if (readinessResponse != null) {
+      return readinessResponse;
+    }
     final payload = await _readJsonBody(request);
     if (payload == null) {
       requestLogger.warning('IntentKit submitRaw: invalid JSON payload.');
@@ -46,7 +54,9 @@ class IntentKitController {
         content: parsed.content,
         data: parsed.data,
       );
-      final body = jsonEncode(IntentKitJobHandleDto.fromHandle(handle).toJson());
+      final body = jsonEncode(
+        IntentKitJobHandleDto.fromHandle(handle).toJson(),
+      );
       return Response.ok(body, headers: {'content-type': 'application/json'});
     } on ArgumentError catch (error) {
       requestLogger.warning('IntentKit submitRaw: $error');
@@ -66,6 +76,13 @@ class IntentKitController {
       requestLogger.warning('IntentKit submitIntent: missing kernel config.');
       return Response(503, body: 'IntentKit not configured.');
     }
+    final readinessResponse = _intentKitReadinessResponse(
+      kernel,
+      action: 'submitIntent',
+    );
+    if (readinessResponse != null) {
+      return readinessResponse;
+    }
     final payload = await _readJsonBody(request);
     if (payload == null) {
       requestLogger.warning('IntentKit submitIntent: invalid JSON payload.');
@@ -83,7 +100,9 @@ class IntentKitController {
         source: parsed.source,
         intent: parsed.intent,
       );
-      final body = jsonEncode(IntentKitJobHandleDto.fromHandle(handle).toJson());
+      final body = jsonEncode(
+        IntentKitJobHandleDto.fromHandle(handle).toJson(),
+      );
       return Response.ok(body, headers: {'content-type': 'application/json'});
     } on ArgumentError catch (error) {
       requestLogger.warning('IntentKit submitIntent: $error');
@@ -103,6 +122,13 @@ class IntentKitController {
       requestLogger.warning('IntentKit confirmJob: missing kernel config.');
       return Response(503, body: 'IntentKit not configured.');
     }
+    final readinessResponse = _intentKitReadinessResponse(
+      kernel,
+      action: 'confirmJob',
+    );
+    if (readinessResponse != null) {
+      return readinessResponse;
+    }
     final payload = await _readJsonBody(request);
     if (payload == null) {
       requestLogger.warning('IntentKit confirmJob: invalid JSON payload.');
@@ -120,7 +146,9 @@ class IntentKitController {
         jobId: parsed.jobId,
         confirmed: parsed.confirmed,
       );
-      final body = jsonEncode(IntentKitJobHandleDto.fromHandle(handle).toJson());
+      final body = jsonEncode(
+        IntentKitJobHandleDto.fromHandle(handle).toJson(),
+      );
       return Response.ok(body, headers: {'content-type': 'application/json'});
     } on ArgumentError catch (error) {
       requestLogger.warning('IntentKit confirmJob: $error');
@@ -137,12 +165,23 @@ class IntentKitController {
   Future<Response> _suggestNextAction(Request request) async {
     final kernel = await _service.resolveKernel();
     if (kernel == null) {
-      requestLogger.warning('IntentKit suggestNextAction: missing kernel config.');
+      requestLogger.warning(
+        'IntentKit suggestNextAction: missing kernel config.',
+      );
       return Response(503, body: 'IntentKit not configured.');
+    }
+    final readinessResponse = _intentKitReadinessResponse(
+      kernel,
+      action: 'suggestNextAction',
+    );
+    if (readinessResponse != null) {
+      return readinessResponse;
     }
     final payload = await _readJsonBody(request);
     if (payload == null) {
-      requestLogger.warning('IntentKit suggestNextAction: invalid JSON payload.');
+      requestLogger.warning(
+        'IntentKit suggestNextAction: invalid JSON payload.',
+      );
       return Response(400, body: 'Invalid JSON payload.');
     }
     IntentKitSuggestNextActionRequest parsed;
@@ -189,5 +228,39 @@ class IntentKitController {
     } catch (_) {
       return null;
     }
+  }
+
+  Response? _intentKitReadinessResponse(
+    KernelService kernel, {
+    required String action,
+  }) {
+    final readiness = kernel.getReadiness(
+      requireLlm: true,
+      requireLiteAgent: true,
+      requireOpenToolDaemon: false,
+      requireEmbeddings: false,
+    );
+    if (readiness.ready) {
+      return null;
+    }
+    requestLogger.warning(
+      'IntentKit $action: readiness check failed: ${readiness.reasons.join('; ')}',
+    );
+    return Response(
+      503,
+      body: jsonEncode({
+        'error': 'IntentKit is not ready.',
+        'reasons': readiness.reasons,
+        'readiness': {
+          'ready': readiness.ready,
+          'llmConfigured': readiness.llmConfigured,
+          'llmServicesReady': readiness.llmServicesReady,
+          'liteAgentReady': readiness.liteAgentReady,
+          'openToolDaemonReady': readiness.openToolDaemonReady,
+          'embeddingsReady': readiness.embeddingsReady,
+        },
+      }),
+      headers: {'content-type': 'application/json'},
+    );
   }
 }

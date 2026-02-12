@@ -9,8 +9,8 @@ class IntentKitInitializer {
   static Future<kernel.KernelServiceConfig?> buildKernelConfig({
     required AgentOSServiceLocator serviceLocator,
     required LiteAgentSDK liteAgentSdk,
-    required String llmBaseUrl,
-    required String llmApiKey,
+    String? llmBaseUrl,
+    String llmApiKey = '',
     String? fallbackModel,
     required String embeddingsBaseUrl,
     String? embeddingsApiKey,
@@ -24,21 +24,19 @@ class IntentKitInitializer {
     int vectorQueryLimit = 5,
     int maxPreferenceResults = 3,
   }) async {
-
     final llmModelList = await serviceLocator.getLlmModelList();
-    final llmModels = buildKernelModels(
-      llmModelList,
-      llmBaseUrl: llmBaseUrl,
-      llmApiKey: llmApiKey,
-      fallbackModel: fallbackModel,
-    );
-    if (llmModels.isEmpty) {
-      return null;
-    }
+    final llmModels = llmBaseUrl == null
+        ? const <kernel.KernelLlmModel>[]
+        : buildKernelModels(
+            llmModelList,
+            llmBaseUrl: llmBaseUrl,
+            llmApiKey: llmApiKey,
+            fallbackModel: fallbackModel,
+          );
 
     return kernel.KernelServiceConfig(
       liteAgentSdk: liteAgentSdk,
-      llm: kernel.LlmConfigGroup(models: llmModels),
+      llm: llmModels.isEmpty ? null : kernel.LlmConfigGroup(models: llmModels),
       embeddings: kernel.EmbeddingsConfig(
         baseUrl: embeddingsBaseUrl,
         apiKey: embeddingsApiKey,

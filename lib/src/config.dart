@@ -68,6 +68,12 @@ class ApiConfig {
   /// OpenTool default port
   static const int defaultOpentoolPort = 19627;
 
+  /// LLM text service default port
+  static const int defaultLlmTextPort = 52010;
+
+  /// LLM embedding service default port
+  static const int defaultLlmEmbeddingPort = 52030;
+
   // ============ Utility Methods ============
 
   /// Gets the base URL

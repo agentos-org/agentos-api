@@ -10,12 +10,12 @@
 Authorization: Bearer <token>
 ```
 
-## AgentKit（代理 LiteAgent Server）
+## AgentKit（LiteAgent 兼容网关）
 
-AgentKit 会把请求转发到 `LITEAGENT_BASEURL` 指定的 LiteAgent Server
-（默认：`http://127.0.0.1:9527/api/v1`）。以下路由均需要 Bearer token。
-请求/响应体、状态码和查询参数会原样透传到 LiteAgent Server。
-上游不可用时可能返回 `502`。
+AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
+默认 LiteAgent 地址来自 `DefaultServiceLocator`：
+`http://127.0.0.1:9527/api/v1`。以下路由均需要 Bearer token。
+若后端/SDK 调用失败，网关可能返回 `502`。
 
 ### Schema（数据结构）
 
@@ -74,7 +74,7 @@ AgentKit 会把请求转发到 `LITEAGENT_BASEURL` 指定的 LiteAgent Server
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `llmConfig` | `LLMConfig` | 是 | LLM 配置。 |
+| `llmConfig` | `LLMConfig` | 否 | LLM 配置。缺省时网关可能从 kernel 注入可用配置。 |
 | `systemPrompt` | `string` | 是 | 系统提示词。 |
 | `openSpecList` | `OpenSpec[]` | 否 | 工具规范列表。 |
 | `callbackOpenTool` | `CallbackOpenTool` | 否 | 客户端回调工具。 |
@@ -84,14 +84,13 @@ AgentKit 会把请求转发到 `LITEAGENT_BASEURL` 指定的 LiteAgent Server
 | `taskPipelineStrategy` | `string` | 否 | `parallel`、`serial`、`reject`。 |
 | `toolPipelineStrategy` | `string` | 否 | `parallel`、`serial`、`reject`。 |
 | `auto` | `boolean` | 否 | 是否自动执行。 |
-| `llmConfigList` | `LLMConfig[]` | 否 | 备用 LLM 配置。 |
 | `enableThinking` | `boolean` | 否 | 是否输出推理文本。 |
 
 #### SimpleCapability
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `llmConfig` | `LLMConfig` | 是 | LLM 配置。 |
+| `llmConfig` | `LLMConfig` | 否 | LLM 配置。缺省时网关可能从 kernel 注入可用配置。 |
 | `systemPrompt` | `string` | 是 | 系统提示词。 |
 
 #### Agent
@@ -141,19 +140,12 @@ AgentKit 会把请求转发到 `LITEAGENT_BASEURL` 指定的 LiteAgent Server
 | `id` | `string` | 是 | 工具调用 ID。 |
 | `result` | `object` | 是 | 工具返回结果。 |
 
-#### StreamCallback
+#### EventToolReturn
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `event` | `string` | 是 | 流事件名。 |
 | `toolReturn` | `ToolReturn` | 是 | 工具返回结果。 |
-
-#### OpenTool
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `openToolId` | `string` | 是 | OpenTool ID。 |
-| `description` | `string` | 是 | OpenTool 描述。 |
 
 #### AgentMessage
 
@@ -277,7 +269,7 @@ Query:
 事件类型：
 - `message`：`AgentMessage`
 - `chunk`：`AgentMessageChunk`
-- `functionCall`：`AgentMessage`
+- `functionCall`：`{"sessionId":"<string>","functionCall":FunctionCall}`
 
 #### POST /agentkit/chat/simple
 
@@ -310,7 +302,11 @@ Query:
 | `sessionId` | `string` | 是 |
 | `taskId` | `string` | 否 |
 
-响应：`200 OK`（`SessionTask`）
+响应：`200 OK`
+
+```json
+{"status":"ok"}
+```
 
 #### GET /agentkit/clear
 
@@ -320,7 +316,11 @@ Query:
 | --- | --- | --- |
 | `sessionId` | `string` | 是 |
 
-响应：`200 OK`（`Session`）
+响应：`200 OK`
+
+```json
+{"status":"ok"}
+```
 
 #### POST /agentkit/callback
 
@@ -332,7 +332,15 @@ Query:
 
 请求体：`ToolReturn`
 
-响应：`200 OK`（`Session`）
+响应：`200 OK`
+
+```json
+{"status":"ok"}
+```
+
+说明：
+- 如果存在相同 `sessionId` + `toolReturn.id` 的待完成外部 `functionCall`，该接口会优先完成该调用。
+- 否则会按兼容逻辑转发到 LiteAgent 的 `/callback`。
 
 #### POST /agentkit/streamCallback
 
@@ -342,9 +350,13 @@ Query:
 | --- | --- | --- |
 | `sessionId` | `string` | 是 |
 
-请求体：`StreamCallback`
+请求体：`EventToolReturn`
 
-响应：`200 OK`（`Session`）
+响应：`200 OK`
+
+```json
+{"status":"ok"}
+```
 
 ## AppKit
 
@@ -372,23 +384,17 @@ Query:
 
 ```
 event: welcome
-data: {"bundleId":"com.demo.app","token":"sk-..."}
+data: {"bundleId":"com.demo.app"}
 
 ```
 
 ```
-event: agents
-data: {"bundleId":"com.demo.app","agents":[]}
+event: callApp
+data: {"bundleId":"com.demo.app","contentList":[{"type":"text","message":"..."}]}
 
 ```
 
-如果 token 缺失，返回 `401`。如果 token 无效，流内会返回：
-
-```
-event: error
-data: {"error":"invalid_token"}
-
-```
+如果 token 缺失或无效，直接返回 `401`。
 
 ## Root
 

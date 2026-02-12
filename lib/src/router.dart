@@ -76,7 +76,10 @@ Router createGatewayRouter({
   final router = Router();
 
   // System endpoints (version)
-  final systemController = SystemController(gatewayPort: gatewayPort);
+  final systemController = SystemController(
+    gatewayPort: gatewayPort,
+    kernelFuture: kernelFuture,
+  );
   router.mount('/', systemController.router.call);
 
   // AppKit service (shared instance for token-bundleId resolution)

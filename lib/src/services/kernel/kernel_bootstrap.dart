@@ -11,10 +11,165 @@ class KernelBootstrapResult {
   final kernel.KernelService? kernelService;
   final LiteAgentSDK liteAgentSdk;
 
-  const KernelBootstrapResult({
-    this.kernelService,
-    required this.liteAgentSdk,
-  });
+  const KernelBootstrapResult({this.kernelService, required this.liteAgentSdk});
+
+  /// Updates LiteAgent SDK base URL from ServiceLocator at runtime.
+  ///
+  /// Returns true when the value is updated.
+  Future<bool> syncLiteagentBaseUrlFromServiceLocator(
+    AgentOSServiceLocator serviceLocator,
+  ) async {
+    final kernelService = this.kernelService;
+    if (kernelService == null) {
+      return false;
+    }
+    final baseUrl = serviceLocator.liteagentBaseUrl.trim();
+    if (baseUrl.isEmpty) {
+      return false;
+    }
+    liteAgentSdk.dio.options.baseUrl = baseUrl;
+    liteAgentSdk.sseService.baseUrl = baseUrl;
+    await kernelService.updateLiteAgentSdk(liteAgentSdk);
+    return true;
+  }
+
+  /// Updates kernel LLM models from ServiceLocator at runtime.
+  ///
+  /// Returns true when models are successfully injected.
+  Future<bool> syncLlmModelsFromServiceLocator(
+    AgentOSServiceLocator serviceLocator, {
+    String llmApiKey = '',
+  }) async {
+    final kernelService = this.kernelService;
+    if (kernelService == null) {
+      return false;
+    }
+    final llmPort = await serviceLocator.getServicePort(
+      ApiConfig.serviceLlmText,
+    );
+    if (llmPort == null) {
+      return false;
+    }
+    final llmModelList = await serviceLocator.getLlmModelList();
+    final llmModels = IntentKitInitializer.buildKernelModels(
+      llmModelList,
+      llmBaseUrl: 'http://localhost:$llmPort',
+      llmApiKey: llmApiKey,
+    );
+    if (llmModels.isEmpty) {
+      return false;
+    }
+    kernelService.updateLlmModels(llmModels, refreshServices: true);
+    return true;
+  }
+
+  /// Updates OpenTool daemon address from ServiceLocator at runtime.
+  ///
+  /// Returns true when the value is updated.
+  Future<bool> syncOpenToolDaemonFromServiceLocator(
+    AgentOSServiceLocator serviceLocator,
+  ) async {
+    final kernelService = this.kernelService;
+    if (kernelService == null) {
+      return false;
+    }
+    final port = await serviceLocator.getServicePort(ApiConfig.serviceOpentool);
+    if (port == null) {
+      return false;
+    }
+    kernelService.updateOpenToolDaemon(
+      host: ApiConfig.internalHost,
+      port: port,
+    );
+    return true;
+  }
+
+  /// Updates embeddings service config from ServiceLocator at runtime.
+  ///
+  /// Returns true when embeddings config is successfully injected.
+  Future<bool> syncEmbeddingsFromServiceLocator(
+    AgentOSServiceLocator serviceLocator, {
+    String embeddingsApiKey = '',
+    String embeddingsDocsName = 'agentos_default_embeddings',
+    String? embeddingsModel,
+    String? embeddingsLlmModel,
+  }) async {
+    final kernelService = this.kernelService;
+    if (kernelService == null) {
+      return false;
+    }
+    final embeddingsPort = await serviceLocator.getServicePort(
+      ApiConfig.serviceLlmEmbedding,
+    );
+    if (embeddingsPort == null) {
+      return false;
+    }
+    final llmModelList = await serviceLocator.getLlmModelList();
+    final preferredLlmModel =
+        embeddingsLlmModel ??
+        (llmModelList.isEmpty ? null : llmModelList.first.id);
+    return kernelService.updateEmbeddingsConfig(
+      kernel.EmbeddingsConfig(
+        baseUrl: 'http://localhost:$embeddingsPort',
+        apiKey: embeddingsApiKey,
+        docsName: embeddingsDocsName,
+        model: embeddingsModel,
+        llmModel: preferredLlmModel,
+      ),
+    );
+  }
+
+  /// Syncs known runtime-updatable services from ServiceLocator.
+  ///
+  /// Returns true when at least one service setting is updated.
+  Future<bool> syncServicesFromServiceLocator(
+    AgentOSServiceLocator serviceLocator, {
+    String llmApiKey = '',
+    String embeddingsApiKey = '',
+    String embeddingsDocsName = 'agentos_default_embeddings',
+    String? embeddingsModel,
+    String? embeddingsLlmModel,
+  }) async {
+    final liteagentUpdated = await syncLiteagentBaseUrlFromServiceLocator(
+      serviceLocator,
+    );
+    final llmUpdated = await syncLlmModelsFromServiceLocator(
+      serviceLocator,
+      llmApiKey: llmApiKey,
+    );
+    final openToolUpdated = await syncOpenToolDaemonFromServiceLocator(
+      serviceLocator,
+    );
+    final embeddingsUpdated = await syncEmbeddingsFromServiceLocator(
+      serviceLocator,
+      embeddingsApiKey: embeddingsApiKey,
+      embeddingsDocsName: embeddingsDocsName,
+      embeddingsModel: embeddingsModel,
+      embeddingsLlmModel: embeddingsLlmModel,
+    );
+    return liteagentUpdated ||
+        llmUpdated ||
+        openToolUpdated ||
+        embeddingsUpdated;
+  }
+
+  kernel.KernelReadiness? getReadiness({
+    bool requireLlm = true,
+    bool requireLiteAgent = true,
+    bool requireOpenToolDaemon = false,
+    bool requireEmbeddings = false,
+  }) {
+    final kernelService = this.kernelService;
+    if (kernelService == null) {
+      return null;
+    }
+    return kernelService.getReadiness(
+      requireLlm: requireLlm,
+      requireLiteAgent: requireLiteAgent,
+      requireOpenToolDaemon: requireOpenToolDaemon,
+      requireEmbeddings: requireEmbeddings,
+    );
+  }
 }
 
 class KernelBootstrap {
@@ -30,20 +185,14 @@ class KernelBootstrap {
   ) async {
     final liteagentBaseUrl = serviceLocator.liteagentBaseUrl;
     final liteAgentSdk = LiteAgentSDK(baseUrl: liteagentBaseUrl);
-
-    final kernelConfig = await _buildKernelConfigFromServiceLocator(
-      serviceLocator,
-      liteAgentSdk,
-    );
-    if (kernelConfig == null) {
-      return KernelBootstrapResult(liteAgentSdk: liteAgentSdk);
-    }
-    final kernelService = await kernel.KernelService.create(kernelConfig);
-    await applyAppInfoList(serviceLocator, kernelService);
-    return KernelBootstrapResult(
+    final kernelService = await kernel.KernelService.create();
+    final result = KernelBootstrapResult(
       kernelService: kernelService,
       liteAgentSdk: liteAgentSdk,
     );
+    await result.syncServicesFromServiceLocator(serviceLocator);
+    await applyAppInfoList(serviceLocator, kernelService);
+    return result;
   }
 
   static Future<void> applyAppInfoList(
@@ -65,31 +214,5 @@ class KernelBootstrap {
         )
         .toList();
     kernelService.updateAppInfoList(mapped);
-  }
-
-  static Future<kernel.KernelServiceConfig?>
-      _buildKernelConfigFromServiceLocator(
-    AgentOSServiceLocator serviceLocator,
-    LiteAgentSDK liteAgentSdk,
-  ) async {
-    final llmPort =
-        await serviceLocator.getServicePort(ApiConfig.serviceLlmText);
-    final embeddingsPort =
-        await serviceLocator.getServicePort(ApiConfig.serviceLlmEmbedding);
-    if (llmPort == null || embeddingsPort == null) {
-      return null;
-    }
-    final llmBaseUrl = 'http://localhost:$llmPort';
-    final embeddingsBaseUrl = 'http://localhost:$embeddingsPort';
-    const embeddingsDocsName = 'agentos_default_embeddings';
-
-    return IntentKitInitializer.buildKernelConfig(
-      serviceLocator: serviceLocator,
-      liteAgentSdk: liteAgentSdk,
-      llmBaseUrl: llmBaseUrl,
-      llmApiKey: '',
-      embeddingsBaseUrl: embeddingsBaseUrl,
-      embeddingsDocsName: embeddingsDocsName,
-    );
   }
 }

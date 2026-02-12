@@ -26,11 +26,7 @@ void main() {
       liteAgentSdk: liteAgentSdk,
       enableLogging: false,
     );
-    server = await shelf_io.serve(
-      handler,
-      InternetAddress.loopbackIPv4,
-      0,
-    );
+    server = await shelf_io.serve(handler, InternetAddress.loopbackIPv4, 0);
     host = 'http://${server.address.host}:${server.port}';
   });
 
@@ -54,6 +50,14 @@ void main() {
     expect(response.statusCode, 200);
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     expect(payload['version'], _readPubspecVersion());
+  });
+
+  test('Ready endpoint without kernel', () async {
+    final response = await get(Uri.parse('$host/ready'));
+    expect(response.statusCode, 503);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    expect(payload['ready'], isFalse);
+    expect(payload['reasons'], isNotEmpty);
   });
 
   test('IntentKit submitRaw requires bearer', () async {

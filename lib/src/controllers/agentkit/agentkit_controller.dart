@@ -15,13 +15,15 @@ class AgentKitController {
     required LiteAgentSDK sdk,
     AppKitService? appKitService,
     Future<KernelService?>? kernelFuture,
-  })  : _sdk = sdk,
-        _appKitService = appKitService,
-        _kernelFuture = kernelFuture ?? Future.value(null);
+  }) : _sdk = sdk,
+       _appKitService = appKitService,
+       _kernelFuture = kernelFuture ?? Future.value(null);
 
   final LiteAgentSDK _sdk;
   final AppKitService? _appKitService;
   final Future<KernelService?> _kernelFuture;
+  static const Duration _functionCallTimeout = Duration(minutes: 5);
+  final Map<String, Completer<ToolReturn>> _pendingToolReturns = {};
 
   Router get router {
     final router = Router();
@@ -58,7 +60,10 @@ class AgentKitController {
     try {
       final agentId = request.url.queryParameters['agentId'];
       if (agentId == null || agentId.isEmpty) {
-        return Response(400, body: jsonEncode({'error': 'agentId is required'}));
+        return Response(
+          400,
+          body: jsonEncode({'error': 'agentId is required'}),
+        );
       }
       final agent = await _sdk.getAgent(agentId);
       return _jsonResponse(agent.toJson());
@@ -85,7 +90,10 @@ class AgentKitController {
     try {
       final agentId = request.url.queryParameters['agentId'];
       if (agentId == null || agentId.isEmpty) {
-        return Response(400, body: jsonEncode({'error': 'agentId is required'}));
+        return Response(
+          400,
+          body: jsonEncode({'error': 'agentId is required'}),
+        );
       }
       final body = await _readJsonBody(request);
       await _injectLlmConfigForAgentBody(body);
@@ -102,7 +110,10 @@ class AgentKitController {
     try {
       final agentId = request.url.queryParameters['agentId'];
       if (agentId == null || agentId.isEmpty) {
-        return Response(400, body: jsonEncode({'error': 'agentId is required'}));
+        return Response(
+          400,
+          body: jsonEncode({'error': 'agentId is required'}),
+        );
       }
       final result = await _sdk.deleteAgent(agentId);
       return _jsonResponse(result.toJson());
@@ -175,10 +186,30 @@ class AgentKitController {
           final json = jsonEncode(chunk.toJson());
           controller.add(utf8.encode('event:chunk\ndata:$json\n\n'));
         },
+        onFunctionCall: (functionCall) async {
+          final eventPayload = jsonEncode({
+            'sessionId': sessionId,
+            'functionCall': functionCall.toJson(),
+          });
+          controller.add(
+            utf8.encode('event:functionCall\ndata:$eventPayload\n\n'),
+          );
+          return _waitExternalToolReturn(sessionId, functionCall);
+        },
         onDone: () {
+          _failPendingToolReturnsForSession(
+            sessionId,
+            code: 'stream_closed',
+            message: 'Chat stream closed before external callback.',
+          );
           controller.close();
         },
         onError: (e) {
+          _failPendingToolReturnsForSession(
+            sessionId,
+            code: 'stream_error',
+            message: e.toString(),
+          );
           controller.addError(e);
           controller.close();
         },
@@ -296,7 +327,13 @@ class AgentKitController {
       final body = await _readJsonBody(request);
       final toolReturn = ToolReturn.fromJson(body);
       final session = Session(sessionId: sessionId);
-      await _sdk.callback(session, toolReturn);
+      final completedPending = _completePendingToolReturn(
+        sessionId,
+        toolReturn,
+      );
+      if (!completedPending) {
+        await _sdk.callback(session, toolReturn);
+      }
       return _jsonResponse({'status': 'ok'});
     } catch (e) {
       return _errorResponse(e, 'callback');
@@ -370,9 +407,7 @@ class AgentKitController {
   /// (for /agent/create, /agent/update).
   ///
   /// Only injects when capability.llmConfig is not present.
-  Future<void> _injectLlmConfigForAgentBody(
-    Map<String, dynamic> body,
-  ) async {
+  Future<void> _injectLlmConfigForAgentBody(Map<String, dynamic> body) async {
     final capability = body['capability'];
     if (capability is Map<String, dynamic>) {
       if (capability['llmConfig'] != null) return;
@@ -425,14 +460,101 @@ class AgentKitController {
     String? bundleId,
   }) {
     if (userId == null || bundleId == null) return;
-    _kernelFuture.then((kernel) {
-      if (kernel == null) return;
-      kernel.recordAgentMessage(
-        userId: userId,
-        bundleId: bundleId,
-        agentMessage: agentMessage,
+    _kernelFuture
+        .then((kernel) {
+          if (kernel == null) return;
+          kernel.recordAgentMessage(
+            userId: userId,
+            bundleId: bundleId,
+            agentMessage: agentMessage,
+          );
+        })
+        .catchError((_) {});
+  }
+
+  Future<ToolReturn> _waitExternalToolReturn(
+    String sessionId,
+    FunctionCall functionCall,
+  ) {
+    final key = _toolReturnKey(sessionId, functionCall.id);
+    final completer = Completer<ToolReturn>();
+    final existing = _pendingToolReturns.putIfAbsent(key, () => completer);
+    if (!identical(existing, completer)) {
+      return Future.value(
+        ToolReturn(
+          id: functionCall.id,
+          result: _toolErrorResult(
+            code: 'duplicate_function_call',
+            message: 'A callback is already pending for this function call id.',
+          ),
+        ),
       );
-    }).catchError((_) {});
+    }
+
+    Timer? timeoutTimer;
+    timeoutTimer = Timer(_functionCallTimeout, () {
+      if (!completer.isCompleted) {
+        completer.complete(
+          ToolReturn(
+            id: functionCall.id,
+            result: _toolErrorResult(
+              code: 'callback_timeout',
+              message:
+                  'External callback timed out after ${_functionCallTimeout.inSeconds}s.',
+            ),
+          ),
+        );
+      }
+    });
+
+    return completer.future.whenComplete(() {
+      timeoutTimer?.cancel();
+      _pendingToolReturns.remove(key);
+    });
+  }
+
+  bool _completePendingToolReturn(String sessionId, ToolReturn toolReturn) {
+    final key = _toolReturnKey(sessionId, toolReturn.id);
+    final completer = _pendingToolReturns[key];
+    if (completer == null || completer.isCompleted) {
+      return false;
+    }
+    completer.complete(toolReturn);
+    return true;
+  }
+
+  void _failPendingToolReturnsForSession(
+    String sessionId, {
+    required String code,
+    required String message,
+  }) {
+    final prefix = '$sessionId:';
+    final targets = _pendingToolReturns.entries
+        .where((entry) => entry.key.startsWith(prefix))
+        .toList();
+    for (final entry in targets) {
+      final id = entry.key.substring(prefix.length);
+      final completer = entry.value;
+      if (!completer.isCompleted) {
+        completer.complete(
+          ToolReturn(
+            id: id,
+            result: _toolErrorResult(code: code, message: message),
+          ),
+        );
+      }
+    }
+  }
+
+  String _toolReturnKey(String sessionId, String id) => '$sessionId:$id';
+
+  Map<String, dynamic> _toolErrorResult({
+    required String code,
+    required String message,
+  }) {
+    return {
+      'error': {'code': code, 'message': message},
+    };
   }
 }
 
@@ -440,18 +562,21 @@ class AgentKitController {
 class _GatewayAgentMessageHandler extends AgentMessageHandler {
   final void Function(AgentMessage) _onMessage;
   final void Function(AgentMessageChunk) _onChunk;
+  final Future<ToolReturn> Function(FunctionCall) _onFunctionCall;
   final void Function() _onDone;
   final void Function(Exception) _onError;
 
   _GatewayAgentMessageHandler({
     required void Function(AgentMessage) onMessage,
     required void Function(AgentMessageChunk) onChunk,
+    required Future<ToolReturn> Function(FunctionCall) onFunctionCall,
     required void Function() onDone,
     required void Function(Exception) onError,
-  })  : _onMessage = onMessage,
-        _onChunk = onChunk,
-        _onDone = onDone,
-        _onError = onError;
+  }) : _onMessage = onMessage,
+       _onChunk = onChunk,
+       _onFunctionCall = onFunctionCall,
+       _onDone = onDone,
+       _onError = onError;
 
   @override
   Future<void> onMessage(String sessionId, AgentMessage agentMessage) async {
@@ -464,6 +589,14 @@ class _GatewayAgentMessageHandler extends AgentMessageHandler {
     AgentMessageChunk agentMessageChunk,
   ) async {
     _onChunk(agentMessageChunk);
+  }
+
+  @override
+  Future<ToolReturn> onFunctionCall(
+    String sessionId,
+    FunctionCall functionCall,
+  ) async {
+    return _onFunctionCall(functionCall);
   }
 
   @override

@@ -2,7 +2,7 @@
 支持通过 [Docker](https://www.docker.com/) 运行。
 
 该网关为所有本地 AI 服务提供统一入口：
-- **AgentKit**：智能体管理与对话（代理 LiteAgent）
+- **AgentKit**：智能体管理与对话（基于 LiteAgent SDK）
 - **IntentKit**：意图识别（基于 agentos_kernel）
 - **AppKit**：应用注册与订阅
 - **ToolKit**：工具执行（代理 OpenTool）
@@ -67,11 +67,11 @@ $ curl http://0.0.0.0:20261/version
 
 ## AgentKit API
 
-AgentKit 在 `/agentkit/` 下代理 LiteAgent Server 的接口。请设置
-`LITEAGENT_BASEURL` 为 LiteAgent Server 的 base URL（例如
-`http://127.0.0.1:9527/api/v1`）。所有 AgentKit 路由都需要 Bearer token。
+AgentKit 在 `/agentkit/` 下提供 LiteAgent 兼容接口，并通过 LiteAgent SDK
+执行。默认 LiteAgent 地址来自 `DefaultServiceLocator`：
+`http://127.0.0.1:9527/api/v1`。所有 AgentKit 路由都需要 Bearer token。
 
-支持的代理路由：
+支持的路由：
 
 - `GET /agentkit/version`
 - `GET /agentkit/agent`
@@ -87,6 +87,10 @@ AgentKit 在 `/agentkit/` 下代理 LiteAgent Server 的接口。请设置
 - `GET /agentkit/clear`
 - `POST /agentkit/callback`
 - `POST /agentkit/streamCallback`
+
+`POST /agentkit/chat` 的 SSE 会输出 `message`、`chunk`、`functionCall`。
+外部收到 `functionCall` 后，可调用
+`POST /agentkit/callback?sessionId=...` 并提交 `ToolReturn` 完成该回调。
 
 ## IntentKit API
 
@@ -117,3 +121,5 @@ IntentKit 提供内核驱动的意图识别接口，供意图检测类 App 使�
 - `POST /appkit/register` 注册 app bundle：`{"bundleId": "com.demo"}` -> `{"token": "sk-..."}`。
 - `GET /appkit/subscribe`（需 Bearer token）以 SSE 形式输出事件：
   `event: welcome\ndata: {"bundleId": "..."}\n\n`。
+- 当内核触发 App 调用时，已订阅 App 可能收到：
+  `event: callApp\ndata: {"bundleId":"...","contentList":[...]}\n\n`。

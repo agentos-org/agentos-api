@@ -20,34 +20,6 @@ class AgentInfoDto {
   Map<String, dynamic> toJson() => {'id': id};
 }
 
-class PresetOpenSpec {
-  PresetOpenSpec({required this.systemPrompt, this.openSpec});
-
-  final String systemPrompt;
-  final OpenSpec? openSpec;
-
-  factory PresetOpenSpec.fromJson(Map<String, dynamic> json) {
-    return PresetOpenSpec(
-      systemPrompt: (json['systemPrompt'] ?? '').toString(),
-      openSpec: json['openSpec'] is Map<String, dynamic>
-          ? OpenSpec.fromJson(json['openSpec'] as Map<String, dynamic>)
-          : json['openSpec'] is Map
-              ? OpenSpec.fromJson(
-                  Map<String, dynamic>.from(json['openSpec'] as Map),
-                )
-              : null,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    final payload = <String, dynamic>{'systemPrompt': systemPrompt};
-    if (openSpec != null) {
-      payload['openSpec'] = openSpec!.toJson();
-    }
-    return payload;
-  }
-}
-
 class OpenSpec {
   OpenSpec({
     required this.openSpec,
