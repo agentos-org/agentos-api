@@ -47,13 +47,13 @@ class KernelBootstrapResult {
     final llmPort = await serviceLocator.getServicePort(
       ApiConfig.serviceLlmText,
     );
-    if (llmPort == null) {
+    final llmModelList = await serviceLocator.getLlmModelList();
+    if (llmPort == null && !llmModelList.any((m) => m.isRemote)) {
       return false;
     }
-    final llmModelList = await serviceLocator.getLlmModelList();
     final llmModels = IntentKitInitializer.buildKernelModels(
       llmModelList,
-      llmBaseUrl: 'http://localhost:$llmPort',
+      llmBaseUrl: llmPort != null ? 'http://localhost:$llmPort' : null,
       llmApiKey: llmApiKey,
     );
     if (llmModels.isEmpty) {

@@ -37,6 +37,12 @@ class LlmModelInfo {
   final String type;
   final int contextWindowSize;
 
+  /// Remote model's own base URL. Null means using the local service URL.
+  final String? baseUrl;
+
+  /// Remote model's own API key. Null means using the default key.
+  final String? apiKey;
+
   const LlmModelInfo({
     required this.id,
     required this.name,
@@ -51,7 +57,12 @@ class LlmModelInfo {
     required this.repoId,
     required this.type,
     required this.contextWindowSize,
+    this.baseUrl,
+    this.apiKey,
   });
+
+  /// Whether this model is a remote model with its own endpoint.
+  bool get isRemote => baseUrl != null && baseUrl!.isNotEmpty;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -67,6 +78,8 @@ class LlmModelInfo {
         'repoId': repoId,
         'type': type,
         'contextWindowSize': contextWindowSize,
+        if (baseUrl != null) 'baseUrl': baseUrl,
+        if (apiKey != null) 'apiKey': apiKey,
       };
 }
 

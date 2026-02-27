@@ -25,14 +25,12 @@ class IntentKitInitializer {
     int maxPreferenceResults = 3,
   }) async {
     final llmModelList = await serviceLocator.getLlmModelList();
-    final llmModels = llmBaseUrl == null
-        ? const <kernel.KernelLlmModel>[]
-        : buildKernelModels(
-            llmModelList,
-            llmBaseUrl: llmBaseUrl,
-            llmApiKey: llmApiKey,
-            fallbackModel: fallbackModel,
-          );
+    final llmModels = buildKernelModels(
+      llmModelList,
+      llmBaseUrl: llmBaseUrl,
+      llmApiKey: llmApiKey,
+      fallbackModel: fallbackModel,
+    );
 
     return kernel.KernelServiceConfig(
       liteAgentSdk: liteAgentSdk,
@@ -57,16 +55,20 @@ class IntentKitInitializer {
 
   static List<kernel.KernelLlmModel> buildKernelModels(
     List<LlmModelInfo> models, {
-    required String llmBaseUrl,
-    required String llmApiKey,
+    String? llmBaseUrl,
+    String? llmApiKey,
     String? fallbackModel,
   }) {
     final mapped = models
+        .where((model) {
+          if (model.isRemote) return true;
+          return llmBaseUrl != null && llmBaseUrl.isNotEmpty;
+        })
         .map(
           (model) => kernel.KernelLlmModel(
-            baseUrl: llmBaseUrl,
-            apiKey: llmApiKey,
-            model: model.id,
+            baseUrl: model.baseUrl ?? llmBaseUrl!,
+            apiKey: model.apiKey ?? llmApiKey ?? '',
+            model: model.isRemote ? model.name : model.id,
             description: model.description,
             parameters: model.parameters,
             paramsB: model.paramsB,
@@ -79,13 +81,13 @@ class IntentKitInitializer {
       return mapped;
     }
     final fallback = fallbackModel?.trim();
-    if (fallback == null || fallback.isEmpty) {
+    if (fallback == null || fallback.isEmpty || llmBaseUrl == null) {
       return const [];
     }
     return [
       kernel.KernelLlmModel(
         baseUrl: llmBaseUrl,
-        apiKey: llmApiKey,
+        apiKey: llmApiKey ?? '',
         model: fallback,
         description: 'Configured model',
         parameters: fallback,
