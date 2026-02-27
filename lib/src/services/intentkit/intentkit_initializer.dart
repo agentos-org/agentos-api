@@ -74,6 +74,7 @@ class IntentKitInitializer {
             paramsB: model.paramsB,
             quantization: model.quantization,
             sizeGB: model.sizeGB,
+            contextWindowSize: model.contextWindowSize,
           ),
         )
         .toList();
