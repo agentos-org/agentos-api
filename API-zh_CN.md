@@ -28,15 +28,16 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | `model` | `string` | 是 | 模型名称。 |
 | `temperature` | `number` | 否 | 采样温度。 |
 | `maxTokens` | `number` | 否 | 最大 token 数。 |
+| `contextWindowSize` | `number` | 否 | 上下文窗口大小。 |
 | `topP` | `number` | 否 | Top-p。 |
-| `supportsToolCalling` | `boolean` | 否 | 是否支持工具调用。 |
-| `supportsDeepThinking` | `boolean` | 否 | 是否支持深度思考。 |
+| `supportsToolCall` | `boolean` | 否 | 是否支持工具调用。 |
+| `supportsReasoning` | `boolean` | 否 | 是否支持推理模式。 |
 
 #### ApiKey
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `type` | `string` | 是 | `basic` 或 `bearer`。 |
+| `type` | `string` | 是 | `basic`、`bearer` 或 `original`。 |
 | `apiKey` | `string` | 是 | API key 字符串。 |
 
 #### OpenSpec
@@ -84,7 +85,9 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | `taskPipelineStrategy` | `string` | 否 | `parallel`、`serial`、`reject`。 |
 | `toolPipelineStrategy` | `string` | 否 | `parallel`、`serial`、`reject`。 |
 | `auto` | `boolean` | 否 | 是否自动执行。 |
+| `llmConfigList` | `LLMConfig[]` | 否 | 候选 LLM 配置列表（模型选择/回退）。 |
 | `enableThinking` | `boolean` | 否 | 是否输出推理文本。 |
+| `toolReturnPackMinLength` | `number` | 否 | 工具结果打包返回的最小长度阈值。 |
 
 #### SimpleCapability
 
@@ -132,6 +135,8 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | --- | --- | --- | --- |
 | `content` | `Content[]` | 是 | 消息内容数组。 |
 | `isChunk` | `boolean` | 否 | 是否输出 chunk 事件。 |
+| `extraSystemPrompt` | `string` | 否 | 仅本次任务追加的系统提示词。 |
+| `llmConfig` | `LLMConfig` | 否 | 本次任务覆盖的 LLM 配置。 |
 
 #### ToolReturn
 
@@ -157,7 +162,7 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | `taskId` | `string` | 是 | Task ID。 |
 | `role` | `string` | 是 | `system`、`user`、`agent`、`llm`、`tool`。 |
 | `to` | `string` | 是 | `user`、`agent`、`llm`、`tool`、`client`。 |
-| `type` | `string` | 是 | `text`、`imageUrl`、`contentList`、`functionCall`、`toolCalls`、`toolReturn`、`reflection`、`taskStatus`。 |
+| `type` | `string` | 是 | `text`、`imageUrl`、`dispatch`、`contentList`、`functionCall`、`toolCalls`、`toolReturn`、`reflection`、`taskStatus`、`reasoning`、`reasoningContent`、`planning`。 |
 | `content` | `any` | 是 | 内容，随 `type` 变化。 |
 | `reasoningContent` | `string` | 否 | 推理文本。 |
 | `completions` | `object` | 否 | Token 使用情况。 |
@@ -171,8 +176,12 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | `usage.promptTokens` | `number` | 是 | Prompt tokens。 |
 | `usage.completionTokens` | `number` | 是 | Completion tokens。 |
 | `usage.totalTokens` | `number` | 是 | Total tokens。 |
+| `usage.contextUsageRatio` | `number` | 否 | 上下文窗口使用率（0-1）。 |
 | `id` | `string` | 是 | 模型消息 ID。 |
 | `model` | `string` | 是 | 模型名称。 |
+| `limits` | `object` | 否 | 模型限制信息。 |
+| `limits.maxTokens` | `number` | 是 | 最大输出 token 限制。 |
+| `limits.contextWindowSize` | `number` | 否 | 模型上下文窗口大小。 |
 
 #### AgentMessageChunk
 
@@ -184,7 +193,7 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | `taskId` | `string` | 是 | Task ID。 |
 | `role` | `string` | 是 | `system`、`user`、`agent`、`llm`、`tool`。 |
 | `to` | `string` | 是 | `user`、`agent`、`llm`、`tool`、`client`。 |
-| `type` | `string` | 是 | `text`、`imageUrl`、`contentList`、`functionCall`、`toolCalls`、`toolReturn`、`reflection`、`taskStatus`。 |
+| `type` | `string` | 是 | `text`、`imageUrl`、`dispatch`、`contentList`、`functionCall`、`toolCalls`、`toolReturn`、`reflection`、`taskStatus`、`reasoning`、`reasoningContent`、`planning`。 |
 | `part` | `any` | 是 | 分片内容，随 `type` 变化。 |
 | `createTime` | `string` | 是 | ISO 时间。 |
 

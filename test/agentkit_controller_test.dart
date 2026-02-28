@@ -25,6 +25,7 @@ class _FunctionCallLiteAgentSDK extends LiteAgentSDK {
   _FunctionCallLiteAgentSDK() : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
 
   ToolReturn? forwardedCallback;
+  UserTask? capturedUserTask;
   final Completer<ToolReturn> functionReturnCompleter = Completer<ToolReturn>();
 
   @override
@@ -33,6 +34,7 @@ class _FunctionCallLiteAgentSDK extends LiteAgentSDK {
     UserTask userTask,
     AgentMessageHandler agentMessageHandler,
   ) async {
+    capturedUserTask = userTask;
     unawaited(() async {
       final toolReturn = await agentMessageHandler.onFunctionCall(
         session.sessionId,
@@ -52,6 +54,76 @@ class _FunctionCallLiteAgentSDK extends LiteAgentSDK {
   @override
   Future<void> callback(Session session, ToolReturn toolReturn) async {
     forwardedCallback = toolReturn;
+  }
+}
+
+class _ReasoningLiteAgentSDK extends LiteAgentSDK {
+  _ReasoningLiteAgentSDK() : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
+
+  @override
+  Future<void> chat(
+    Session session,
+    UserTask userTask,
+    AgentMessageHandler agentMessageHandler,
+  ) async {
+    unawaited(() async {
+      await agentMessageHandler.onMessage(
+        session.sessionId,
+        AgentMessage(
+          sessionId: session.sessionId,
+          taskId: 'task-reasoning',
+          role: AgentRoleType.LLM,
+          to: AgentRoleType.CLIENT,
+          type: AgentMessageType.REASONING,
+          content: 'step-by-step reasoning',
+          createTime: DateTime.now(),
+        ),
+      );
+      await agentMessageHandler.onMessage(
+        session.sessionId,
+        AgentMessage(
+          sessionId: session.sessionId,
+          taskId: 'task-dispatch',
+          role: AgentRoleType.AGENT,
+          to: AgentRoleType.CLIENT,
+          type: AgentMessageType.DISPATCH,
+          content: <Map<String, dynamic>>[
+            <String, dynamic>{'sessionId': 's-sub', 'taskId': 't-sub'},
+          ],
+          createTime: DateTime.now(),
+        ),
+      );
+      await agentMessageHandler.onChunk(
+        session.sessionId,
+        AgentMessageChunk(
+          sessionId: session.sessionId,
+          taskId: 'task-reasoning',
+          role: AgentRoleType.LLM,
+          to: AgentRoleType.CLIENT,
+          type: AgentMessageType.REASONING,
+          part: 'partial reasoning',
+          createTime: DateTime.now(),
+        ),
+      );
+      await agentMessageHandler.onChunk(
+        session.sessionId,
+        AgentMessageChunk(
+          sessionId: session.sessionId,
+          taskId: 'task-planning',
+          role: AgentRoleType.AGENT,
+          to: AgentRoleType.CLIENT,
+          type: AgentMessageType.PLANNING,
+          part: <String, dynamic>{
+            'planId': 'p-1',
+            'plans': <Map<String, dynamic>>[
+              <String, dynamic>{'id': 'step-1', 'description': 'analyze'},
+            ],
+          },
+          createTime: DateTime.now(),
+        ),
+      );
+      await agentMessageHandler.onDone();
+    }());
   }
 }
 
@@ -154,6 +226,37 @@ void main() {
       fakeSdk.capturedSimpleCapability!.llmConfig?.model,
       'explicit-model',
     );
+  });
+
+  test('keeps provided null llmConfig.apiKey for /initSimple', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSimple'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'systemPrompt': 'hello',
+          'llmConfig': <String, dynamic>{
+            'baseUrl': 'http://127.0.0.1:60000',
+            'apiKey': null,
+            'model': 'explicit-model',
+          },
+        }),
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedSimpleCapability, isNotNull);
+    expect(fakeSdk.capturedSimpleCapability!.llmConfig?.apiKey, isNull);
   });
 
   test('no injection when kernel is null', () async {
@@ -264,6 +367,43 @@ void main() {
     },
   );
 
+  test('keeps blank llmConfig.apiKey for /chat', () async {
+    final fakeSdk = _FunctionCallLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final chatResponse = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/chat?sessionId=s1'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'content': <Map<String, dynamic>>[
+            <String, dynamic>{'type': 'text', 'message': 'hi'},
+          ],
+          'llmConfig': <String, dynamic>{
+            'baseUrl': 'http://127.0.0.1:60000',
+            'apiKey': '   ',
+            'model': 'explicit-model',
+          },
+        }),
+      ),
+    );
+
+    expect(chatResponse.statusCode, 200);
+    expect(fakeSdk.capturedUserTask, isNotNull);
+    expect(fakeSdk.capturedUserTask!.llmConfig?.apiKey, '   ');
+    final firstChunk = await chatResponse.read().first.timeout(
+      const Duration(seconds: 2),
+    );
+    expect(utf8.decode(firstChunk), contains('event:functionCall'));
+  });
+
   test(
     'keeps legacy /callback forwarding when no pending functionCall exists',
     () async {
@@ -292,6 +432,45 @@ void main() {
       expect(fakeSdk.forwardedCallback, isNotNull);
       expect(fakeSdk.forwardedCallback!.id, 'standalone-fn');
       expect(fakeSdk.forwardedCallback!.result['value'], 1);
+    },
+  );
+
+  test(
+    'forwards reasoning/dispatch/planning message chunk types via SSE',
+    () async {
+    final fakeSdk = _ReasoningLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final chatResponse = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/chat?sessionId=s-reasoning'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'content': <Map<String, dynamic>>[
+            <String, dynamic>{'type': 'text', 'message': 'hi'},
+          ],
+        }),
+      ),
+    );
+
+    expect(chatResponse.statusCode, 200);
+    final sseText = await chatResponse
+        .read()
+        .transform(utf8.decoder)
+        .join()
+        .timeout(const Duration(seconds: 2));
+    expect(sseText, contains('event:message'));
+    expect(sseText, contains('event:chunk'));
+    expect(sseText, contains('"type":"reasoning"'));
+    expect(sseText, contains('"type":"dispatch"'));
+    expect(sseText, contains('"type":"planning"'));
     },
   );
 }

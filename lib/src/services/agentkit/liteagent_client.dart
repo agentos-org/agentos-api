@@ -70,8 +70,8 @@ class LiteagentClient {
       'maxTokens': llm.maxTokens,
       'contextWindowSize': llm.contextWindowSize,
       'topP': llm.topP,
-      'supportsToolCalling': llm.supportsToolCalling,
-      'supportsDeepThinking': llm.supportsDeepThinking,
+      'supportsToolCall': llm.supportsToolCalling,
+      'supportsReasoning': llm.supportsDeepThinking,
     };
     result.removeWhere((_, value) => value == null);
     return result;

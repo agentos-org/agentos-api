@@ -30,15 +30,16 @@ If backend/sdk operation fails, the gateway may return `502`.
 | `model` | `string` | Yes | Model name. |
 | `temperature` | `number` | No | Sampling temperature. |
 | `maxTokens` | `number` | No | Max tokens. |
+| `contextWindowSize` | `number` | No | Context window size. |
 | `topP` | `number` | No | Top-p. |
-| `supportsToolCalling` | `boolean` | No | Whether tool calling is supported. |
-| `supportsDeepThinking` | `boolean` | No | Whether deep thinking is supported. |
+| `supportsToolCall` | `boolean` | No | Whether tool calling is supported. |
+| `supportsReasoning` | `boolean` | No | Whether reasoning mode is supported. |
 
 #### ApiKey
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `type` | `string` | Yes | `basic` or `bearer`. |
+| `type` | `string` | Yes | `basic`, `bearer`, or `original`. |
 | `apiKey` | `string` | Yes | API key string. |
 
 #### OpenSpec
@@ -86,7 +87,9 @@ If backend/sdk operation fails, the gateway may return `502`.
 | `taskPipelineStrategy` | `string` | No | `parallel`, `serial`, `reject`. |
 | `toolPipelineStrategy` | `string` | No | `parallel`, `serial`, `reject`. |
 | `auto` | `boolean` | No | Auto-run tasks. |
+| `llmConfigList` | `LLMConfig[]` | No | Candidate LLM configs for model selection/fallback. |
 | `enableThinking` | `boolean` | No | Enable reasoning output. |
+| `toolReturnPackMinLength` | `number` | No | Minimum packed length before returning tool output. |
 
 #### SimpleCapability
 
@@ -134,6 +137,8 @@ If backend/sdk operation fails, the gateway may return `502`.
 | --- | --- | --- | --- |
 | `content` | `Content[]` | Yes | Message content list. |
 | `isChunk` | `boolean` | No | Emit chunk events when true. |
+| `extraSystemPrompt` | `string` | No | Extra system prompt applied for this task only. |
+| `llmConfig` | `LLMConfig` | No | Per-task LLM override. |
 
 #### ToolReturn
 
@@ -159,7 +164,7 @@ If backend/sdk operation fails, the gateway may return `502`.
 | `taskId` | `string` | Yes | Task ID. |
 | `role` | `string` | Yes | `system`, `user`, `agent`, `llm`, `tool`. |
 | `to` | `string` | Yes | `user`, `agent`, `llm`, `tool`, `client`. |
-| `type` | `string` | Yes | `text`, `imageUrl`, `contentList`, `functionCall`, `toolCalls`, `toolReturn`, `reflection`, `taskStatus`. |
+| `type` | `string` | Yes | `text`, `imageUrl`, `dispatch`, `contentList`, `functionCall`, `toolCalls`, `toolReturn`, `reflection`, `taskStatus`, `reasoning`, `reasoningContent`, `planning`. |
 | `content` | `any` | Yes | Content payload, shape depends on `type`. |
 | `reasoningContent` | `string` | No | Model reasoning text. |
 | `completions` | `object` | No | Token usage info. |
@@ -173,8 +178,12 @@ If backend/sdk operation fails, the gateway may return `502`.
 | `usage.promptTokens` | `number` | Yes | Prompt tokens. |
 | `usage.completionTokens` | `number` | Yes | Completion tokens. |
 | `usage.totalTokens` | `number` | Yes | Total tokens. |
+| `usage.contextUsageRatio` | `number` | No | Context window usage ratio (0-1). |
 | `id` | `string` | Yes | Model message ID. |
 | `model` | `string` | Yes | Model name. |
+| `limits` | `object` | No | Model limits info. |
+| `limits.maxTokens` | `number` | Yes | Max output tokens limit. |
+| `limits.contextWindowSize` | `number` | No | Model context window size. |
 
 #### AgentMessageChunk
 
@@ -186,7 +195,7 @@ If backend/sdk operation fails, the gateway may return `502`.
 | `taskId` | `string` | Yes | Task ID. |
 | `role` | `string` | Yes | `system`, `user`, `agent`, `llm`, `tool`. |
 | `to` | `string` | Yes | `user`, `agent`, `llm`, `tool`, `client`. |
-| `type` | `string` | Yes | `text`, `imageUrl`, `contentList`, `functionCall`, `toolCalls`, `toolReturn`, `reflection`, `taskStatus`. |
+| `type` | `string` | Yes | `text`, `imageUrl`, `dispatch`, `contentList`, `functionCall`, `toolCalls`, `toolReturn`, `reflection`, `taskStatus`, `reasoning`, `reasoningContent`, `planning`. |
 | `part` | `any` | Yes | Partial payload, shape depends on `type`. |
 | `createTime` | `string` | Yes | ISO timestamp. |
 
