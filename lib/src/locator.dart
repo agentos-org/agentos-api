@@ -35,7 +35,7 @@ class LlmModelInfo {
   final List<String> tags;
   final String repoId;
   final String type;
-  final int contextWindowSize;
+  final int? contextWindowSize;
 
   /// Remote model's own base URL. Null means using the local service URL.
   final String? baseUrl;
@@ -56,7 +56,7 @@ class LlmModelInfo {
     required this.tags,
     required this.repoId,
     required this.type,
-    required this.contextWindowSize,
+    this.contextWindowSize,
     this.baseUrl,
     this.apiKey,
   });
@@ -77,7 +77,7 @@ class LlmModelInfo {
         'tags': tags,
         'repoId': repoId,
         'type': type,
-        'contextWindowSize': contextWindowSize,
+        if (contextWindowSize != null) 'contextWindowSize': contextWindowSize,
         if (baseUrl != null) 'baseUrl': baseUrl,
         if (apiKey != null) 'apiKey': apiKey,
       };
