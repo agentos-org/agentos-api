@@ -1,3 +1,44 @@
+import 'dart:async';
+
+/// Unified service state across all service types
+enum ServiceState { stopped, starting, running, error }
+
+/// Service status change event emitted by [AgentOSServiceLocator.serviceStatusStream]
+class ServiceStatusEvent {
+  /// Service identifier (matches [ApiConfig] service constants)
+  final String serviceKey;
+
+  final ServiceState state;
+
+  /// Service port when running; null otherwise
+  final int? port;
+
+  final String? message;
+
+  /// Model identifier for LLM services (e.g. 'qwen-2.5-7b-q4').
+  /// Null for non-LLM services.
+  final String? modelId;
+
+  /// Model type string for LLM services (e.g. 'textGeneration', 'audioTextToText').
+  /// Matches [LlmModelInfo.type]. Null for non-LLM services.
+  final String? modelType;
+
+  const ServiceStatusEvent({
+    required this.serviceKey,
+    required this.state,
+    this.port,
+    this.message,
+    this.modelId,
+    this.modelType,
+  });
+
+  @override
+  String toString() =>
+      'ServiceStatusEvent($serviceKey, $state, port=$port'
+      '${modelId != null ? ", model=$modelId" : ""}'
+      '${modelType != null ? ", type=$modelType" : ""}'
+      '${message != null ? ", $message" : ""})';
+}
 
 /// App information
 class AppInfo {
@@ -99,6 +140,15 @@ abstract class AgentOSServiceLocator {
   /// Gets the LiteAgent service base URL
   String get liteagentBaseUrl;
 
+  /// Stream of service status change events
+  ///
+  /// Emits [ServiceStatusEvent] whenever a managed service transitions
+  /// between states (stopped/starting/running/error).
+  ///
+  /// Default (static) locators return an empty stream.
+  /// Desktop implementations aggregate all local service status streams.
+  Stream<ServiceStatusEvent> get serviceStatusStream;
+
   /// Gets the port number for the specified service
   ///
   /// [serviceKey] Service identifier, supported values:
@@ -128,6 +178,7 @@ abstract class AgentOSServiceLocator {
   /// Returns LLM models registered by external implementations.
   /// Default implementation returns empty list.
   Future<List<LlmModelInfo>> getLlmModelList();
+
 }
 
 /// Default Service Locator Implementation
@@ -179,4 +230,7 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
   Future<List<LlmModelInfo>> getLlmModelList() async {
     return const [];
   }
+
+  @override
+  Stream<ServiceStatusEvent> get serviceStatusStream => const Stream.empty();
 }

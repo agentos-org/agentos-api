@@ -33,6 +33,9 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
     }
     return null;
   }
+
+  @override
+  Stream<ServiceStatusEvent> get serviceStatusStream => const Stream.empty();
 }
 
 class _FakeKernelService implements KernelService {

@@ -19,6 +19,9 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
 
   @override
   Future<int?> getServicePort(String serviceKey, {String? modelId}) async => null;
+
+  @override
+  Stream<ServiceStatusEvent> get serviceStatusStream => const Stream.empty();
 }
 
 void main() {
