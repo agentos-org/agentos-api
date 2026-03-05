@@ -6,6 +6,21 @@ import '../../locator.dart';
 class IntentKitInitializer {
   IntentKitInitializer._();
 
+  static const Set<String> _nonTextModelTypeDenylist = {
+    'embedding',
+    'llm_embedding',
+    'image',
+    'vision',
+    'image_text_to_text',
+    'imagetexttotext',
+    'text_to_speech',
+    'texttospeech',
+    'tts',
+    'audio_text_to_text',
+    'audiotexttotext',
+    'asr',
+  };
+
   static Future<kernel.KernelServiceConfig?> buildKernelConfig({
     required AgentOSServiceLocator serviceLocator,
     required LiteAgentSDK liteAgentSdk,
@@ -60,6 +75,7 @@ class IntentKitInitializer {
     String? fallbackModel,
   }) {
     final mapped = models
+        .where(_isTextGenerationModel)
         .where((model) {
           if (model.isRemote) return true;
           return llmBaseUrl != null && llmBaseUrl.isNotEmpty;
@@ -97,5 +113,29 @@ class IntentKitInitializer {
         sizeGB: 0,
       ),
     ];
+  }
+
+  static bool isTextGenerationModel(LlmModelInfo model) {
+    return _isTextGenerationModel(model);
+  }
+
+  static bool _isTextGenerationModel(LlmModelInfo model) {
+    final normalizedType = model.type.trim().toLowerCase();
+    if (normalizedType.isEmpty) {
+      return true;
+    }
+    if (_nonTextModelTypeDenylist.contains(normalizedType)) {
+      return false;
+    }
+    if (normalizedType.contains('embedding') ||
+        normalizedType.contains('vision') ||
+        normalizedType.contains('image') ||
+        normalizedType.contains('speech') ||
+        normalizedType.contains('audio') ||
+        normalizedType.contains('asr') ||
+        normalizedType.contains('tts')) {
+      return false;
+    }
+    return true;
   }
 }

@@ -18,7 +18,8 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
   Future<List<LlmModelInfo>> getLlmModelList() async => models;
 
   @override
-  Future<int?> getServicePort(String serviceKey, {String? modelId}) async => null;
+  Future<int?> getServicePort(String serviceKey, {String? modelId}) async =>
+      null;
 
   @override
   Stream<ServiceStatusEvent> get serviceStatusStream => const Stream.empty();
@@ -73,4 +74,69 @@ void main() {
       expect(config.llm!.models.single.model, 'qwen');
     },
   );
+
+  test('buildKernelModels filters out non-text models', () {
+    final models = IntentKitInitializer.buildKernelModels(const [
+      LlmModelInfo(
+        id: 'bge-large-zh-v1.5-q8_0',
+        name: 'bge-large-zh-v1.5-q8_0',
+        alias: 'bge-large-zh-v1.5-q8_0',
+        description: 'embedding model',
+        parameters: 'embedding',
+        paramsB: 0,
+        quantization: 'q8_0',
+        sizeGB: 0,
+        minRAMGB: 0,
+        downloadUrl: '',
+        tags: ['embedding'],
+        repoId: 'repo',
+        type: 'llm_embedding',
+        contextWindowSize: 4096,
+      ),
+      LlmModelInfo(
+        id: 'qwen3-8b',
+        name: 'qwen3-8b',
+        alias: 'qwen3-8b',
+        description: 'text model',
+        parameters: '8B',
+        paramsB: 8,
+        quantization: 'q4',
+        sizeGB: 0,
+        minRAMGB: 0,
+        downloadUrl: '',
+        tags: ['chat'],
+        repoId: 'repo',
+        type: 'text',
+        contextWindowSize: 8192,
+      ),
+    ], llmBaseUrl: 'http://127.0.0.1:52010');
+
+    expect(models.length, 1);
+    expect(models.single.model, 'qwen3-8b');
+    expect(models.single.contextWindowSize, 8192);
+  });
+
+  test('buildKernelModels accepts desktop textGeneration model type', () {
+    final models = IntentKitInitializer.buildKernelModels(const [
+      LlmModelInfo(
+        id: 'qwen3-8b',
+        name: 'qwen3-8b',
+        alias: 'qwen3-8b',
+        description: 'text model',
+        parameters: '8B',
+        paramsB: 8,
+        quantization: 'q4',
+        sizeGB: 0,
+        minRAMGB: 0,
+        downloadUrl: '',
+        tags: ['chat'],
+        repoId: 'repo',
+        type: 'textGeneration',
+        contextWindowSize: 8192,
+      ),
+    ], llmBaseUrl: 'http://127.0.0.1:52010');
+
+    expect(models.length, 1);
+    expect(models.single.model, 'qwen3-8b');
+  });
 }

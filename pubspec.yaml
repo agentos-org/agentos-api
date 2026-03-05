@@ -1,7 +1,7 @@
 name: agentos_api
 description: A server app using the shelf package and Docker.
 version: 1.0.0
-# repository: https://github.com/my_org/my_repo
+repository: https://github.com/agentos-org/agentos-api
 
 environment:
   sdk: ^3.10.4
@@ -13,10 +13,8 @@ dependencies:
   hive: ^2.2.3
   logging: ^1.2.0
   unique_id_dart: ^1.0.0
-  liteagent_sdk_dart:
-    path: ../liteagent_sdk_dart
-  opentool_dart:
-    path: ../opentool-hub/opentool-dart
+  liteagent_sdk_dart: ^0.2.1
+  opentool_dart: ^2.0.0
   agentos_kernel:
     path: ../agentos-kernel
 

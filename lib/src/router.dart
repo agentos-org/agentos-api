@@ -98,6 +98,7 @@ Router createGatewayRouter({
     sdk: liteAgentSdk,
     appKitService: appKitService,
     kernelFuture: kernelFuture,
+    serviceLocator: serviceLocator,
   );
   router.mount('${ApiConfig.agentkitPath}/', agentKitController.router.call);
 

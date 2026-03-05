@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:agentos_api/src/controllers/agentkit/agentkit_controller.dart';
-import 'package:agentos_kernel/agentos_kernel.dart';
+import 'package:agentos_api/src/config.dart';
+import 'package:agentos_api/src/locator.dart';
+import 'package:agentos_kernel/agentos_kernel.dart' hide AppInfo;
 import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'package:opentool_dart/opentool_client.dart';
 import 'package:shelf/shelf.dart';
@@ -13,10 +15,19 @@ class _FakeLiteAgentSDK extends LiteAgentSDK {
   _FakeLiteAgentSDK() : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
 
   SimpleCapability? capturedSimpleCapability;
+  Capability? capturedCapability;
+  String? capturedInitSessionAgentId;
 
   @override
   Future<Session> initSimple(SimpleCapability simpleCapability) async {
     capturedSimpleCapability = simpleCapability;
+    return Session(sessionId: 'test-session');
+  }
+
+  @override
+  Future<Session> initSession({Capability? capability, String? agentId}) async {
+    capturedCapability = capability;
+    capturedInitSessionAgentId = agentId;
     return Session(sessionId: 'test-session');
   }
 }
@@ -127,6 +138,39 @@ class _ReasoningLiteAgentSDK extends LiteAgentSDK {
   }
 }
 
+class _FakeServiceLocator implements AgentOSServiceLocator {
+  _FakeServiceLocator({
+    this.models = const [],
+    this.textPortByModelId = const {},
+  });
+
+  final List<LlmModelInfo> models;
+  final Map<String, int> textPortByModelId;
+
+  @override
+  String get liteagentBaseUrl => 'http://127.0.0.1:9527/api/v1';
+
+  @override
+  Future<List<AppInfo>> getAppInfoList() async => const [];
+
+  @override
+  Future<List<LlmModelInfo>> getLlmModelList() async => models;
+
+  @override
+  Future<int?> getServicePort(String serviceKey, {String? modelId}) async {
+    if (serviceKey != ApiConfig.serviceLlmText) {
+      return null;
+    }
+    if (modelId != null) {
+      return textPortByModelId[modelId];
+    }
+    return 52010;
+  }
+
+  @override
+  Stream<ServiceStatusEvent> get serviceStatusStream => const Stream.empty();
+}
+
 /// A minimal fake KernelService that provides a configurable LLMConfig.
 class _FakeKernelService implements KernelService {
   _FakeKernelService({this.availableLlmConfig});
@@ -144,44 +188,109 @@ class _FakeKernelService implements KernelService {
 }
 
 void main() {
-  test(
-    'injects llmConfig fallback for /initSimple when llmConfig is absent',
-    () async {
-      final fakeSdk = _FakeLiteAgentSDK();
-      final fakeKernel = _FakeKernelService(
-        availableLlmConfig: LLMConfig(
-          baseUrl: 'http://127.0.0.1:52010',
-          apiKey: '',
-          model: 'qwen',
-        ),
-      );
+  test('maps llmConfig.modelId to model for /initSession', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+      serviceLocator: _FakeServiceLocator(
+        textPortByModelId: const {'qwen3-8b': 52010},
+        models: const [
+          LlmModelInfo(
+            id: 'qwen3-8b',
+            name: 'qwen3-8b',
+            alias: 'qwen3-8b',
+            description: 'text model',
+            parameters: '8B',
+            paramsB: 8,
+            quantization: 'q4',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['chat'],
+            repoId: 'repo',
+            type: 'textGeneration',
+            contextWindowSize: 8192,
+          ),
+        ],
+      ),
+    );
 
-      final controller = AgentKitController(
-        sdk: fakeSdk,
-        kernelFuture: Future.value(fakeKernel),
-      );
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSession'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'systemPrompt': 'hello',
+          'llmConfig': <String, dynamic>{'modelId': 'qwen3-8b'},
+        }),
+      ),
+    );
 
-      final response = await controller.router.call(
-        Request(
-          'POST',
-          Uri.parse('http://localhost/initSimple'),
-          headers: <String, String>{
-            'authorization': 'Bearer user-token',
-            'content-type': 'application/json',
-          },
-          body: jsonEncode(<String, dynamic>{'systemPrompt': 'hello'}),
-        ),
-      );
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedCapability, isNotNull);
+    expect(fakeSdk.capturedCapability!.llmConfig?.model, 'qwen3-8b');
+    expect(
+      fakeSdk.capturedCapability!.llmConfig?.baseUrl,
+      'http://127.0.0.1:52010',
+    );
+  });
 
-      expect(response.statusCode, 200);
-      expect(fakeSdk.capturedSimpleCapability, isNotNull);
-      expect(
-        fakeSdk.capturedSimpleCapability!.llmConfig?.baseUrl,
-        'http://127.0.0.1:52010',
-      );
-      expect(fakeSdk.capturedSimpleCapability!.llmConfig?.model, 'qwen');
-    },
-  );
+  test('maps llmConfig.modelId to model for /initSimple', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+      serviceLocator: _FakeServiceLocator(
+        textPortByModelId: const {'qwen3-8b': 52010},
+        models: const [
+          LlmModelInfo(
+            id: 'qwen3-8b',
+            name: 'qwen3-8b',
+            alias: 'qwen3-8b',
+            description: 'text model',
+            parameters: '8B',
+            paramsB: 8,
+            quantization: 'q4',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['chat'],
+            repoId: 'repo',
+            type: 'textGeneration',
+            contextWindowSize: 8192,
+          ),
+        ],
+      ),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSimple'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'systemPrompt': 'hello',
+          'llmConfig': <String, dynamic>{'modelId': 'qwen3-8b'},
+        }),
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedSimpleCapability, isNotNull);
+    expect(fakeSdk.capturedSimpleCapability!.llmConfig?.model, 'qwen3-8b');
+    expect(
+      fakeSdk.capturedSimpleCapability!.llmConfig?.baseUrl,
+      'http://127.0.0.1:52010',
+    );
+  });
 
   test('keeps provided llmConfig for /initSimple without overriding', () async {
     final fakeSdk = _FakeLiteAgentSDK();
@@ -192,7 +301,6 @@ void main() {
         model: 'fallback-model',
       ),
     );
-
     final controller = AgentKitController(
       sdk: fakeSdk,
       kernelFuture: Future.value(fakeKernel),
@@ -228,6 +336,140 @@ void main() {
     );
   });
 
+  test('fills empty systemPrompt when missing for /initSession', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSession'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'llmConfig': <String, dynamic>{
+            'baseUrl': 'http://127.0.0.1:52010',
+            'model': 'qwen3-8b',
+          },
+        }),
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedCapability, isNotNull);
+    expect(fakeSdk.capturedCapability!.systemPrompt, '');
+  });
+
+  test(
+    'avoids null cast for /initSession when llmConfig.modelId has null fields',
+    () async {
+      final fakeSdk = _FakeLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+        serviceLocator: _FakeServiceLocator(
+          textPortByModelId: const {'qwen3-8b': 52010},
+          models: const [
+            LlmModelInfo(
+              id: 'qwen3-8b',
+              name: 'qwen3-8b',
+              alias: 'qwen3-8b',
+              description: 'text model',
+              parameters: '8B',
+              paramsB: 8,
+              quantization: 'q4',
+              sizeGB: 0,
+              minRAMGB: 0,
+              downloadUrl: '',
+              tags: ['chat'],
+              repoId: 'repo',
+              type: 'textGeneration',
+              contextWindowSize: 8192,
+            ),
+          ],
+        ),
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'hello',
+            'llmConfig': <String, dynamic>{
+              'modelId': 'qwen3-8b',
+              'apiKey': null,
+            },
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      expect(fakeSdk.capturedCapability, isNotNull);
+      expect(fakeSdk.capturedCapability!.llmConfig?.apiKey, isNotNull);
+      expect(
+        fakeSdk.capturedCapability!.llmConfig?.baseUrl,
+        'http://127.0.0.1:52010',
+      );
+    },
+  );
+
+  test(
+    'uses supervision llmConfig when modelId and direct core are all null',
+    () async {
+      final fakeSdk = _FakeLiteAgentSDK();
+      final fakeKernel = _FakeKernelService(
+        availableLlmConfig: LLMConfig(
+          baseUrl: 'http://127.0.0.1:52010',
+          apiKey: '',
+          model: 'qwen',
+        ),
+      );
+
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(fakeKernel),
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSimple'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'hello',
+            'llmConfig': <String, dynamic>{
+              'modelId': null,
+              'baseUrl': null,
+              'apiKey': null,
+              'model': null,
+            },
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      expect(fakeSdk.capturedSimpleCapability, isNotNull);
+      expect(
+        fakeSdk.capturedSimpleCapability!.llmConfig?.baseUrl,
+        'http://127.0.0.1:52010',
+      );
+      expect(fakeSdk.capturedSimpleCapability!.llmConfig?.model, 'qwen');
+    },
+  );
+
   test('keeps provided null llmConfig.apiKey for /initSimple', () async {
     final fakeSdk = _FakeLiteAgentSDK();
     final controller = AgentKitController(
@@ -257,6 +499,209 @@ void main() {
     expect(response.statusCode, 200);
     expect(fakeSdk.capturedSimpleCapability, isNotNull);
     expect(fakeSdk.capturedSimpleCapability!.llmConfig?.apiKey, isNull);
+  });
+
+  test('resolves llmConfig by modelId for /initSimple', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+      serviceLocator: _FakeServiceLocator(
+        textPortByModelId: const {'qwen3-8b': 52010},
+        models: const [
+          LlmModelInfo(
+            id: 'qwen3-8b',
+            name: 'qwen3-8b',
+            alias: 'qwen3-8b',
+            description: 'text model',
+            parameters: '8B',
+            paramsB: 8,
+            quantization: 'q4',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['chat'],
+            repoId: 'repo',
+            type: 'textGeneration',
+            contextWindowSize: 8192,
+          ),
+        ],
+      ),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSimple'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'systemPrompt': 'hello',
+          'llmConfig': <String, dynamic>{'modelId': 'qwen3-8b'},
+        }),
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedSimpleCapability, isNotNull);
+    expect(
+      fakeSdk.capturedSimpleCapability!.llmConfig?.baseUrl,
+      'http://127.0.0.1:52010',
+    );
+    expect(fakeSdk.capturedSimpleCapability!.llmConfig?.model, 'qwen3-8b');
+    expect(
+      fakeSdk.capturedSimpleCapability!.llmConfig?.contextWindowSize,
+      8192,
+    );
+  });
+
+  test(
+    'ignores null overrides when resolving llmConfig by modelId for /initSimple',
+    () async {
+      final fakeSdk = _FakeLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+        serviceLocator: _FakeServiceLocator(
+          textPortByModelId: const {'qwen3-8b': 52010},
+          models: const [
+            LlmModelInfo(
+              id: 'qwen3-8b',
+              name: 'qwen3-8b',
+              alias: 'qwen3-8b',
+              description: 'text model',
+              parameters: '8B',
+              paramsB: 8,
+              quantization: 'q4',
+              sizeGB: 0,
+              minRAMGB: 0,
+              downloadUrl: '',
+              tags: ['chat'],
+              repoId: 'repo',
+              type: 'textGeneration',
+              contextWindowSize: 8192,
+            ),
+          ],
+        ),
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSimple'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'hello',
+            'llmConfig': <String, dynamic>{
+              'modelId': 'qwen3-8b',
+              'apiKey': null,
+            },
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      expect(fakeSdk.capturedSimpleCapability, isNotNull);
+      expect(fakeSdk.capturedSimpleCapability!.llmConfig?.apiKey, isNotNull);
+      expect(
+        fakeSdk.capturedSimpleCapability!.llmConfig?.baseUrl,
+        'http://127.0.0.1:52010',
+      );
+    },
+  );
+
+  test(
+    'allows non-null extra field override when resolving llmConfig by modelId',
+    () async {
+      final fakeSdk = _FakeLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+        serviceLocator: _FakeServiceLocator(
+          textPortByModelId: const {'qwen3-8b': 52010},
+          models: const [
+            LlmModelInfo(
+              id: 'qwen3-8b',
+              name: 'qwen3-8b',
+              alias: 'qwen3-8b',
+              description: 'text model',
+              parameters: '8B',
+              paramsB: 8,
+              quantization: 'q4',
+              sizeGB: 0,
+              minRAMGB: 0,
+              downloadUrl: '',
+              tags: ['chat'],
+              repoId: 'repo',
+              type: 'textGeneration',
+              contextWindowSize: 8192,
+            ),
+          ],
+        ),
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSimple'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'hello',
+            'llmConfig': <String, dynamic>{
+              'modelId': 'qwen3-8b',
+              'temperature': 0.66,
+            },
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      expect(fakeSdk.capturedSimpleCapability, isNotNull);
+      expect(fakeSdk.capturedSimpleCapability!.llmConfig?.temperature, 0.66);
+      expect(
+        fakeSdk.capturedSimpleCapability!.llmConfig?.baseUrl,
+        'http://127.0.0.1:52010',
+      );
+    },
+  );
+
+  test('drops llmConfig when modelId cannot be resolved', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+      serviceLocator: _FakeServiceLocator(
+        textPortByModelId: const {'qwen3-8b': 52010},
+        models: const [],
+      ),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSimple'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'systemPrompt': 'hello',
+          'llmConfig': <String, dynamic>{'modelId': 'unknown-model'},
+        }),
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedSimpleCapability, isNotNull);
+    expect(fakeSdk.capturedSimpleCapability!.llmConfig, isNull);
   });
 
   test('no injection when kernel is null', () async {
@@ -404,6 +849,67 @@ void main() {
     expect(utf8.decode(firstChunk), contains('event:functionCall'));
   });
 
+  test('resolves llmConfig by modelId for /chat', () async {
+    final fakeSdk = _FunctionCallLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+      serviceLocator: _FakeServiceLocator(
+        models: const [
+          LlmModelInfo(
+            id: 'remote-gpt',
+            name: 'gpt-4.1',
+            alias: 'gpt-4.1',
+            description: 'remote model',
+            parameters: 'remote',
+            paramsB: 0,
+            quantization: 'none',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['chat'],
+            repoId: 'remote',
+            type: 'text',
+            contextWindowSize: 128000,
+            baseUrl: 'https://example.test/v1',
+            apiKey: 'remote-key',
+            isCustom: true,
+          ),
+        ],
+      ),
+    );
+
+    final chatResponse = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/chat?sessionId=s1'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'content': <Map<String, dynamic>>[
+            <String, dynamic>{'type': 'text', 'message': 'hi'},
+          ],
+          'llmConfig': <String, dynamic>{'modelId': 'remote-gpt'},
+        }),
+      ),
+    );
+
+    expect(chatResponse.statusCode, 200);
+    expect(fakeSdk.capturedUserTask, isNotNull);
+    expect(
+      fakeSdk.capturedUserTask!.llmConfig?.baseUrl,
+      'https://example.test/v1',
+    );
+    expect(fakeSdk.capturedUserTask!.llmConfig?.apiKey, 'remote-key');
+    expect(fakeSdk.capturedUserTask!.llmConfig?.model, 'gpt-4.1');
+    final firstChunk = await chatResponse.read().first.timeout(
+      const Duration(seconds: 2),
+    );
+    expect(utf8.decode(firstChunk), contains('event:functionCall'));
+  });
+
   test(
     'keeps legacy /callback forwarding when no pending functionCall exists',
     () async {
@@ -438,39 +944,39 @@ void main() {
   test(
     'forwards reasoning/dispatch/planning message chunk types via SSE',
     () async {
-    final fakeSdk = _ReasoningLiteAgentSDK();
-    final controller = AgentKitController(
-      sdk: fakeSdk,
-      kernelFuture: Future.value(null),
-    );
+      final fakeSdk = _ReasoningLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
 
-    final chatResponse = await controller.router.call(
-      Request(
-        'POST',
-        Uri.parse('http://localhost/chat?sessionId=s-reasoning'),
-        headers: <String, String>{
-          'authorization': 'Bearer user-token',
-          'content-type': 'application/json',
-        },
-        body: jsonEncode(<String, dynamic>{
-          'content': <Map<String, dynamic>>[
-            <String, dynamic>{'type': 'text', 'message': 'hi'},
-          ],
-        }),
-      ),
-    );
+      final chatResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/chat?sessionId=s-reasoning'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'content': <Map<String, dynamic>>[
+              <String, dynamic>{'type': 'text', 'message': 'hi'},
+            ],
+          }),
+        ),
+      );
 
-    expect(chatResponse.statusCode, 200);
-    final sseText = await chatResponse
-        .read()
-        .transform(utf8.decoder)
-        .join()
-        .timeout(const Duration(seconds: 2));
-    expect(sseText, contains('event:message'));
-    expect(sseText, contains('event:chunk'));
-    expect(sseText, contains('"type":"reasoning"'));
-    expect(sseText, contains('"type":"dispatch"'));
-    expect(sseText, contains('"type":"planning"'));
+      expect(chatResponse.statusCode, 200);
+      final sseText = await chatResponse
+          .read()
+          .transform(utf8.decoder)
+          .join()
+          .timeout(const Duration(seconds: 2));
+      expect(sseText, contains('event:message'));
+      expect(sseText, contains('event:chunk'));
+      expect(sseText, contains('"type":"reasoning"'));
+      expect(sseText, contains('"type":"dispatch"'));
+      expect(sseText, contains('"type":"planning"'));
     },
   );
 }

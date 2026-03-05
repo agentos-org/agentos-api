@@ -105,9 +105,11 @@ class KernelBootstrapResult {
       return false;
     }
     final llmModelList = await serviceLocator.getLlmModelList();
+    final textModels = llmModelList
+        .where(IntentKitInitializer.isTextGenerationModel)
+        .toList();
     final preferredLlmModel =
-        embeddingsLlmModel ??
-        (llmModelList.isEmpty ? null : llmModelList.first.id);
+        embeddingsLlmModel ?? (textModels.isEmpty ? null : textModels.first.id);
     return kernelService.updateEmbeddingsConfig(
       kernel.EmbeddingsConfig(
         baseUrl: 'http://localhost:$embeddingsPort',

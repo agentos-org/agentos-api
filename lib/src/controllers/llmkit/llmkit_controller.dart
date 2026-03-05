@@ -1,7 +1,12 @@
+import 'dart:convert';
+
 import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
+import '../../config.dart';
+import '../../locator.dart';
+import '../../services/intentkit/intentkit_initializer.dart';
 import '../../services/llmkit/llm_client.dart';
 
 /// LLMKit Controller
@@ -22,6 +27,8 @@ class LLMKitController {
   Router get router {
     final router = Router();
 
+    router.get('/models', _listModels);
+
     // Text generation
     router.all('/text/<path|.*>', _createForward(LLMServiceType.text));
 
@@ -29,7 +36,10 @@ class LLMKitController {
     router.all('/vision/<path|.*>', _createForward(LLMServiceType.vision));
 
     // Text embedding
-    router.all('/embedding/<path|.*>', _createForward(LLMServiceType.embedding));
+    router.all(
+      '/embedding/<path|.*>',
+      _createForward(LLMServiceType.embedding),
+    );
 
     // Text-to-speech
     router.all('/tts/<path|.*>', _createForward(LLMServiceType.tts));
@@ -46,6 +56,49 @@ class LLMKitController {
       final path = request.params['path'] ?? '';
       return _proxy(request, serviceType: serviceType, path: '/$path');
     };
+  }
+
+  Future<Response> _listModels(Request request) async {
+    try {
+      final models = await _client.serviceLocator.getLlmModelList();
+      final availableTextModels = <Map<String, dynamic>>[];
+
+      for (final model in models.where(
+        IntentKitInitializer.isTextGenerationModel,
+      )) {
+        if (!await _isModelAvailable(model)) {
+          continue;
+        }
+        availableTextModels.add(<String, dynamic>{
+          'id': model.id,
+          'name': model.name,
+          'alias': model.alias,
+          'description': model.description,
+          'type': 'textGeneration',
+          'contextWindowSize': model.contextWindowSize,
+          'isRemote': model.isRemote,
+          'isCustom': model.isCustom,
+        });
+      }
+
+      return Response.ok(
+        jsonEncode(availableTextModels),
+        headers: const {'content-type': 'application/json'},
+      );
+    } on Exception catch (error) {
+      return Response(502, body: 'LLM models error: $error');
+    }
+  }
+
+  Future<bool> _isModelAvailable(LlmModelInfo model) async {
+    if (model.isRemote) {
+      return true;
+    }
+    final port = await _client.serviceLocator.getServicePort(
+      ApiConfig.serviceLlmText,
+      modelId: model.id,
+    );
+    return port != null;
   }
 
   Future<Response> _proxy(
@@ -116,13 +169,10 @@ class LLMKitController {
     if (request.method == 'GET' || request.method == 'HEAD') {
       return null;
     }
-    final bytes = await request.read().fold<List<int>>(
-      <int>[],
-      (buffer, data) {
-        buffer.addAll(data);
-        return buffer;
-      },
-    );
+    final bytes = await request.read().fold<List<int>>(<int>[], (buffer, data) {
+      buffer.addAll(data);
+      return buffer;
+    });
     return bytes.isEmpty ? null : bytes;
   }
 }

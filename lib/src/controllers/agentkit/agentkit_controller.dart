@@ -7,6 +7,8 @@ import 'package:opentool_dart/opentool_client.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
+import '../../config.dart';
+import '../../locator.dart';
 import '../../middleware.dart';
 import '../../services/appkit/appkit_service.dart';
 
@@ -15,13 +17,16 @@ class AgentKitController {
     required LiteAgentSDK sdk,
     AppKitService? appKitService,
     Future<KernelService?>? kernelFuture,
+    AgentOSServiceLocator? serviceLocator,
   }) : _sdk = sdk,
        _appKitService = appKitService,
-       _kernelFuture = kernelFuture ?? Future.value(null);
+       _kernelFuture = kernelFuture ?? Future.value(null),
+       _serviceLocator = serviceLocator ?? DefaultServiceLocator();
 
   final LiteAgentSDK _sdk;
   final AppKitService? _appKitService;
   final Future<KernelService?> _kernelFuture;
+  final AgentOSServiceLocator _serviceLocator;
   static const Duration _functionCallTimeout = Duration(minutes: 5);
   final Map<String, Completer<ToolReturn>> _pendingToolReturns = {};
 
@@ -129,8 +134,10 @@ class AgentKitController {
       Capability? capability;
       if (agentId == null || agentId.isEmpty) {
         final body = await _readJsonBody(request);
-        await _injectLlmConfigForCapabilityBody(body);
-        capability = Capability.fromJson(body);
+        final liteAgentBody = await _buildLiteAgentCapabilityFromAgentKitBody(
+          body,
+        );
+        capability = Capability.fromJson(liteAgentBody);
       }
       final session = await _sdk.initSession(
         capability: capability,
@@ -146,8 +153,10 @@ class AgentKitController {
   Future<Response> _handleInitSimple(Request request) async {
     try {
       final body = await _readJsonBody(request);
-      await _injectLlmConfigForCapabilityBody(body);
-      final simpleCapability = SimpleCapability.fromJson(body);
+      final liteAgentBody = await _buildLiteAgentCapabilityFromAgentKitBody(
+        body,
+      );
+      final simpleCapability = SimpleCapability.fromJson(liteAgentBody);
       final session = await _sdk.initSimple(simpleCapability);
       return _jsonResponse(session.toJson());
     } catch (e) {
@@ -166,6 +175,7 @@ class AgentKitController {
         );
       }
       final body = await _readJsonBody(request);
+      await _resolveAgentKitLlmConfigForLiteAgent(body);
       final userTask = UserTask.fromJson(body);
       final session = Session(sessionId: sessionId);
 
@@ -243,6 +253,7 @@ class AgentKitController {
         );
       }
       final body = await _readJsonBody(request);
+      await _resolveAgentKitLlmConfigForLiteAgent(body);
       final userTask = UserTask.fromJson(body);
       final session = Session(sessionId: sessionId);
       final message = await _sdk.chatSimple(session, userTask);
@@ -387,20 +398,112 @@ class AgentKitController {
     return result;
   }
 
-  /// Injects llmConfig fallback into capability-level body
-  /// (for /initSession, /initSimple, /chat, /chat/simple).
-  ///
-  /// Only injects when no llmConfig is present.
-  Future<void> _injectLlmConfigForCapabilityBody(
+  Future<Map<String, dynamic>> _buildLiteAgentCapabilityFromAgentKitBody(
     Map<String, dynamic> body,
   ) async {
-    if (body['llmConfig'] != null) return;
+    final capabilityBody = Map<String, dynamic>.from(body);
+    await _resolveAgentKitLlmConfigForLiteAgent(capabilityBody);
+    _normalizeSystemPromptForLiteAgent(capabilityBody);
+    return capabilityBody;
+  }
 
-    final llmConfig = await _getAvailableLlmConfigJson();
-    if (llmConfig == null || llmConfig.isEmpty) return;
+  Future<void> _resolveAgentKitLlmConfigForLiteAgent(
+    Map<String, dynamic> body,
+  ) async {
+    final llmConfig = _readLlmConfig(body);
+    if (llmConfig == null) return;
 
-    body['llmConfig'] = llmConfig;
-    requestLogger.info('AgentKit injected llmConfig fallback for capability');
+    final nonNullConfig = <String, dynamic>{
+      for (final entry in llmConfig.entries)
+        if (entry.value != null) entry.key: entry.value,
+    };
+
+    final rawModelId = llmConfig['modelId'];
+    final hasModelId = rawModelId is String && rawModelId.trim().isNotEmpty;
+    final hasBaseUrl = nonNullConfig['baseUrl'] is String;
+    final hasModel = nonNullConfig['model'] is String;
+    final hasApiKey = nonNullConfig.containsKey('apiKey');
+    final hasAnyDirectCore = hasBaseUrl || hasModel || hasApiKey;
+
+    Map<String, dynamic>? resolvedCore;
+    if (hasModelId) {
+      resolvedCore = await _resolveLlmConfigById(rawModelId.trim());
+      if (resolvedCore == null) {
+        requestLogger.warning(
+          'AgentKit failed to resolve llmConfig modelId: ${rawModelId.trim()}',
+        );
+        body.remove('llmConfig');
+        return;
+      }
+    } else if (hasAnyDirectCore) {
+      final baseUrl = nonNullConfig['baseUrl'];
+      final model = nonNullConfig['model'];
+      if (baseUrl is String &&
+          baseUrl.trim().isNotEmpty &&
+          model is String &&
+          model.trim().isNotEmpty) {
+        resolvedCore = <String, dynamic>{
+          'baseUrl': baseUrl,
+          'model': model,
+          if (nonNullConfig.containsKey('apiKey'))
+            'apiKey': nonNullConfig['apiKey'],
+        };
+      } else {
+        body.remove('llmConfig');
+        return;
+      }
+    } else {
+      final fallbackLlmConfig = await _getAvailableLlmConfigJson();
+      if (fallbackLlmConfig == null || fallbackLlmConfig.isEmpty) {
+        body.remove('llmConfig');
+        return;
+      }
+      resolvedCore = <String, dynamic>{
+        if (fallbackLlmConfig['baseUrl'] != null)
+          'baseUrl': fallbackLlmConfig['baseUrl'],
+        if (fallbackLlmConfig.containsKey('apiKey'))
+          'apiKey': fallbackLlmConfig['apiKey'],
+        if (fallbackLlmConfig['model'] != null)
+          'model': fallbackLlmConfig['model'],
+      };
+      final baseUrl = resolvedCore['baseUrl'];
+      final model = resolvedCore['model'];
+      if (baseUrl is! String ||
+          baseUrl.trim().isEmpty ||
+          model is! String ||
+          model.trim().isEmpty) {
+        body.remove('llmConfig');
+        return;
+      }
+    }
+
+    final extras = <String, dynamic>{
+      for (final entry in nonNullConfig.entries)
+        if (!_isCoreLlmField(entry.key)) entry.key: entry.value,
+    };
+    final merged = <String, dynamic>{...resolvedCore, ...extras};
+    merged.removeWhere((_, value) => value == null);
+    if (merged['baseUrl'] is! String || merged['model'] is! String) {
+      body.remove('llmConfig');
+      return;
+    }
+    body['llmConfig'] = merged;
+  }
+
+  bool _isCoreLlmField(String key) {
+    return key == 'modelId' ||
+        key == 'baseUrl' ||
+        key == 'apiKey' ||
+        key == 'model';
+  }
+
+  void _normalizeSystemPromptForLiteAgent(Map<String, dynamic> body) {
+    final systemPrompt = body['systemPrompt'];
+    if (systemPrompt is String) {
+      body['systemPrompt'] = systemPrompt;
+      return;
+    }
+    body['systemPrompt'] = '';
   }
 
   /// Injects llmConfig fallback into agent body
@@ -428,6 +531,62 @@ class AgentKitController {
       body['capability'] = mapped;
       requestLogger.info('AgentKit injected llmConfig fallback for agent');
     }
+  }
+
+  Map<String, dynamic>? _readLlmConfig(Map<String, dynamic> body) {
+    final llmConfig = body['llmConfig'];
+    if (llmConfig is Map<String, dynamic>) {
+      return llmConfig;
+    }
+    if (llmConfig is Map) {
+      return Map<String, dynamic>.from(llmConfig);
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> _resolveLlmConfigById(String id) async {
+    final models = await _serviceLocator.getLlmModelList();
+    LlmModelInfo? matched;
+    for (final model in models) {
+      if (model.id == id) {
+        matched = model;
+        break;
+      }
+    }
+    if (matched == null) {
+      return null;
+    }
+
+    final baseUrl = await _resolveModelBaseUrl(matched);
+    if (baseUrl == null || baseUrl.isEmpty) {
+      return null;
+    }
+
+    final result = <String, dynamic>{
+      'baseUrl': baseUrl,
+      'apiKey': matched.apiKey ?? '',
+      'model': matched.isRemote ? matched.name : matched.id,
+      'contextWindowSize': matched.contextWindowSize,
+    };
+    result.removeWhere((_, value) => value == null);
+    return result;
+  }
+
+  Future<String?> _resolveModelBaseUrl(LlmModelInfo model) async {
+    if (model.isRemote) {
+      return model.baseUrl;
+    }
+    final specificPort = await _serviceLocator.getServicePort(
+      ApiConfig.serviceLlmText,
+      modelId: model.id,
+    );
+    final fallbackPort =
+        specificPort ??
+        await _serviceLocator.getServicePort(ApiConfig.serviceLlmText);
+    if (fallbackPort == null) {
+      return null;
+    }
+    return ApiConfig.getInternalUrl(fallbackPort);
   }
 
   // --- Helpers ---

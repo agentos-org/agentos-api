@@ -184,4 +184,58 @@ void main() {
     expect(kernel.updatedOpenToolDaemon!.host, '127.0.0.1');
     expect(kernel.updatedOpenToolDaemon!.port, 19627);
   });
+
+  test(
+    'syncEmbeddingsFromServiceLocator prefers text model when embedding model exists',
+    () async {
+      final kernel = _FakeKernelService();
+      final result = KernelBootstrapResult(
+        kernelService: kernel,
+        liteAgentSdk: LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1'),
+      );
+      final locator = _FakeServiceLocator(
+        llmPort: 52010,
+        models: const [
+          LlmModelInfo(
+            id: 'bge-large-zh-v1.5-q8_0',
+            name: 'bge-large-zh-v1.5-q8_0',
+            alias: 'bge-large-zh-v1.5-q8_0',
+            description: 'embedding model',
+            parameters: 'embedding',
+            paramsB: 0,
+            quantization: 'q8_0',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['embedding'],
+            repoId: 'repo',
+            type: 'llm_embedding',
+            contextWindowSize: 4096,
+          ),
+          LlmModelInfo(
+            id: 'qwen3-8b',
+            name: 'qwen3-8b',
+            alias: 'qwen3-8b',
+            description: 'text model',
+            parameters: '8B',
+            paramsB: 8,
+            quantization: 'q4',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['chat'],
+            repoId: 'repo',
+            type: 'text',
+            contextWindowSize: 8192,
+          ),
+        ],
+      );
+
+      final ok = await result.syncEmbeddingsFromServiceLocator(locator);
+
+      expect(ok, isTrue);
+      expect(kernel.updatedEmbeddings, isNotNull);
+      expect(kernel.updatedEmbeddings!.llmModel, 'qwen3-8b');
+    },
+  );
 }

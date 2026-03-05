@@ -3,11 +3,48 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:agentos_api/agentos_api.dart';
-import 'package:agentos_kernel/agentos_kernel.dart';
+import 'package:agentos_kernel/agentos_kernel.dart' show KernelService;
 import 'package:http/http.dart';
 import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:test/test.dart';
+
+class _FakeServiceLocator implements AgentOSServiceLocator {
+  _FakeServiceLocator({required this.models, required this.runningModelIds});
+
+  final List<LlmModelInfo> models;
+  final Set<String> runningModelIds;
+
+  @override
+  String get liteagentBaseUrl => 'http://127.0.0.1:9527/api/v1';
+
+  @override
+  Future<List<AppInfo>> getAppInfoList() async => const [];
+
+  @override
+  Future<List<LlmModelInfo>> getLlmModelList() async => models;
+
+  @override
+  Future<int?> getServicePort(String serviceKey, {String? modelId}) async {
+    if (serviceKey == ApiConfig.serviceLlmText && modelId != null) {
+      return runningModelIds.contains(modelId) ? 52010 : null;
+    }
+    return switch (serviceKey) {
+      ApiConfig.serviceLiteagent => 9527,
+      ApiConfig.serviceOpentool => 19627,
+      ApiConfig.serviceEmbeddings => 9537,
+      ApiConfig.serviceLlmText => 52010,
+      ApiConfig.serviceLlmVision => 52020,
+      ApiConfig.serviceLlmEmbedding => 52030,
+      ApiConfig.serviceLlmTts => 52040,
+      ApiConfig.serviceLlmAsr => 52050,
+      _ => null,
+    };
+  }
+
+  @override
+  Stream<ServiceStatusEvent> get serviceStatusStream => const Stream.empty();
+}
 
 void main() {
   late HttpServer server;
@@ -126,6 +163,127 @@ void main() {
     final token = registerPayload['token'] as String;
     expect(token, startsWith('sk-'));
   });
+
+  test(
+    '/llmkit/models returns available text generation models only',
+    () async {
+      final serviceLocator = _FakeServiceLocator(
+        runningModelIds: const {'qwen3-8b'},
+        models: const [
+          LlmModelInfo(
+            id: 'qwen3-8b',
+            name: 'qwen3-8b',
+            alias: 'qwen3-8b',
+            description: 'text model',
+            parameters: '8B',
+            paramsB: 8,
+            quantization: 'q4',
+            sizeGB: 4,
+            minRAMGB: 8,
+            downloadUrl: '',
+            tags: ['chat'],
+            repoId: 'repo',
+            type: 'textGeneration',
+            contextWindowSize: 8192,
+          ),
+          LlmModelInfo(
+            id: 'bge-large-zh-v1.5-q8_0',
+            name: 'bge-large-zh-v1.5-q8_0',
+            alias: 'bge-large-zh-v1.5-q8_0',
+            description: 'embedding model',
+            parameters: 'embedding',
+            paramsB: 0,
+            quantization: 'q8_0',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['embedding'],
+            repoId: 'repo',
+            type: 'llm_embedding',
+            contextWindowSize: 4096,
+          ),
+          LlmModelInfo(
+            id: 'stopped-local-model',
+            name: 'stopped-local-model',
+            alias: 'stopped-local-model',
+            description: 'text model but not running',
+            parameters: '7B',
+            paramsB: 7,
+            quantization: 'q4',
+            sizeGB: 4,
+            minRAMGB: 8,
+            downloadUrl: '',
+            tags: ['chat'],
+            repoId: 'repo',
+            type: 'text',
+            contextWindowSize: 4096,
+          ),
+          LlmModelInfo(
+            id: 'remote-gpt',
+            name: 'gpt-4.1',
+            alias: 'gpt-4.1',
+            description: 'remote custom model',
+            parameters: 'remote',
+            paramsB: 0,
+            quantization: 'none',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['chat'],
+            repoId: 'remote',
+            type: 'text',
+            contextWindowSize: 128000,
+            baseUrl: 'https://example.test/v1',
+            isCustom: true,
+          ),
+        ],
+      );
+      final kernelFuture = Future<KernelService?>.value(null);
+      final liteAgentSdk = LiteAgentSDK(
+        baseUrl: 'http://127.0.0.1:9527/api/v1',
+      );
+      final handler = createGatewayHandler(
+        serviceLocator: serviceLocator,
+        kernelFuture: kernelFuture,
+        liteAgentSdk: liteAgentSdk,
+        enableLogging: false,
+      );
+      final localServer = await shelf_io.serve(
+        handler,
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      final localHost =
+          'http://${localServer.address.host}:${localServer.port}';
+
+      try {
+        final response = await get(Uri.parse('$localHost/llmkit/models'));
+        expect(response.statusCode, 200);
+
+        final payload = jsonDecode(response.body) as List<dynamic>;
+        expect(payload, hasLength(2));
+
+        final first = payload.first as Map<String, dynamic>;
+        expect(first['id'], 'qwen3-8b');
+        expect(first['name'], 'qwen3-8b');
+        expect(first['alias'], 'qwen3-8b');
+        expect(first['description'], 'text model');
+        expect(first['type'], 'textGeneration');
+        expect(first['contextWindowSize'], 8192);
+        expect(first['isRemote'], isFalse);
+        expect(first['isCustom'], isFalse);
+
+        final second = payload[1] as Map<String, dynamic>;
+        expect(second['id'], 'remote-gpt');
+        expect(second['name'], 'gpt-4.1');
+        expect(second['alias'], 'gpt-4.1');
+        expect(second['isRemote'], isTrue);
+        expect(second['isCustom'], isTrue);
+      } finally {
+        await localServer.close(force: true);
+      }
+    },
+  );
 }
 
 String _readPubspecVersion() {
