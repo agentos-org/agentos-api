@@ -15,7 +15,7 @@ class ServiceStatusEvent {
 
   final String? message;
 
-  /// Model identifier for LLM services (e.g. 'qwen-2.5-7b-q4').
+  /// Model identifier for LLM services.
   /// Null for non-LLM services.
   final String? modelId;
 
@@ -66,6 +66,7 @@ class AppInfo {
 class LlmModelInfo {
   final String id;
   final String name;
+  final String alias;
   final String description;
   final String parameters;
   final num paramsB;
@@ -90,6 +91,7 @@ class LlmModelInfo {
   const LlmModelInfo({
     required this.id,
     required this.name,
+    required this.alias,
     required this.description,
     required this.parameters,
     required this.paramsB,
@@ -112,6 +114,7 @@ class LlmModelInfo {
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
+        'alias': alias,
         'description': description,
         'parameters': parameters,
         'paramsB': paramsB,

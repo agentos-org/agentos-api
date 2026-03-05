@@ -47,6 +47,7 @@ void main() {
             LlmModelInfo(
               id: 'qwen',
               name: 'Qwen',
+              alias: 'qwen',
               description: 'test',
               parameters: '7B',
               paramsB: 7,
