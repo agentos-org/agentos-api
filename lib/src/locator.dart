@@ -43,6 +43,9 @@ class LlmModelInfo {
   /// Remote model's own API key. Null means using the default key.
   final String? apiKey;
 
+  /// Whether this model is a user-defined custom remote model.
+  final bool isCustom;
+
   const LlmModelInfo({
     required this.id,
     required this.name,
@@ -59,6 +62,7 @@ class LlmModelInfo {
     this.contextWindowSize,
     this.baseUrl,
     this.apiKey,
+    this.isCustom = false,
   });
 
   /// Whether this model is a remote model with its own endpoint.
@@ -80,6 +84,7 @@ class LlmModelInfo {
         if (contextWindowSize != null) 'contextWindowSize': contextWindowSize,
         if (baseUrl != null) 'baseUrl': baseUrl,
         if (apiKey != null) 'apiKey': apiKey,
+        if (isCustom) 'isCustom': true,
       };
 }
 
