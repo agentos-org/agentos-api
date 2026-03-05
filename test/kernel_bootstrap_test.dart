@@ -21,7 +21,7 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
   Future<List<LlmModelInfo>> getLlmModelList() async => models;
 
   @override
-  Future<int?> getServicePort(String serviceKey) async {
+  Future<int?> getServicePort(String serviceKey, {String? modelId}) async {
     if (serviceKey == 'llm_text') {
       return llmPort;
     }
@@ -33,10 +33,6 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
     }
     return null;
   }
-
-  @override
-  Future<int?> resolveLLMPort(String serviceKey, String? modelId) async =>
-      llmPort;
 }
 
 class _FakeKernelService implements KernelService {

@@ -111,17 +111,12 @@ abstract class AgentOSServiceLocator {
   /// - 'llm_tts': Text-to-speech service
   /// - 'llm_asr': Speech-to-text service
   ///
+  /// [modelId] Optional model identifier for LLM services with multiple
+  /// running instances. When provided, attempts to route to the specific
+  /// model instance; falls back to the first available instance of that type.
+  ///
   /// Returns null if service is not running or unavailable
-  Future<int?> getServicePort(String serviceKey);
-
-  /// Resolves LLM service port
-  ///
-  /// LLM services may have multiple instances (different models), routes to corresponding instance based on model identifier
-  /// [serviceKey] Service identifier (e.g., 'llm_text', 'llm_vision', etc.)
-  /// [modelId] Model identifier (model id or name, used to locate the specific running instance)
-  ///
-  /// Returns target port, or null if service is unavailable
-  Future<int?> resolveLLMPort(String serviceKey, String? modelId);
+  Future<int?> getServicePort(String serviceKey, {String? modelId});
 
   /// Gets registered app info list
   ///
@@ -171,15 +166,7 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
   String get liteagentBaseUrl => _liteagentBaseUrl;
 
   @override
-  Future<int?> getServicePort(String serviceKey) async {
-    return _servicePorts[serviceKey];
-  }
-
-  @override
-  Future<int?> resolveLLMPort(
-    String serviceKey,
-    String? modelId,
-  ) async {
+  Future<int?> getServicePort(String serviceKey, {String? modelId}) async {
     return _servicePorts[serviceKey];
   }
 

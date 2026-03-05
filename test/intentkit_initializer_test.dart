@@ -18,10 +18,7 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
   Future<List<LlmModelInfo>> getLlmModelList() async => models;
 
   @override
-  Future<int?> getServicePort(String serviceKey) async => null;
-
-  @override
-  Future<int?> resolveLLMPort(String serviceKey, String? modelId) async => null;
+  Future<int?> getServicePort(String serviceKey, {String? modelId}) async => null;
 }
 
 void main() {
