@@ -178,7 +178,8 @@ class _FakeKernelService implements KernelService {
   final LLMConfig? availableLlmConfig;
 
   @override
-  LLMConfig? getAvailableLlmConfig() => availableLlmConfig;
+  LLMConfig? getAvailableLlmConfig({String purpose = 'general'}) =>
+      availableLlmConfig;
 
   // --- Unimplemented members (not needed for these tests) ---
 
@@ -198,7 +199,7 @@ void main() {
         models: const [
           LlmModelInfo(
             id: 'qwen3-8b',
-            name: 'qwen3-8b',
+            name: 'Qwen 3 8B',
             alias: 'qwen3-8b',
             description: 'text model',
             parameters: '8B',
@@ -233,7 +234,7 @@ void main() {
 
     expect(response.statusCode, 200);
     expect(fakeSdk.capturedCapability, isNotNull);
-    expect(fakeSdk.capturedCapability!.llmConfig?.model, 'qwen3-8b');
+    expect(fakeSdk.capturedCapability!.llmConfig?.model, 'Qwen 3 8B');
     expect(
       fakeSdk.capturedCapability!.llmConfig?.baseUrl,
       'http://127.0.0.1:52010',
@@ -250,7 +251,7 @@ void main() {
         models: const [
           LlmModelInfo(
             id: 'qwen3-8b',
-            name: 'qwen3-8b',
+            name: 'Qwen 3 8B',
             alias: 'qwen3-8b',
             description: 'text model',
             parameters: '8B',
@@ -285,7 +286,7 @@ void main() {
 
     expect(response.statusCode, 200);
     expect(fakeSdk.capturedSimpleCapability, isNotNull);
-    expect(fakeSdk.capturedSimpleCapability!.llmConfig?.model, 'qwen3-8b');
+    expect(fakeSdk.capturedSimpleCapability!.llmConfig?.model, 'Qwen 3 8B');
     expect(
       fakeSdk.capturedSimpleCapability!.llmConfig?.baseUrl,
       'http://127.0.0.1:52010',
@@ -377,7 +378,7 @@ void main() {
           models: const [
             LlmModelInfo(
               id: 'qwen3-8b',
-              name: 'qwen3-8b',
+              name: 'Qwen 3 8B',
               alias: 'qwen3-8b',
               description: 'text model',
               parameters: '8B',
@@ -511,7 +512,7 @@ void main() {
         models: const [
           LlmModelInfo(
             id: 'qwen3-8b',
-            name: 'qwen3-8b',
+            name: 'Qwen 3 8B',
             alias: 'qwen3-8b',
             description: 'text model',
             parameters: '8B',
@@ -550,7 +551,7 @@ void main() {
       fakeSdk.capturedSimpleCapability!.llmConfig?.baseUrl,
       'http://127.0.0.1:52010',
     );
-    expect(fakeSdk.capturedSimpleCapability!.llmConfig?.model, 'qwen3-8b');
+    expect(fakeSdk.capturedSimpleCapability!.llmConfig?.model, 'Qwen 3 8B');
     expect(
       fakeSdk.capturedSimpleCapability!.llmConfig?.contextWindowSize,
       8192,
@@ -569,7 +570,7 @@ void main() {
           models: const [
             LlmModelInfo(
               id: 'qwen3-8b',
-              name: 'qwen3-8b',
+              name: 'Qwen 3 8B',
               alias: 'qwen3-8b',
               description: 'text model',
               parameters: '8B',
@@ -627,7 +628,7 @@ void main() {
           models: const [
             LlmModelInfo(
               id: 'qwen3-8b',
-              name: 'qwen3-8b',
+              name: 'Qwen 3 8B',
               alias: 'qwen3-8b',
               description: 'text model',
               parameters: '8B',
@@ -743,9 +744,16 @@ void main() {
     'forwards functionCall by SSE and resolves via /callback without sdk.callback forwarding',
     () async {
       final fakeSdk = _FunctionCallLiteAgentSDK();
+      final fakeKernel = _FakeKernelService(
+        availableLlmConfig: LLMConfig(
+          baseUrl: 'http://127.0.0.1:52010',
+          apiKey: '',
+          model: 'qwen',
+        ),
+      );
       final controller = AgentKitController(
         sdk: fakeSdk,
-        kernelFuture: Future.value(null),
+        kernelFuture: Future.value(fakeKernel),
       );
 
       final chatResponse = await controller.router.call(
@@ -809,6 +817,49 @@ void main() {
       expect(resolved.result['ok'], true);
       expect(fakeSdk.forwardedCallback, isNull);
       await subscription.cancel();
+    },
+  );
+
+  test(
+    'keeps llmConfig unset for /chat when request omits llmConfig',
+    () async {
+      final fakeSdk = _FunctionCallLiteAgentSDK();
+      final fakeKernel = _FakeKernelService(
+        availableLlmConfig: LLMConfig(
+          baseUrl: 'http://127.0.0.1:52010',
+          apiKey: '',
+          model: 'qwen',
+        ),
+      );
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(fakeKernel),
+      );
+
+      final chatResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/chat?sessionId=s1'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'content': <Map<String, dynamic>>[
+              <String, dynamic>{'type': 'text', 'message': 'hi'},
+            ],
+            'isChunk': true,
+          }),
+        ),
+      );
+
+      expect(chatResponse.statusCode, 200);
+      expect(fakeSdk.capturedUserTask, isNotNull);
+      expect(fakeSdk.capturedUserTask!.llmConfig, isNull);
+      final firstChunk = await chatResponse.read().first.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(utf8.decode(firstChunk), contains('event:functionCall'));
     },
   );
 
@@ -909,6 +960,123 @@ void main() {
     );
     expect(utf8.decode(firstChunk), contains('event:functionCall'));
   });
+
+  test(
+    'drops empty-core llmConfig for /chat instead of injecting fallback',
+    () async {
+      final fakeSdk = _FunctionCallLiteAgentSDK();
+      final fakeKernel = _FakeKernelService(
+        availableLlmConfig: LLMConfig(
+          baseUrl: 'http://127.0.0.1:52010',
+          apiKey: '',
+          model: 'qwen',
+        ),
+      );
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(fakeKernel),
+      );
+
+      final chatResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/chat?sessionId=s1'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'content': <Map<String, dynamic>>[
+              <String, dynamic>{'type': 'text', 'message': 'hi'},
+            ],
+            'llmConfig': <String, dynamic>{
+              'modelId': null,
+              'baseUrl': null,
+              'apiKey': null,
+              'model': null,
+            },
+          }),
+        ),
+      );
+
+      expect(chatResponse.statusCode, 200);
+      expect(fakeSdk.capturedUserTask, isNotNull);
+      expect(fakeSdk.capturedUserTask!.llmConfig, isNull);
+      final firstChunk = await chatResponse.read().first.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(utf8.decode(firstChunk), contains('event:functionCall'));
+    },
+  );
+
+  test(
+    'prefers modelId resolution over stale direct core fields for /chat',
+    () async {
+      final fakeSdk = _FunctionCallLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+        serviceLocator: _FakeServiceLocator(
+          models: const [
+            LlmModelInfo(
+              id: 'remote-gpt',
+              name: 'gpt-4.1',
+              alias: 'gpt-4.1',
+              description: 'remote model',
+              parameters: 'remote',
+              paramsB: 0,
+              quantization: 'none',
+              sizeGB: 0,
+              minRAMGB: 0,
+              downloadUrl: '',
+              tags: ['chat'],
+              repoId: 'remote',
+              type: 'text',
+              contextWindowSize: 128000,
+              baseUrl: 'https://example.test/v1',
+              apiKey: 'remote-key',
+              isCustom: true,
+            ),
+          ],
+        ),
+      );
+
+      final chatResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/chat?sessionId=s1'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'content': <Map<String, dynamic>>[
+              <String, dynamic>{'type': 'text', 'message': 'hi'},
+            ],
+            'llmConfig': <String, dynamic>{
+              'modelId': 'remote-gpt',
+              'baseUrl': 'http://localhost:52100',
+              'apiKey': '',
+              'model': 'Qwen3 8B Q8',
+            },
+          }),
+        ),
+      );
+
+      expect(chatResponse.statusCode, 200);
+      expect(fakeSdk.capturedUserTask, isNotNull);
+      expect(
+        fakeSdk.capturedUserTask!.llmConfig?.baseUrl,
+        'https://example.test/v1',
+      );
+      expect(fakeSdk.capturedUserTask!.llmConfig?.model, 'gpt-4.1');
+      expect(fakeSdk.capturedUserTask!.llmConfig?.apiKey, 'remote-key');
+      final firstChunk = await chatResponse.read().first.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(utf8.decode(firstChunk), contains('event:functionCall'));
+    },
+  );
 
   test(
     'keeps legacy /callback forwarding when no pending functionCall exists',

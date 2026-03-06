@@ -175,8 +175,19 @@ class AgentKitController {
         );
       }
       final body = await _readJsonBody(request);
-      await _resolveAgentKitLlmConfigForLiteAgent(body);
+      requestLogger.info('AgentKit /chat request: ${_encodeForLog(body)}');
+      requestLogger.info(
+        'AgentKit /chat raw userTask.llmConfig: ${_encodeForLog(body['llmConfig'])}',
+      );
+      await _resolveAgentKitLlmConfigForLiteAgent(
+        body,
+        injectFallbackWhenEmptyCore: false,
+        logContext: 'chat',
+      );
       final userTask = UserTask.fromJson(body);
+      requestLogger.info(
+        'AgentKit /chat final resolved llmConfig: ${_encodeForLog(userTask.llmConfig?.toJson())}',
+      );
       final session = Session(sessionId: sessionId);
 
       final token = bearerTokenFrom(request);
@@ -253,8 +264,21 @@ class AgentKitController {
         );
       }
       final body = await _readJsonBody(request);
-      await _resolveAgentKitLlmConfigForLiteAgent(body);
+      requestLogger.info(
+        'AgentKit /chat/simple request: ${_encodeForLog(body)}',
+      );
+      requestLogger.info(
+        'AgentKit /chat/simple raw userTask.llmConfig: ${_encodeForLog(body['llmConfig'])}',
+      );
+      await _resolveAgentKitLlmConfigForLiteAgent(
+        body,
+        injectFallbackWhenEmptyCore: false,
+        logContext: 'chat/simple',
+      );
       final userTask = UserTask.fromJson(body);
+      requestLogger.info(
+        'AgentKit /chat/simple final resolved llmConfig: ${_encodeForLog(userTask.llmConfig?.toJson())}',
+      );
       final session = Session(sessionId: sessionId);
       final message = await _sdk.chatSimple(session, userTask);
 
@@ -408,10 +432,29 @@ class AgentKitController {
   }
 
   Future<void> _resolveAgentKitLlmConfigForLiteAgent(
-    Map<String, dynamic> body,
-  ) async {
+    Map<String, dynamic> body, {
+    bool injectFallbackWhenMissing = false,
+    bool injectFallbackWhenEmptyCore = true,
+    String? logContext,
+  }) async {
     final llmConfig = _readLlmConfig(body);
-    if (llmConfig == null) return;
+    final rawLlmConfig = llmConfig == null
+        ? null
+        : Map<String, dynamic>.from(llmConfig);
+    if (llmConfig == null) {
+      if (!injectFallbackWhenMissing) return;
+      final fallbackLlmConfig = await _getAvailableLlmConfigJson();
+      if (fallbackLlmConfig == null || fallbackLlmConfig.isEmpty) return;
+      body['llmConfig'] = fallbackLlmConfig;
+      _logLlmConfigResolution(
+        context: logContext,
+        source: 'server default (kernel available llmConfig)',
+        raw: rawLlmConfig,
+        merged: fallbackLlmConfig,
+        resolved: fallbackLlmConfig,
+      );
+      return;
+    }
 
     final nonNullConfig = <String, dynamic>{
       for (final entry in llmConfig.entries)
@@ -426,15 +469,24 @@ class AgentKitController {
     final hasAnyDirectCore = hasBaseUrl || hasModel || hasApiKey;
 
     Map<String, dynamic>? resolvedCore;
+    String? resolvedSource;
     if (hasModelId) {
       resolvedCore = await _resolveLlmConfigById(rawModelId.trim());
       if (resolvedCore == null) {
         requestLogger.warning(
           'AgentKit failed to resolve llmConfig modelId: ${rawModelId.trim()}',
         );
+        _logLlmConfigResolution(
+          context: logContext,
+          source: 'unresolved userTask.llmConfig.modelId',
+          raw: rawLlmConfig,
+          merged: null,
+          resolved: null,
+        );
         body.remove('llmConfig');
         return;
       }
+      resolvedSource = 'userTask.llmConfig.modelId';
     } else if (hasAnyDirectCore) {
       final baseUrl = nonNullConfig['baseUrl'];
       final model = nonNullConfig['model'];
@@ -448,13 +500,41 @@ class AgentKitController {
           if (nonNullConfig.containsKey('apiKey'))
             'apiKey': nonNullConfig['apiKey'],
         };
+        resolvedSource = 'userTask.llmConfig direct baseUrl/model';
       } else {
+        _logLlmConfigResolution(
+          context: logContext,
+          source: 'invalid direct userTask.llmConfig',
+          raw: rawLlmConfig,
+          merged: null,
+          resolved: null,
+        );
         body.remove('llmConfig');
         return;
       }
     } else {
+      if (!injectFallbackWhenEmptyCore) {
+        _logLlmConfigResolution(
+          context: logContext,
+          source:
+              'preserve session/agent default because userTask.llmConfig has no core fields',
+          raw: rawLlmConfig,
+          merged: null,
+          resolved: null,
+        );
+        body.remove('llmConfig');
+        return;
+      }
       final fallbackLlmConfig = await _getAvailableLlmConfigJson();
       if (fallbackLlmConfig == null || fallbackLlmConfig.isEmpty) {
+        _logLlmConfigResolution(
+          context: logContext,
+          source:
+              'missing userTask.llmConfig core and no server default available',
+          raw: rawLlmConfig,
+          merged: null,
+          resolved: null,
+        );
         body.remove('llmConfig');
         return;
       }
@@ -472,9 +552,17 @@ class AgentKitController {
           baseUrl.trim().isEmpty ||
           model is! String ||
           model.trim().isEmpty) {
+        _logLlmConfigResolution(
+          context: logContext,
+          source: 'server default (kernel available llmConfig)',
+          raw: rawLlmConfig,
+          merged: null,
+          resolved: null,
+        );
         body.remove('llmConfig');
         return;
       }
+      resolvedSource = 'server default (kernel available llmConfig)';
     }
 
     final extras = <String, dynamic>{
@@ -484,10 +572,24 @@ class AgentKitController {
     final merged = <String, dynamic>{...resolvedCore, ...extras};
     merged.removeWhere((_, value) => value == null);
     if (merged['baseUrl'] is! String || merged['model'] is! String) {
+      _logLlmConfigResolution(
+        context: logContext,
+        source: resolvedSource,
+        raw: rawLlmConfig,
+        merged: merged,
+        resolved: null,
+      );
       body.remove('llmConfig');
       return;
     }
     body['llmConfig'] = merged;
+    _logLlmConfigResolution(
+      context: logContext,
+      source: resolvedSource,
+      raw: rawLlmConfig,
+      merged: merged,
+      resolved: Map<String, dynamic>.from(merged),
+    );
   }
 
   bool _isCoreLlmField(String key) {
@@ -544,6 +646,52 @@ class AgentKitController {
     return null;
   }
 
+  void _logLlmConfigResolution({
+    required String? context,
+    required String? source,
+    required Object? raw,
+    required Object? merged,
+    required Object? resolved,
+  }) {
+    final label = context == null
+        ? 'AgentKit llmConfig resolution'
+        : 'AgentKit $context llmConfig resolution';
+    requestLogger.info(
+      '$label: '
+      'source=${source ?? 'none'}, '
+      'raw=${_encodeForLog(raw)}, '
+      'merged=${_encodeForLog(merged)}, '
+      'resolved=${_encodeForLog(resolved)}',
+    );
+  }
+
+  String _encodeForLog(Object? value) {
+    return jsonEncode(_sanitizeForLog(value));
+  }
+
+  Object? _sanitizeForLog(Object? value) {
+    if (value is Map) {
+      return <String, dynamic>{
+        for (final entry in value.entries)
+          entry.key.toString(): entry.key.toString() == 'apiKey'
+              ? _maskSecret(entry.value)
+              : _sanitizeForLog(entry.value),
+      };
+    }
+    if (value is Iterable) {
+      return value.map(_sanitizeForLog).toList(growable: false);
+    }
+    return value;
+  }
+
+  Object? _maskSecret(Object? value) {
+    if (value == null) return null;
+    if (value is! String) return '***';
+    if (value.trim().isEmpty) return value;
+    if (value.length <= 4) return '***';
+    return '${value.substring(0, 2)}***${value.substring(value.length - 2)}';
+  }
+
   Future<Map<String, dynamic>?> _resolveLlmConfigById(String id) async {
     final models = await _serviceLocator.getLlmModelList();
     LlmModelInfo? matched;
@@ -565,7 +713,7 @@ class AgentKitController {
     final result = <String, dynamic>{
       'baseUrl': baseUrl,
       'apiKey': matched.apiKey ?? '',
-      'model': matched.isRemote ? matched.name : matched.id,
+      'model': matched.name,
       'contextWindowSize': matched.contextWindowSize,
     };
     result.removeWhere((_, value) => value == null);

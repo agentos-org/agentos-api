@@ -84,7 +84,7 @@ class IntentKitInitializer {
           (model) => kernel.KernelLlmModel(
             baseUrl: model.baseUrl ?? llmBaseUrl!,
             apiKey: model.apiKey ?? llmApiKey ?? '',
-            model: model.isRemote ? model.name : model.id,
+            model: model.name,
             description: model.description,
             parameters: model.parameters,
             paramsB: model.paramsB,
