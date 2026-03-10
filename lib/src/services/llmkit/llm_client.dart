@@ -343,8 +343,8 @@ class LLMClient {
         // Extract data payload from SSE event
         final lines = event.split('\n');
         for (final line in lines) {
-          if (line.startsWith('data: ')) {
-            final jsonStr = line.substring(6).trim();
+          if (line.startsWith('data:')) {
+            final jsonStr = line.substring(5).trim();
             if (jsonStr == '[DONE]') continue;
 
             try {
