@@ -104,34 +104,38 @@ class LLMClient {
     List<int>? body,
     bool streamResponse = false,
   }) async {
-    // Generate unique request ID
     final requestId = uniqueId();
     final stopwatch = Stopwatch()..start();
     final requestStartTime = DateTime.now();
 
-    // Extract model name and baseUrl from request body if possible
-    var modelName = _extractModelName(body);
+    var modelIdentifier = _extractModelName(body);
     var baseUrl = _extractBaseUrl(body);
 
-    // Try to get kernel for metrics tracking
     final kernel = await _kernelFuture;
     LlmMetrics? metrics;
 
-    // For text requests without explicit model, ask kernel for an available one.
+    // When no model specified, fall back to kernel's available config.
     if (kernel != null &&
         serviceType == LLMServiceType.text &&
-        (modelName == null || modelName.isEmpty)) {
+        (modelIdentifier == null || modelIdentifier.isEmpty)) {
       final availableConfig = kernel.getAvailableLlmConfig();
       if (availableConfig != null) {
-        modelName = availableConfig.model;
+        modelIdentifier = availableConfig.model;
         baseUrl ??= availableConfig.baseUrl;
       }
     }
 
+    // Resolve model: look up all models (local + remote), match by id first, then name.
+    final resolvedModel = modelIdentifier != null && modelIdentifier.isNotEmpty
+        ? await _resolveModel(modelIdentifier)
+        : null;
+
+    final modelName = resolvedModel?.name ?? modelIdentifier;
+
     if (kernel != null && modelName != null) {
       metrics = kernel.createLlmMetrics(
         requestId: requestId,
-        baseUrl: baseUrl ?? 'unknown',
+        baseUrl: resolvedModel?.baseUrl ?? baseUrl ?? 'unknown',
         model: modelName,
         apiKey: null,
         jobId: null,
@@ -140,36 +144,50 @@ class LLMClient {
       metrics.start();
     }
 
-    final port = await _serviceLocator.getServicePort(
-      serviceType.serviceKey,
-      modelId: modelName,
-    );
+    // Route decision: remote model endpoint vs local service port.
+    final Uri uri;
+    Map<String, String>? remoteAuthHeaders;
 
-    if (port == null) {
-      final errorResponse = LLMClientResponse(
-        statusCode: 503,
-        headers: {'content-type': 'application/json'},
-        bodyBytes: utf8.encode(
-          jsonEncode({
-            'error': '${serviceType.displayName} service unavailable',
-            'service': serviceType.serviceKey,
-          }),
-        ),
+    if (resolvedModel != null && resolvedModel.isRemote) {
+      uri = _buildUri(Uri.parse(resolvedModel.baseUrl!), path, queryParameters);
+      final apiKey = resolvedModel.apiKey;
+      if (apiKey != null && apiKey.isNotEmpty) {
+        remoteAuthHeaders = {'authorization': 'Bearer $apiKey'};
+      }
+    } else {
+      final port = await _serviceLocator.getServicePort(
+        serviceType.serviceKey,
+        modelId: resolvedModel?.id ?? modelIdentifier,
       );
-
-      // Mark as failed
-      stopwatch.stop();
-      metrics?.failed('${serviceType.displayName} service unavailable');
-
-      return errorResponse;
+      if (port == null) {
+        stopwatch.stop();
+        final errorMsg = modelIdentifier != null && modelIdentifier.isNotEmpty
+            ? 'Model "$modelIdentifier" unavailable'
+            : '${serviceType.displayName} service unavailable';
+        metrics?.failed(errorMsg);
+        return LLMClientResponse(
+          statusCode: 503,
+          headers: {'content-type': 'application/json'},
+          bodyBytes: utf8.encode(
+            jsonEncode({
+              'error': errorMsg,
+              'service': serviceType.serviceKey,
+            }),
+          ),
+        );
+      }
+      final baseUri = Uri.parse(ApiConfig.getInternalUrl(port));
+      uri = _buildUri(baseUri, path, queryParameters);
     }
-
-    final baseUri = Uri.parse(ApiConfig.getInternalUrl(port));
-    final uri = _buildUri(baseUri, path, queryParameters);
 
     try {
       final request = await _httpClient.openUrl(method, uri);
       _applyRequestHeaders(request, headers);
+      if (remoteAuthHeaders != null) {
+        remoteAuthHeaders.forEach((name, value) {
+          request.headers.set(name, value);
+        });
+      }
       if (body != null && body.isNotEmpty) {
         request.add(body);
       }
@@ -400,6 +418,23 @@ class LLMClient {
       absoluteCompletionTokens: absoluteCompletionTokens,
       hasContent: hasContent,
     );
+  }
+
+  /// Resolves a model by identifier (modelId or modelName).
+  ///
+  /// Queries all registered models (local + remote) via [getLlmModelList].
+  /// Priority: exact id match first, then exact name match.
+  Future<LlmModelInfo?> _resolveModel(String identifier) async {
+    final models = await _serviceLocator.getLlmModelList();
+    // Priority 1: exact id match
+    for (final m in models) {
+      if (m.id == identifier) return m;
+    }
+    // Priority 2: exact name match
+    for (final m in models) {
+      if (m.name == identifier) return m;
+    }
+    return null;
   }
 
   /// Extracts model name from request body
