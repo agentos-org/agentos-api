@@ -6,13 +6,9 @@ import '../../locator.dart';
 class IntentKitInitializer {
   IntentKitInitializer._();
 
-  static const Set<String> _nonTextModelTypeDenylist = {
+  static const Set<String> _nonTextInferenceModelDenylist = {
     'embedding',
     'llm_embedding',
-    'image',
-    'vision',
-    'image_text_to_text',
-    'imagetexttotext',
     'text_to_speech',
     'texttospeech',
     'tts',
@@ -75,7 +71,7 @@ class IntentKitInitializer {
     String? fallbackModel,
   }) {
     final mapped = models
-        .where(_isTextGenerationModel)
+        .where(_supportsTextInference)
         .where((model) {
           if (model.isRemote) return true;
           return llmBaseUrl != null && llmBaseUrl.isNotEmpty;
@@ -115,21 +111,19 @@ class IntentKitInitializer {
     ];
   }
 
-  static bool isTextGenerationModel(LlmModelInfo model) {
-    return _isTextGenerationModel(model);
+  static bool supportsTextInference(LlmModelInfo model) {
+    return _supportsTextInference(model);
   }
 
-  static bool _isTextGenerationModel(LlmModelInfo model) {
+  static bool _supportsTextInference(LlmModelInfo model) {
     final normalizedType = model.type.trim().toLowerCase();
     if (normalizedType.isEmpty) {
       return true;
     }
-    if (_nonTextModelTypeDenylist.contains(normalizedType)) {
+    if (_nonTextInferenceModelDenylist.contains(normalizedType)) {
       return false;
     }
     if (normalizedType.contains('embedding') ||
-        normalizedType.contains('vision') ||
-        normalizedType.contains('image') ||
         normalizedType.contains('speech') ||
         normalizedType.contains('audio') ||
         normalizedType.contains('asr') ||

@@ -45,8 +45,9 @@ class KernelBootstrapResult {
       return false;
     }
     final llmPort = await serviceLocator.getServicePort(
-      ApiConfig.serviceLlmText,
-    );
+          ApiConfig.serviceLlmText,
+        ) ??
+        await serviceLocator.getServicePort(ApiConfig.serviceLlmVision);
     final llmModelList = await serviceLocator.getLlmModelList();
     if (llmPort == null && !llmModelList.any((m) => m.isRemote)) {
       return false;
@@ -105,11 +106,12 @@ class KernelBootstrapResult {
       return false;
     }
     final llmModelList = await serviceLocator.getLlmModelList();
-    final textModels = llmModelList
-        .where(IntentKitInitializer.isTextGenerationModel)
+    final inferenceModels = llmModelList
+        .where(IntentKitInitializer.supportsTextInference)
         .toList();
     final preferredLlmModel =
-        embeddingsLlmModel ?? (textModels.isEmpty ? null : textModels.first.id);
+        embeddingsLlmModel ??
+        (inferenceModels.isEmpty ? null : inferenceModels.first.id);
     return kernelService.updateEmbeddingsConfig(
       kernel.EmbeddingsConfig(
         baseUrl: 'http://localhost:$embeddingsPort',

@@ -61,20 +61,20 @@ class LLMKitController {
   Future<Response> _listModels(Request request) async {
     try {
       final models = await _client.serviceLocator.getLlmModelList();
-      final availableTextModels = <Map<String, dynamic>>[];
+      final availableModels = <Map<String, dynamic>>[];
 
       for (final model in models.where(
-        IntentKitInitializer.isTextGenerationModel,
+        IntentKitInitializer.supportsTextInference,
       )) {
         if (!await _isModelAvailable(model)) {
           continue;
         }
-        availableTextModels.add(<String, dynamic>{
+        availableModels.add(<String, dynamic>{
           'id': model.id,
           'name': model.name,
           'alias': model.alias,
           'description': model.description,
-          'type': 'textGeneration',
+          'type': model.type,
           'contextWindowSize': model.contextWindowSize,
           'isRemote': model.isRemote,
           'isCustom': model.isCustom,
@@ -82,7 +82,7 @@ class LLMKitController {
       }
 
       return Response.ok(
-        jsonEncode(availableTextModels),
+        jsonEncode(availableModels),
         headers: const {'content-type': 'application/json'},
       );
     } on Exception catch (error) {
@@ -94,11 +94,16 @@ class LLMKitController {
     if (model.isRemote) {
       return true;
     }
-    final port = await _client.serviceLocator.getServicePort(
+    final textPort = await _client.serviceLocator.getServicePort(
       ApiConfig.serviceLlmText,
       modelId: model.id,
     );
-    return port != null;
+    if (textPort != null) return true;
+    final visionPort = await _client.serviceLocator.getServicePort(
+      ApiConfig.serviceLlmVision,
+      modelId: model.id,
+    );
+    return visionPort != null;
   }
 
   Future<Response> _proxy(

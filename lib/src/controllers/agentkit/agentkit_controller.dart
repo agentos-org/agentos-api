@@ -725,12 +725,17 @@ class AgentKitController {
       return model.baseUrl;
     }
     final specificPort = await _serviceLocator.getServicePort(
-      ApiConfig.serviceLlmText,
-      modelId: model.id,
-    );
+          ApiConfig.serviceLlmText,
+          modelId: model.id,
+        ) ??
+        await _serviceLocator.getServicePort(
+          ApiConfig.serviceLlmVision,
+          modelId: model.id,
+        );
     final fallbackPort =
         specificPort ??
-        await _serviceLocator.getServicePort(ApiConfig.serviceLlmText);
+        await _serviceLocator.getServicePort(ApiConfig.serviceLlmText) ??
+        await _serviceLocator.getServicePort(ApiConfig.serviceLlmVision);
     if (fallbackPort == null) {
       return null;
     }
