@@ -30,6 +30,7 @@ Handler createGatewayHandler({
   required AgentOSServiceLocator serviceLocator,
   required Future<KernelService?> kernelFuture,
   required LiteAgentSDK liteAgentSdk,
+  bool enableIntentKit = false,
   bool enableLogging = true,
   bool enableCors = true,
   int gatewayPort = ApiConfig.defaultPort,
@@ -38,6 +39,7 @@ Handler createGatewayHandler({
     serviceLocator: serviceLocator,
     kernelFuture: kernelFuture,
     liteAgentSdk: liteAgentSdk,
+    enableIntentKit: enableIntentKit,
     gatewayPort: gatewayPort,
   );
 
@@ -71,6 +73,7 @@ Router createGatewayRouter({
   required AgentOSServiceLocator serviceLocator,
   required Future<KernelService?> kernelFuture,
   required LiteAgentSDK liteAgentSdk,
+  bool enableIntentKit = false,
   int gatewayPort = ApiConfig.defaultPort,
 }) {
   final router = Router();
@@ -78,6 +81,7 @@ Router createGatewayRouter({
   // System endpoints (version)
   final systemController = SystemController(
     gatewayPort: gatewayPort,
+    enableIntentKit: enableIntentKit,
     kernelFuture: kernelFuture,
   );
   router.mount('/', systemController.router.call);
@@ -102,10 +106,15 @@ Router createGatewayRouter({
   );
   router.mount('${ApiConfig.agentkitPath}/', agentKitController.router.call);
 
-  // IntentKit API (intent detection, requires Token)
-  final intentKitService = IntentKitService(kernelFuture: kernelFuture);
-  final intentKitController = IntentKitController(service: intentKitService);
-  router.mount('${ApiConfig.intentkitPath}/', intentKitController.router.call);
+  if (enableIntentKit) {
+    // IntentKit API (intent detection, requires Token)
+    final intentKitService = IntentKitService(kernelFuture: kernelFuture);
+    final intentKitController = IntentKitController(service: intentKitService);
+    router.mount(
+      '${ApiConfig.intentkitPath}/',
+      intentKitController.router.call,
+    );
+  }
 
   // AppKit API (app registration/subscription)
   final appKitController = AppKitController(service: appKitService);

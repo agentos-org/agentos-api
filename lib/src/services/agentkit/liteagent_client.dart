@@ -29,7 +29,7 @@ class LiteagentClient {
   /// 2. Obtained from [serviceLocator]
   /// 3. Resolved from environment variables (default behavior)
   ///
-  /// [kernelFuture] Future that resolves to KernelService for agent message recording
+  /// [kernelFuture] Future that resolves to KernelService for agent message ingestion
   LiteagentClient({
     Uri? baseUri,
     HttpClient? httpClient,
@@ -85,8 +85,8 @@ class LiteagentClient {
   /// [queryParameters] Query parameters
   /// [body] Request body
   /// [streamResponse] Whether to use streaming response
-  /// [userId] User ID for agent message recording
-  /// [bundleId] Bundle ID for agent message recording
+  /// [userId] User ID for agent message ingestion
+  /// [bundleId] Bundle ID for agent message ingestion
   Future<LiteagentClientResponse> send({
     required String method,
     required String path,
@@ -122,7 +122,7 @@ class LiteagentClient {
       return buffer;
     });
 
-    _recordAgentMessagesFromBytes(bytes, userId: userId, bundleId: bundleId);
+    _ingestAgentMessagesFromBytes(bytes, userId: userId, bundleId: bundleId);
 
     return LiteagentClientResponse(
       statusCode: response.statusCode,
@@ -131,7 +131,7 @@ class LiteagentClient {
     );
   }
 
-  /// Creates a monitored stream that records agent messages from SSE events
+  /// Creates a monitored stream that ingests agent messages from SSE events
   ///
   /// SSE format from LiteAgent:
   /// - event:MESSAGE\ndata:{AgentMessage json}\n\n
@@ -165,7 +165,11 @@ class LiteagentClient {
     );
   }
 
-  /// Parses SSE data and records AgentMessage events to KernelService
+  /// Parses SSE data and ingests final AgentMessage events to KernelService.
+  ///
+  /// Only complete MESSAGE events are ingested for learning. Streaming chunks
+  /// and function-call events are intentionally excluded because they are
+  /// transport/intermediate artifacts and would add noisy preference signals.
   void _parseAndRecordSSEMessages(
     List<int> data,
     StringBuffer buffer, {
@@ -202,7 +206,7 @@ class LiteagentClient {
         }
 
         if (eventType == 'MESSAGE' && dataPayload != null) {
-          _recordSingleAgentMessage(
+          _ingestSingleAgentMessageForLearning(
             dataPayload,
             userId: userId,
             bundleId: bundleId,
@@ -214,8 +218,8 @@ class LiteagentClient {
     }
   }
 
-  /// Records a single AgentMessage from JSON string
-  void _recordSingleAgentMessage(
+  /// Ingests a single AgentMessage from JSON string for memory + learning.
+  void _ingestSingleAgentMessageForLearning(
     String jsonStr, {
     required String userId,
     required String bundleId,
@@ -227,7 +231,10 @@ class LiteagentClient {
       _kernelFuture
           .then((kernel) {
             if (kernel == null) return;
-            kernel.recordAgentMessage(
+            // Responses proxied back from LiteAgent are external agent replies
+            // visible to the host app/user, so they should also enter the
+            // preference-learning pipeline after being archived.
+            kernel.ingestAgentMessageForLearning(
               userId: userId,
               bundleId: bundleId,
               agentMessage: agentMessage,
@@ -241,8 +248,8 @@ class LiteagentClient {
     }
   }
 
-  /// Records AgentMessages from non-streaming response bytes
-  void _recordAgentMessagesFromBytes(
+  /// Ingests AgentMessages from non-streaming response bytes
+  void _ingestAgentMessagesFromBytes(
     List<int> bytes, {
     String? userId,
     String? bundleId,
@@ -255,7 +262,7 @@ class LiteagentClient {
       final json = jsonDecode(text);
 
       if (json is Map<String, dynamic>) {
-        _recordSingleAgentMessage(
+        _ingestSingleAgentMessageForLearning(
           jsonEncode(json),
           userId: userId,
           bundleId: bundleId,
@@ -263,7 +270,7 @@ class LiteagentClient {
       } else if (json is List) {
         for (final item in json) {
           if (item is Map<String, dynamic>) {
-            _recordSingleAgentMessage(
+            _ingestSingleAgentMessageForLearning(
               jsonEncode(item),
               userId: userId,
               bundleId: bundleId,

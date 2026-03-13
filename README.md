@@ -3,7 +3,7 @@ configured to enable running with [Docker](https://www.docker.com/).
 
 This gateway provides a single entry point for all local AI services:
 - **AgentKit**: Agent management and chat (implemented via LiteAgent SDK)
-- **IntentKit**: Intent detection (powered by agentos_kernel)
+- **IntentKit**: Intent detection (powered by agentos_kernel, disabled by default)
 - **AppKit**: Application registration and subscription
 - **ToolKit**: Tool execution (proxies to OpenTool)
 - **LLMKit**: LLM services (text generation, vision, embedding, TTS, ASR)
@@ -15,6 +15,8 @@ This gateway provides a single entry point for all local AI services:
 - `PORT`: Port to bind; defaults to `20261` when not provided.
 - `AGENTOS_BASEURL`: Base URL advertised by the service; defaults to
   `http://127.0.0.1:20261`. The helper script below sets it for you.
+- `ENABLE_INTENTKIT`: Whether to expose `/intentkit/*` routes. Defaults to
+  disabled. Set to `true` to enable.
 
 ## Running with the Dart SDK
 
@@ -38,6 +40,11 @@ To override the defaults explicitly:
 $ PORT=8080 AGENTOS_BASEURL=http://127.0.0.1:8080 dart run bin/server.dart
 Server listening on port 8080
 AGENTOS_BASEURL=http://127.0.0.1:8080
+```
+
+To expose IntentKit explicitly:
+```
+$ ENABLE_INTENTKIT=true dart run bin/server.dart
 ```
 
 ## Running with Docker
@@ -102,7 +109,11 @@ When receiving `functionCall`, external callers can post a `ToolReturn` to
 ## IntentKit API
 
 IntentKit exposes kernel-backed intent detection endpoints for intent apps.
-All IntentKit routes require a Bearer token.
+These routes are disabled by default and must be enabled explicitly with
+`ENABLE_INTENTKIT=true`. All IntentKit routes require a Bearer token.
+IntentKit is deprecated. Intent can trigger too frequently, and current LLM
+response speed is not yet fast enough. To reserve model compute for direct user
+interactions, prefer direct execution-oriented APIs.
 
 - `POST /intentkit/submitRaw`
 - `POST /intentkit/submitIntent`

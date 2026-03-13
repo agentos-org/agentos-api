@@ -519,6 +519,8 @@ LLMKit 代理请求到各种 LLM 服务。每种服务类型有独立的端点�
 
 IntentKit 提供内核驱动的意图识别接口，供意图检测类 App 使用。所有路由
 都需要 Bearer Token。
+IntentKit 已弃用。原因是 intent 触发过于频繁，而当前大模型响应速度还不够快。
+为了把模型算力优先留给用户直接交互，建议改用 direct execution-oriented APIs。
 
 ### POST /intentkit/submitRaw
 

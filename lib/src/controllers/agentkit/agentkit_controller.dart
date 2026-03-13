@@ -201,7 +201,11 @@ class AgentKitController {
         onMessage: (agentMessage) {
           final json = jsonEncode(agentMessage.toJson());
           controller.add(utf8.encode('event:message\ndata:$json\n\n'));
-          _recordAgentMessage(agentMessage, userId: token, bundleId: bundleId);
+          _ingestAgentMessageForLearning(
+            agentMessage,
+            userId: token,
+            bundleId: bundleId,
+          );
         },
         onChunk: (chunk) {
           final json = jsonEncode(chunk.toJson());
@@ -286,7 +290,11 @@ class AgentKitController {
       final bundleId = (token != null && _appKitService != null)
           ? _appKitService.bundleIdForToken(token)
           : null;
-      _recordAgentMessage(message, userId: token, bundleId: bundleId);
+      _ingestAgentMessageForLearning(
+        message,
+        userId: token,
+        bundleId: bundleId,
+      );
 
       return _jsonResponse(message.toJson());
     } catch (e) {
@@ -426,7 +434,10 @@ class AgentKitController {
     Map<String, dynamic> body,
   ) async {
     final capabilityBody = Map<String, dynamic>.from(body);
-    await _resolveAgentKitLlmConfigForLiteAgent(capabilityBody);
+    await _resolveAgentKitLlmConfigForLiteAgent(
+      capabilityBody,
+      injectFallbackWhenMissing: true,
+    );
     _normalizeSystemPromptForLiteAgent(capabilityBody);
     return capabilityBody;
   }
@@ -724,7 +735,8 @@ class AgentKitController {
     if (model.isRemote) {
       return model.baseUrl;
     }
-    final specificPort = await _serviceLocator.getServicePort(
+    final specificPort =
+        await _serviceLocator.getServicePort(
           ApiConfig.serviceLlmText,
           modelId: model.id,
         ) ??
@@ -766,7 +778,7 @@ class AgentKitController {
     );
   }
 
-  void _recordAgentMessage(
+  void _ingestAgentMessageForLearning(
     AgentMessage agentMessage, {
     String? userId,
     String? bundleId,
@@ -775,7 +787,10 @@ class AgentKitController {
     _kernelFuture
         .then((kernel) {
           if (kernel == null) return;
-          kernel.recordAgentMessage(
+          // AgentKit chat/chatSimple messages are the externally visible final
+          // agent replies returned to the host app, so they should be archived
+          // and contribute preference-learning signals.
+          kernel.ingestAgentMessageForLearning(
             userId: userId,
             bundleId: bundleId,
             agentMessage: agentMessage,

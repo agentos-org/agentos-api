@@ -523,6 +523,9 @@ If a backend connection error occurs, returns `502`:
 
 IntentKit exposes kernel-backed intent detection for intent apps. All routes
 require a Bearer token.
+IntentKit is deprecated. Intent can trigger too frequently, and current LLM
+response speed is not yet fast enough. To reserve model compute for direct user
+interactions, prefer direct execution-oriented APIs.
 
 ### POST /intentkit/submitRaw
 

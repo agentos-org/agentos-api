@@ -20,11 +20,13 @@ void main(List<String> args) async {
   final bootstrapResult = await KernelBootstrap.createKernel(serviceLocator);
   final kernelFuture = Future.value(bootstrapResult.kernelService);
   final liteAgentSdk = bootstrapResult.liteAgentSdk;
+  final enableIntentKit = ApiConfig.isIntentKitEnabled(Platform.environment);
 
   final handler = createGatewayHandler(
     serviceLocator: serviceLocator,
     kernelFuture: kernelFuture,
     liteAgentSdk: liteAgentSdk,
+    enableIntentKit: enableIntentKit,
   );
 
   // For running in containers, we respect the PORT environment variable.
@@ -34,4 +36,5 @@ void main(List<String> args) async {
   final server = await serve(handler, ip, port);
   print('Server listening on port ${server.port}');
   print('AGENTOS_BASEURL=$baseUrl');
+  print('ENABLE_INTENTKIT=$enableIntentKit');
 }

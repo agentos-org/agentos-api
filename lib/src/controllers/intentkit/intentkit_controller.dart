@@ -16,13 +16,24 @@ class IntentKitController {
   Router get router {
     final router = Router();
     final guard = requireBearer();
+    // IntentKit endpoints remain mounted for backward compatibility.
+    // ignore: deprecated_member_use_from_same_package
     router.post('/submitRaw', guard(_submitRaw));
+    // ignore: deprecated_member_use_from_same_package
     router.post('/submitIntent', guard(_submitIntent));
+    // ignore: deprecated_member_use_from_same_package
     router.post('/confirmJob', guard(_confirmJob));
+    // ignore: deprecated_member_use_from_same_package
     router.post('/suggestNextAction', guard(_suggestNextAction));
     return router;
   }
 
+  @Deprecated(
+    'IntentKit submitRaw endpoint is deprecated and kept only for compatibility. '
+    'Intent triggers too frequently, and current LLM response speed is not yet '
+    'fast enough. To reserve model compute for direct user interactions, prefer '
+    'direct execution-oriented APIs.',
+  )
   Future<Response> _submitRaw(Request request) async {
     final kernel = await _service.resolveKernel();
     if (kernel == null) {
@@ -70,6 +81,12 @@ class IntentKitController {
     }
   }
 
+  @Deprecated(
+    'IntentKit submitIntent endpoint is deprecated and kept only for compatibility. '
+    'Intent triggers too frequently, and current LLM response speed is not yet '
+    'fast enough. To reserve model compute for direct user interactions, prefer '
+    'direct execution-oriented APIs.',
+  )
   Future<Response> _submitIntent(Request request) async {
     final kernel = await _service.resolveKernel();
     if (kernel == null) {
@@ -116,6 +133,12 @@ class IntentKitController {
     }
   }
 
+  @Deprecated(
+    'IntentKit confirmJob endpoint is deprecated and kept only for compatibility. '
+    'Intent triggers too frequently, and current LLM response speed is not yet '
+    'fast enough. To reserve model compute for direct user interactions, prefer '
+    'direct execution-oriented APIs.',
+  )
   Future<Response> _confirmJob(Request request) async {
     final kernel = await _service.resolveKernel();
     if (kernel == null) {
@@ -162,6 +185,12 @@ class IntentKitController {
     }
   }
 
+  @Deprecated(
+    'IntentKit suggestNextAction endpoint is deprecated and kept only for compatibility. '
+    'Intent triggers too frequently, and current LLM response speed is not yet '
+    'fast enough. To reserve model compute for direct user interactions, prefer '
+    'direct execution-oriented APIs.',
+  )
   Future<Response> _suggestNextAction(Request request) async {
     final kernel = await _service.resolveKernel();
     if (kernel == null) {

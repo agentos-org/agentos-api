@@ -7,6 +7,12 @@ class IntentKitService {
 
   final Future<KernelService?> _kernelFuture;
 
+  @Deprecated(
+    'IntentKit submitRaw is deprecated and will be removed in a future release. '
+    'Intent triggers too frequently, and current LLM response speed is not yet '
+    'fast enough. To reserve model compute for direct user interactions, prefer '
+    'direct execution-oriented APIs.',
+  )
   Future<JobHandle> submitRaw({
     required String source,
     required List<Content> content,
@@ -16,6 +22,12 @@ class IntentKitService {
     return kernel.submitRaw(source: source, content: content, data: data);
   }
 
+  @Deprecated(
+    'IntentKit submitIntent is deprecated and will be removed in a future release. '
+    'Intent triggers too frequently, and current LLM response speed is not yet '
+    'fast enough. To reserve model compute for direct user interactions, prefer '
+    'direct execution-oriented APIs.',
+  )
   Future<JobHandle> submitIntent({
     required String source,
     required IntentCandidateDto intent,
@@ -24,6 +36,12 @@ class IntentKitService {
     return kernel.submitIntent(source: source, intent: intent);
   }
 
+  @Deprecated(
+    'IntentKit confirmJob is deprecated and will be removed in a future release. '
+    'Intent triggers too frequently, and current LLM response speed is not yet '
+    'fast enough. To reserve model compute for direct user interactions, prefer '
+    'direct execution-oriented APIs.',
+  )
   Future<JobHandle> confirmJob({
     required String jobId,
     required bool confirmed,
@@ -32,6 +50,12 @@ class IntentKitService {
     return kernel.confirmJob(jobId, confirmed: confirmed);
   }
 
+  @Deprecated(
+    'IntentKit suggestNextAction is deprecated and will be removed in a future release. '
+    'Intent triggers too frequently, and current LLM response speed is not yet '
+    'fast enough. To reserve model compute for direct user interactions, prefer '
+    'direct execution-oriented APIs.',
+  )
   Future<IntentResponseDto> suggestNextAction({
     required String source,
     List<String>? allowedActions,

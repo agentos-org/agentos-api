@@ -241,6 +241,45 @@ void main() {
     );
   });
 
+  test(
+    'injects kernel llmConfig for /initSession when request omits it',
+    () async {
+      final fakeSdk = _FakeLiteAgentSDK();
+      final fakeKernel = _FakeKernelService(
+        availableLlmConfig: LLMConfig(
+          baseUrl: 'http://127.0.0.1:52010',
+          apiKey: '',
+          model: 'qwen',
+        ),
+      );
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(fakeKernel),
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{'systemPrompt': 'hello'}),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      expect(fakeSdk.capturedCapability, isNotNull);
+      expect(
+        fakeSdk.capturedCapability!.llmConfig?.baseUrl,
+        'http://127.0.0.1:52010',
+      );
+      expect(fakeSdk.capturedCapability!.llmConfig?.apiKey, '');
+      expect(fakeSdk.capturedCapability!.llmConfig?.model, 'qwen');
+    },
+  );
+
   test('maps llmConfig.modelId to model for /initSimple', () async {
     final fakeSdk = _FakeLiteAgentSDK();
     final controller = AgentKitController(

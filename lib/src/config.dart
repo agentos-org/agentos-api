@@ -87,6 +87,15 @@ class ApiConfig {
   /// Gets internal service address (for proxy forwarding)
   static String getInternalUrl(int port) => 'http://$internalHost:$port';
 
+  /// Whether IntentKit routes should be exposed.
+  ///
+  /// Disabled by default because IntentKit requests can trigger
+  /// kernel-backed model inference.
+  static bool isIntentKitEnabled(Map<String, String> environment) {
+    final raw = environment['ENABLE_INTENTKIT']?.trim().toLowerCase();
+    return raw == '1' || raw == 'true' || raw == 'yes' || raw == 'on';
+  }
+
   /// Gets Kit path by service identifier
   static String? getKitPath(String serviceKey) {
     switch (serviceKey) {
