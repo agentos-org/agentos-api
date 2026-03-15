@@ -185,11 +185,12 @@ class KernelBootstrap {
   /// (which may be null if LLM models are not configured) and the
   /// [LiteAgentSDK] instance that should be shared across the application.
   static Future<KernelBootstrapResult> createKernel(
-    AgentOSServiceLocator serviceLocator,
-  ) async {
+    AgentOSServiceLocator serviceLocator, {
+    kernel.KernelRuntimeConfig runtime = const kernel.KernelRuntimeConfig(),
+  }) async {
     final liteagentBaseUrl = serviceLocator.liteagentBaseUrl;
     final liteAgentSdk = LiteAgentSDK(baseUrl: liteagentBaseUrl);
-    final kernelService = await kernel.KernelService.create();
+    final kernelService = await kernel.KernelService.create(runtime: runtime);
     final result = KernelBootstrapResult(
       kernelService: kernelService,
       liteAgentSdk: liteAgentSdk,
