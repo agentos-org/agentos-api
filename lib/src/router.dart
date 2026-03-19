@@ -5,6 +5,7 @@ import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'locator.dart';
 import 'controllers/agentkit/agentkit_controller.dart';
 import 'controllers/appkit/appkit_controller.dart';
+import 'controllers/cronkit/cronkit_controller.dart';
 import 'controllers/intentkit/intentkit_controller.dart';
 import 'controllers/llmkit/llmkit_controller.dart';
 import 'controllers/system_controller.dart';
@@ -13,9 +14,15 @@ import 'config.dart';
 import 'middleware.dart';
 import 'services/appkit/app_called_handler_impl.dart';
 import 'services/appkit/appkit_service.dart';
+import 'services/cronkit/cronkit_model_ref_store.dart';
 import 'services/intentkit/intentkit_service.dart';
 import 'services/llmkit/llm_client.dart';
 import 'services/toolkit/opentool_client.dart';
+
+String _createGatewayInstanceId() {
+  final now = DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(16);
+  return 'gw-$now';
+}
 
 /// Creates the complete API Gateway request handler
 ///
@@ -76,6 +83,8 @@ Router createGatewayRouter({
   bool enableIntentKit = false,
   int gatewayPort = ApiConfig.defaultPort,
 }) {
+  final instanceId = _createGatewayInstanceId();
+  requestLogger.info('Creating gateway router instanceId=$instanceId');
   final router = Router();
 
   // System endpoints (version)
@@ -119,6 +128,17 @@ Router createGatewayRouter({
   // AppKit API (app registration/subscription)
   final appKitController = AppKitController(service: appKitService);
   router.mount('${ApiConfig.appkitPath}/', appKitController.router.call);
+
+  // CronKit API (cron task management, requires Token)
+  final cronKitModelRefStore = HiveCronKitModelRefStore();
+  final cronKitController = CronKitController(
+    kernelFuture: kernelFuture,
+    appKitService: appKitService,
+    serviceLocator: serviceLocator,
+    modelRefStore: cronKitModelRefStore,
+    liteAgentBaseUrl: serviceLocator.liteagentBaseUrl,
+  );
+  router.mount('${ApiConfig.cronkitPath}/', cronKitController.router.call);
 
   // ToolKit API (proxy to OpenTool, requires Token)
   final openToolClient = OpenToolClient(serviceLocator: serviceLocator);

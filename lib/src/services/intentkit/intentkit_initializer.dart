@@ -81,6 +81,7 @@ class IntentKitInitializer {
             baseUrl: model.baseUrl ?? llmBaseUrl!,
             apiKey: model.apiKey ?? llmApiKey ?? '',
             model: model.name,
+            type: model.type,
             description: model.description,
             parameters: model.parameters,
             paramsB: model.paramsB,

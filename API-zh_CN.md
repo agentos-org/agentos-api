@@ -4,7 +4,12 @@
 
 ## 鉴权
 
-所有 `/agentkit/*` 路由以及 `GET /appkit/subscribe` 都需要 Bearer token。
+所有 `/agentkit/*`、`/cronkit/*` 路由以及 `GET /appkit/subscribe`
+都需要 Bearer token。
+
+对于 `/cronkit/*`，Bearer token 必须来自 `POST /appkit/register`。
+Cron 任务权限按该 token 解析出的 app 身份控制：
+同一 `appGroupId` 可共享读取，写操作仍只允许 owner `bundleId`。
 
 ```
 Authorization: Bearer <token>
@@ -367,6 +372,230 @@ Query:
 {"status":"ok"}
 ```
 
+## CronKit
+
+CronKit 提供基于 kernel 的定时任务管理与历史读取接口。
+本节所有路由都需要使用 `POST /appkit/register` 获取的 Bearer token。
+
+### Schema（数据结构）
+
+#### CronContent
+
+结构与 `Content` 相同。
+
+#### AgentCronSpec
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `systemPrompt` | `string` | 是 | 定时任务执行时使用的系统提示词。 |
+| `content` | `CronContent[]` | 是 | 非空输入内容数组。 |
+| `timeoutSeconds` | `number` | 否 | 执行超时时间，单位秒，默认 `3600`。 |
+
+#### CronTask
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `cronId` | `string` | 是 | 定时任务 ID。 |
+| `name` | `string` | 是 | 任务名称。 |
+| `schedule` | `string` | 是 | Cron 表达式。 |
+| `source` | `string` | 是 | 内部来源/归属标记。 |
+| `userId` | `string` | 否 | 可选用户 ID。 |
+| `sessionId` | `string` | 否 | 可选 session ID。 |
+| `timezone` | `string` | 否 | 任务时区。 |
+| `enabled` | `boolean` | 是 | 是否启用。 |
+| `status` | `string` | 是 | 当前任务状态。 |
+| `concurrency` | `string` | 是 | 并发策略。 |
+| `createdAt` | `string` | 是 | ISO 时间。 |
+| `updatedAt` | `string` | 是 | ISO 时间。 |
+| `lastRunAt` | `string` | 否 | 最近一次执行时间。 |
+| `nextRunAt` | `string` | 否 | 下一次计划执行时间。 |
+| `spec` | `AgentCronSpec` | 是 | 定时任务执行 spec。 |
+
+#### CronTaskListItem
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `cronId` | `string` | 是 | 定时任务 ID。 |
+| `name` | `string` | 是 | 任务名称。 |
+| `schedule` | `string` | 是 | Cron 表达式。 |
+| `enabled` | `boolean` | 是 | 是否启用。 |
+| `status` | `string` | 是 | 当前任务状态。 |
+| `lastRunAt` | `string` | 否 | 最近一次执行时间。 |
+| `nextRunAt` | `string` | 否 | 下一次计划执行时间。 |
+
+#### CronRun
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `runId` | `string` | 是 | 执行记录 ID。 |
+| `cronId` | `string` | 是 | 定时任务 ID。 |
+| `status` | `string` | 是 | 执行状态。 |
+| `scheduledAt` | `string` | 是 | 计划执行时间。 |
+| `startedAt` | `string` | 是 | 实际开始时间。 |
+| `finishedAt` | `string` | 否 | 完成时间。 |
+| `liteAgentSessionId` | `string` | 否 | LiteAgent session ID。 |
+| `error` | `string` | 否 | 执行失败时的错误信息。 |
+| `result` | `object` | 否 | 最终执行结果。 |
+
+#### CronRunListItem
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `runId` | `string` | 是 | 执行记录 ID。 |
+| `cronId` | `string` | 是 | 定时任务 ID。 |
+| `status` | `string` | 是 | 执行状态。 |
+| `scheduledAt` | `string` | 是 | 计划执行时间。 |
+| `startedAt` | `string` | 是 | 实际开始时间。 |
+| `finishedAt` | `string` | 否 | 完成时间。 |
+
+#### CronRunMessage
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `messageId` | `string` | 是 | 持久化消息 ID。 |
+| `runId` | `string` | 是 | 执行记录 ID。 |
+| `cronId` | `string` | 是 | 定时任务 ID。 |
+| `timestamp` | `string` | 是 | 消息持久化时间。 |
+| `message` | `AgentMessage` | 是 | 持久化消息内容。 |
+
+### 端点
+
+#### GET /cronkit/task
+
+Query:
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `cronId` | `string` | 是 |
+
+响应：`200 OK`（`CronTask`）
+
+#### GET /cronkit/task/list
+
+Query:
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `enabled` | `boolean` | 否 |
+| `offset` | `number` | 否 |
+| `limit` | `number` | 否 |
+
+响应：`200 OK`（`CronTaskListItem[]`）
+
+#### POST /cronkit/task/create
+
+请求体：
+
+```json
+{
+  "name": "Daily Summary",
+  "schedule": "0 9 * * *",
+  "spec": {
+    "systemPrompt": "You are a scheduled agent.",
+    "content": [
+      {"type": "text", "message": "Generate today's summary."}
+    ],
+    "timeoutSeconds": 3600
+  },
+  "timezone": "Asia/Shanghai",
+  "concurrency": "skipIfRunning",
+  "enabled": true
+}
+```
+
+响应：`200 OK`（`CronTask`）
+
+说明：
+- 任务归属由 Bearer token 推导，不接受客户端自行决定 `source`。
+- 读取权限按有效 `appGroupId` 共享。
+- 写权限仍然只属于 owner `bundleId`。
+
+#### POST /cronkit/task/update
+
+请求体：带必填 `cronId` 的局部更新对象。
+如果提供 `spec`，必须使用与创建时相同的 `AgentCronSpec` 结构。
+
+响应：`200 OK`（`CronTask`）
+
+#### POST /cronkit/task/delete
+
+请求体：
+
+```json
+{"cronId":"<string>"}
+```
+
+响应：`200 OK`
+
+```json
+{"deleted":true,"cronId":"<string>"}
+```
+
+#### POST /cronkit/task/setEnabled
+
+请求体：
+
+```json
+{"cronId":"<string>","enabled":true}
+```
+
+响应：`200 OK`（`CronTask`）
+
+#### POST /cronkit/task/runNow
+
+请求体：
+
+```json
+{"cronId":"<string>","scheduledAt":"2026-03-17T09:00:00Z"}
+```
+
+响应：`200 OK`（`CronRun`）
+
+#### GET /cronkit/run
+
+Query:
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `runId` | `string` | 是 |
+
+响应：`200 OK`（`CronRun`）
+
+说明：
+- `trigger` 表示该次 run 的触发方式（如 `manual` 或 `scheduler`）。
+
+#### GET /cronkit/run/list
+
+Query:
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `cronId` | `string` | 否 |
+| `after` | `string` | 否 |
+| `before` | `string` | 否 |
+| `offset` | `number` | 否 |
+| `limit` | `number` | 否 |
+
+响应：`200 OK`（`CronRunListItem[]`）
+
+#### GET /cronkit/run/messages
+
+Query:
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `runId` | `string` | 是 |
+| `offset` | `number` | 否 |
+| `limit` | `number` | 否 |
+
+响应：`200 OK`（`CronRunMessage[]`）
+
+说明：
+- 该接口只返回已持久化的 `AgentMessage` 记录。
+- 当前 CronKit 不提供 cron 执行过程的 SSE 或订阅流接口。
+
+如果 kernel 未配置 cron 模块，CronKit 可能返回 `503`。
+
 ## AppKit
 
 ### POST /appkit/register
@@ -374,14 +603,18 @@ Query:
 请求体：
 
 ```
-{"bundleId":"com.demo.app"}
+{"bundleId":"com.demo.app","appGroupId":"com.demo"}
 ```
 
 响应：`200 OK`
 
 ```
-{"token":"sk-..."}
+{"token":"sk-...","bundleId":"com.demo.app","appGroupId":"com.demo"}
 ```
+
+说明：
+- `appGroupId` 是可选的。
+- 如果不传，服务端会默认使用 `bundleId` 作为有效 group ID。
 
 ### GET /appkit/subscribe
 
@@ -514,129 +747,3 @@ LLMKit 代理请求到各种 LLM 服务。每种服务类型有独立的端点�
   "message": "Connection refused"
 }
 ```
-
-## IntentKit API
-
-IntentKit 提供内核驱动的意图识别接口，供意图检测类 App 使用。所有路由
-都需要 Bearer Token。
-IntentKit 已弃用。原因是 intent 触发过于频繁，而当前大模型响应速度还不够快。
-为了把模型算力优先留给用户直接交互，建议改用 direct execution-oriented APIs。
-
-### POST /intentkit/submitRaw
-
-提交原始意图检测请求，返回任务句柄用于跟踪。
-
-请求体：
-
-```json
-{
-  "source": "api",
-  "content": [
-    { "type": "text", "message": "帮我订一张今晚的票" }
-  ],
-  "data": {
-    "locale": "zh-CN"
-  }
-}
-```
-
-响应体：
-
-```json
-{
-  "jobId": "job-1700000000-0",
-  "status": "CREATED"
-}
-```
-
-若内核未配置，则返回 `503`。
-
-### POST /intentkit/submitIntent
-
-提交已选择的意图候选（绕过感知流程），返回任务句柄用于跟踪。
-
-请求体：
-
-```json
-{
-  "source": "api",
-  "intent": {
-    "action": "call_app",
-    "payload": {
-      "target": "calendar.create_event",
-      "title": "和 Sam 吃饭",
-      "time": "2025-06-01T19:00:00-07:00"
-    },
-    "confidence": 0.92
-  }
-}
-```
-
-响应体：
-
-```json
-{
-  "jobId": "job-1700000000-1",
-  "status": "CREATED"
-}
-```
-
-若内核未配置，则返回 `503`。
-
-### POST /intentkit/confirmJob
-
-确认或拒绝需要用户确认的任务。
-
-请求体：
-
-```json
-{
-  "jobId": "job-1700000000-1",
-  "confirmed": true
-}
-```
-
-响应体：
-
-```json
-{
-  "jobId": "job-1700000000-1",
-  "status": "RUNNING"
-}
-```
-
-若内核未配置，则返回 `503`。
-
-### POST /intentkit/suggestNextAction
-
-无用户输入时，请求内核建议下一步动作。
-
-请求体：
-
-```json
-{
-  "source": "api",
-  "allowedActions": ["call_app", "reject_intent"],
-  "memoryLimit": 5
-}
-```
-
-响应体：
-
-```json
-{
-  "candidates": [
-    {
-      "action": "call_app",
-      "payload": {
-        "target": "calendar.create_event",
-        "title": "和 Sam 吃饭",
-        "time": "2025-06-01T19:00:00-07:00"
-      },
-      "confidence": 0.84
-    }
-  ]
-}
-```
-
-若内核未配置，则返回 `503`。

@@ -82,6 +82,7 @@ void main() {
     expect(payload['endpoints'], isNotEmpty);
     final endpoints = Map<String, dynamic>.from(payload['endpoints'] as Map);
     expect(endpoints.containsKey('/intentkit/*'), isFalse);
+    expect(endpoints.containsKey('/cronkit/*'), isTrue);
   });
 
   test('Root version', () async {
@@ -133,6 +134,11 @@ void main() {
     expect(chatRes.statusCode, 401);
   });
 
+  test('CronKit endpoints require bearer', () async {
+    final response = await get(Uri.parse('$host/cronkit/task/list'));
+    expect(response.statusCode, 401);
+  });
+
   test('Toolkit no auth required', () async {
     // ToolKit no longer requires authentication, direct access allowed
     final response = await get(Uri.parse('$host/toolkit/tools'));
@@ -157,13 +163,18 @@ void main() {
     final registerRes = await post(
       Uri.parse('$host/appkit/register'),
       headers: {'content-type': 'application/json'},
-      body: jsonEncode(<String, String>{'bundleId': 'com.demo.app'}),
+      body: jsonEncode(<String, String>{
+        'bundleId': 'com.demo.app',
+        'appGroupId': 'com.demo',
+      }),
     );
     expect(registerRes.statusCode, 200);
     final registerPayload =
         jsonDecode(registerRes.body) as Map<String, dynamic>;
     final token = registerPayload['token'] as String;
     expect(token, startsWith('sk-'));
+    expect(registerPayload['bundleId'], 'com.demo.app');
+    expect(registerPayload['appGroupId'], 'com.demo');
   });
 
   test('IntentKit routes can be enabled explicitly', () async {

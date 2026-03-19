@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:agentos_api/agentos_api.dart';
+import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:logging/logging.dart';
 import 'package:shelf/shelf_io.dart';
 
@@ -17,7 +18,11 @@ void main(List<String> args) async {
   final ip = InternetAddress.anyIPv4;
 
   final serviceLocator = DefaultServiceLocator();
-  final bootstrapResult = await KernelBootstrap.createKernel(serviceLocator);
+  const runtime = KernelRuntimeConfig();
+  final bootstrapResult = await KernelBootstrap.createKernel(
+    serviceLocator,
+    runtime: runtime,
+  );
   final kernelFuture = Future.value(bootstrapResult.kernelService);
   final liteAgentSdk = bootstrapResult.liteAgentSdk;
   final enableIntentKit = ApiConfig.isIntentKitEnabled(Platform.environment);
@@ -37,4 +42,9 @@ void main(List<String> args) async {
   print('Server listening on port ${server.port}');
   print('AGENTOS_BASEURL=$baseUrl');
   print('ENABLE_INTENTKIT=$enableIntentKit');
+  print('KERNEL_CWD=${Directory.current.path}');
+  print('KERNEL_HIVE_PATH=${runtime.hivePath}');
+  print('KERNEL_CRON_TASK_BOX=${runtime.cronTaskBoxName}');
+  print('KERNEL_CRON_RUN_BOX=${runtime.cronRunBoxName}');
+  print('KERNEL_CRON_RUN_MESSAGE_BOX=${runtime.cronRunMessageBoxName}');
 }

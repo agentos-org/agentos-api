@@ -3,7 +3,7 @@
 
 该网关为所有本地 AI 服务提供统一入口：
 - **AgentKit**：智能体管理与对话（基于 LiteAgent SDK）
-- **IntentKit**：意图识别（基于 agentos_kernel）
+- **CronKit**：定时任务管理（基于 agentos_kernel）
 - **AppKit**：应用注册与订阅
 - **ToolKit**：工具执行（代理 OpenTool）
 - **LLMKit**：LLM 服务（文本生成、图文理解、文本嵌入、TTS、ASR）
@@ -92,17 +92,44 @@ AgentKit 在 `/agentkit/` 下提供 LiteAgent 兼容接口，并通过 LiteAgent
 外部收到 `functionCall` 后，可调用
 `POST /agentkit/callback?sessionId=...` 并提交 `ToolReturn` 完成该回调。
 
-## IntentKit API
+## CronKit API
 
-IntentKit 提供内核驱动的意图识别接口，供意图检测类 App 使用。
-所有 IntentKit 路由均需要 Bearer Token。
-IntentKit 已弃用。原因是 intent 触发过于频繁，而当前大模型响应速度还不够快。
-为了把模型算力优先留给用户直接交互，建议改用 direct execution-oriented APIs。
+CronKit 暴露基于 kernel 的定时任务管理接口。所有 CronKit 路由都需要
+通过 `POST /appkit/register` 获取的 Bearer token。
+`POST /appkit/register` 接收 `bundleId`，也可以附带可选的 `appGroupId`。
+如果未传 `appGroupId`，服务端会默认使用 `bundleId`。
+Cron 任务归属由 bearer token 推导：
+同一个 `appGroupId` 下可以共享读取，但写操作仍然只允许 owner `bundleId`。
 
-- `POST /intentkit/submitRaw`
-- `POST /intentkit/submitIntent`
-- `POST /intentkit/confirmJob`
-- `POST /intentkit/suggestNextAction`
+- `GET /cronkit/task?cronId=<id>`
+- `GET /cronkit/task/list?enabled=<bool>&offset=<n>&limit=<n>`
+- `POST /cronkit/task/create`
+- `POST /cronkit/task/update`
+- `POST /cronkit/task/delete`
+- `POST /cronkit/task/setEnabled`
+- `POST /cronkit/task/runNow`
+- `GET /cronkit/run?runId=<id>`
+- `GET /cronkit/run/list?cronId=<id>&after=<iso>&before=<iso>&offset=<n>&limit=<n>`
+- `GET /cronkit/run/messages?runId=<id>&offset=<n>&limit=<n>`
+
+CronKit 的任务 `spec` 请求体已对齐 kernel 新 schema：
+
+```json
+{
+  "systemPrompt": "You are a scheduled agent.",
+  "content": [
+    {"type": "text", "message": "Generate the daily summary."}
+  ],
+  "timeoutSeconds": 3600
+}
+```
+
+`GET /cronkit/run` 用于读取单条 run 详情，响应里包含 `trigger` 字段，
+用于标识该次 run 的触发方式（如 `manual` 或 `scheduler`）。
+`GET /cronkit/run/messages` 用于读取该 run 持久化下来的 `AgentMessage[]`。
+当前 CronKit 不提供 cron 执行过程的 SSE 或订阅式流输出。
+
+如果 kernel 没有配置 cron 模块，CronKit 会返回 `503`。
 
 ## ToolKit API
 
@@ -120,7 +147,10 @@ IntentKit 已弃用。原因是 intent 触发过于频繁，而当前大模型�
 
 ## AppKit API
 
-- `POST /appkit/register` 注册 app bundle：`{"bundleId": "com.demo"}` -> `{"token": "sk-..."}`。
+- `POST /appkit/register` 注册 app bundle：
+  `{"bundleId": "com.demo.desktop", "appGroupId": "com.demo"}` ->
+  `{"token": "sk-...", "bundleId": "com.demo.desktop", "appGroupId": "com.demo"}`。
+- 如果不传 `appGroupId`，服务端会默认以 `bundleId` 作为有效 group。
 - `GET /appkit/subscribe`（需 Bearer token）以 SSE 形式输出事件：
   `event: welcome\ndata: {"bundleId": "..."}\n\n`。
 - 当内核触发 App 调用时，已订阅 App 可能收到：

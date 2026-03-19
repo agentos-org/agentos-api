@@ -72,6 +72,7 @@ void main() {
       expect(config, isNotNull);
       expect(config!.llm, isNotNull);
       expect(config.llm!.models.single.model, 'qwen');
+      expect(config.llm!.models.single.type, 'text');
     },
   );
 
@@ -114,6 +115,7 @@ void main() {
     expect(models.length, 1);
     expect(models.single.model, 'qwen3-8b');
     expect(models.single.contextWindowSize, 8192);
+    expect(models.single.type, 'text');
   });
 
   test('buildKernelModels accepts desktop textGeneration model type', () {
@@ -138,6 +140,7 @@ void main() {
 
     expect(models.length, 1);
     expect(models.single.model, 'qwen3-8b');
+    expect(models.single.type, 'textGeneration');
   });
 
   test('buildKernelModels accepts VL (image_text_to_text) models', () {
@@ -195,47 +198,111 @@ void main() {
     expect(models.length, 2);
     expect(models[0].model, 'qwen2.5-vl-7b');
     expect(models[1].model, 'gemma3-4b');
+    expect(models[0].type, 'image_text_to_text');
+    expect(models[0].supportsImageInput, isTrue);
+    expect(models[1].type, 'imageTextToText');
+    expect(models[1].supportsImageInput, isTrue);
   });
 
   test('supportsTextInference accepts text and VL, rejects others', () {
     expect(
-      IntentKitInitializer.supportsTextInference(const LlmModelInfo(
-        id: 't', name: 't', alias: 't', description: '', parameters: '',
-        paramsB: 0, quantization: '', sizeGB: 0, minRAMGB: 0,
-        downloadUrl: '', tags: [], repoId: '', type: 'textGeneration',
-      )),
+      IntentKitInitializer.supportsTextInference(
+        const LlmModelInfo(
+          id: 't',
+          name: 't',
+          alias: 't',
+          description: '',
+          parameters: '',
+          paramsB: 0,
+          quantization: '',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: [],
+          repoId: '',
+          type: 'textGeneration',
+        ),
+      ),
       isTrue,
     );
     expect(
-      IntentKitInitializer.supportsTextInference(const LlmModelInfo(
-        id: 'v', name: 'v', alias: 'v', description: '', parameters: '',
-        paramsB: 0, quantization: '', sizeGB: 0, minRAMGB: 0,
-        downloadUrl: '', tags: [], repoId: '', type: 'image_text_to_text',
-      )),
+      IntentKitInitializer.supportsTextInference(
+        const LlmModelInfo(
+          id: 'v',
+          name: 'v',
+          alias: 'v',
+          description: '',
+          parameters: '',
+          paramsB: 0,
+          quantization: '',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: [],
+          repoId: '',
+          type: 'image_text_to_text',
+        ),
+      ),
       isTrue,
     );
     expect(
-      IntentKitInitializer.supportsTextInference(const LlmModelInfo(
-        id: 'e', name: 'e', alias: 'e', description: '', parameters: '',
-        paramsB: 0, quantization: '', sizeGB: 0, minRAMGB: 0,
-        downloadUrl: '', tags: [], repoId: '', type: 'embedding',
-      )),
+      IntentKitInitializer.supportsTextInference(
+        const LlmModelInfo(
+          id: 'e',
+          name: 'e',
+          alias: 'e',
+          description: '',
+          parameters: '',
+          paramsB: 0,
+          quantization: '',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: [],
+          repoId: '',
+          type: 'embedding',
+        ),
+      ),
       isFalse,
     );
     expect(
-      IntentKitInitializer.supportsTextInference(const LlmModelInfo(
-        id: 's', name: 's', alias: 's', description: '', parameters: '',
-        paramsB: 0, quantization: '', sizeGB: 0, minRAMGB: 0,
-        downloadUrl: '', tags: [], repoId: '', type: 'text_to_speech',
-      )),
+      IntentKitInitializer.supportsTextInference(
+        const LlmModelInfo(
+          id: 's',
+          name: 's',
+          alias: 's',
+          description: '',
+          parameters: '',
+          paramsB: 0,
+          quantization: '',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: [],
+          repoId: '',
+          type: 'text_to_speech',
+        ),
+      ),
       isFalse,
     );
     expect(
-      IntentKitInitializer.supportsTextInference(const LlmModelInfo(
-        id: 'a', name: 'a', alias: 'a', description: '', parameters: '',
-        paramsB: 0, quantization: '', sizeGB: 0, minRAMGB: 0,
-        downloadUrl: '', tags: [], repoId: '', type: 'audio_text_to_text',
-      )),
+      IntentKitInitializer.supportsTextInference(
+        const LlmModelInfo(
+          id: 'a',
+          name: 'a',
+          alias: 'a',
+          description: '',
+          parameters: '',
+          paramsB: 0,
+          quantization: '',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: [],
+          repoId: '',
+          type: 'audio_text_to_text',
+        ),
+      ),
       isFalse,
     );
   });

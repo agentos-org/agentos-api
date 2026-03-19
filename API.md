@@ -4,8 +4,13 @@ Base URL: `http://<host>:<port>` (default port: `20261`).
 
 ## Authentication
 
-Bearer token is required for all `/agentkit/*` routes and for
+Bearer token is required for all `/agentkit/*` and `/cronkit/*` routes, and for
 `GET /appkit/subscribe`.
+
+For `/cronkit/*`, the bearer token must be an AppKit-issued token from
+`POST /appkit/register`. Cron task ownership is isolated by the token's
+resolved app identity. Reads are shared within the same effective
+`appGroupId`, while writes stay restricted to the owner `bundleId`.
 
 ```
 Authorization: Bearer <token>
@@ -369,6 +374,230 @@ Response: `200 OK`
 {"status":"ok"}
 ```
 
+## CronKit
+
+CronKit exposes kernel-backed cron task management and history APIs.
+All routes in this section require a Bearer token from `POST /appkit/register`.
+
+### Schemas
+
+#### CronContent
+
+Same shape as `Content`.
+
+#### AgentCronSpec
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `systemPrompt` | `string` | Yes | System prompt used by the scheduled agent. |
+| `content` | `CronContent[]` | Yes | Non-empty content list for the scheduled execution input. |
+| `timeoutSeconds` | `number` | No | Execution timeout in seconds. Default `3600`. |
+
+#### CronTask
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `cronId` | `string` | Yes | Cron task ID. |
+| `name` | `string` | Yes | Task name. |
+| `schedule` | `string` | Yes | Cron expression. |
+| `source` | `string` | Yes | Internal source/ownership marker. |
+| `userId` | `string` | No | Optional user ID. |
+| `sessionId` | `string` | No | Optional session ID. |
+| `timezone` | `string` | No | Task timezone. |
+| `enabled` | `boolean` | Yes | Whether the task is enabled. |
+| `status` | `string` | Yes | Current task status. |
+| `concurrency` | `string` | Yes | Concurrency policy. |
+| `createdAt` | `string` | Yes | ISO timestamp. |
+| `updatedAt` | `string` | Yes | ISO timestamp. |
+| `lastRunAt` | `string` | No | ISO timestamp of the last run. |
+| `nextRunAt` | `string` | No | ISO timestamp of the next scheduled run. |
+| `spec` | `AgentCronSpec` | Yes | Scheduled agent spec. |
+
+#### CronTaskListItem
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `cronId` | `string` | Yes | Cron task ID. |
+| `name` | `string` | Yes | Task name. |
+| `schedule` | `string` | Yes | Cron expression. |
+| `enabled` | `boolean` | Yes | Whether the task is enabled. |
+| `status` | `string` | Yes | Current task status. |
+| `lastRunAt` | `string` | No | ISO timestamp of the last run. |
+| `nextRunAt` | `string` | No | ISO timestamp of the next scheduled run. |
+
+#### CronRun
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `runId` | `string` | Yes | Run ID. |
+| `cronId` | `string` | Yes | Cron task ID. |
+| `status` | `string` | Yes | Run status. |
+| `scheduledAt` | `string` | Yes | ISO timestamp of the scheduled execution time. |
+| `startedAt` | `string` | Yes | ISO timestamp of the actual start time. |
+| `finishedAt` | `string` | No | ISO timestamp of completion. |
+| `liteAgentSessionId` | `string` | No | LiteAgent session ID, if available. |
+| `error` | `string` | No | Error message if execution failed. |
+| `result` | `object` | No | Final execution result payload. |
+
+#### CronRunListItem
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `runId` | `string` | Yes | Run ID. |
+| `cronId` | `string` | Yes | Cron task ID. |
+| `status` | `string` | Yes | Run status. |
+| `scheduledAt` | `string` | Yes | ISO timestamp of the scheduled execution time. |
+| `startedAt` | `string` | Yes | ISO timestamp of the actual start time. |
+| `finishedAt` | `string` | No | ISO timestamp of completion. |
+
+#### CronRunMessage
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `messageId` | `string` | Yes | Persisted message ID. |
+| `runId` | `string` | Yes | Run ID. |
+| `cronId` | `string` | Yes | Cron task ID. |
+| `timestamp` | `string` | Yes | ISO timestamp when the message was persisted. |
+| `message` | `AgentMessage` | Yes | Persisted message payload. |
+
+### Endpoints
+
+#### GET /cronkit/task
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `cronId` | `string` | Yes |
+
+Response: `200 OK` (`CronTask`)
+
+#### GET /cronkit/task/list
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `enabled` | `boolean` | No |
+| `offset` | `number` | No |
+| `limit` | `number` | No |
+
+Response: `200 OK` (`CronTaskListItem[]`)
+
+#### POST /cronkit/task/create
+
+Request body:
+
+```json
+{
+  "name": "Daily Summary",
+  "schedule": "0 9 * * *",
+  "spec": {
+    "systemPrompt": "You are a scheduled agent.",
+    "content": [
+      {"type": "text", "message": "Generate today's summary."}
+    ],
+    "timeoutSeconds": 3600
+  },
+  "timezone": "Asia/Shanghai",
+  "concurrency": "skipIfRunning",
+  "enabled": true
+}
+```
+
+Response: `200 OK` (`CronTask`)
+
+Notes:
+- Ownership is derived from the bearer token, not from a client-supplied `source`.
+- Read access is shared within the same effective `appGroupId`.
+- Write access remains restricted to the owner `bundleId`.
+
+#### POST /cronkit/task/update
+
+Request body: partial `CronTask` update payload with required `cronId`.
+`spec`, when provided, must use the same `AgentCronSpec` shape as creation.
+
+Response: `200 OK` (`CronTask`)
+
+#### POST /cronkit/task/delete
+
+Request body:
+
+```json
+{"cronId":"<string>"}
+```
+
+Response: `200 OK`
+
+```json
+{"deleted":true,"cronId":"<string>"}
+```
+
+#### POST /cronkit/task/setEnabled
+
+Request body:
+
+```json
+{"cronId":"<string>","enabled":true}
+```
+
+Response: `200 OK` (`CronTask`)
+
+#### POST /cronkit/task/runNow
+
+Request body:
+
+```json
+{"cronId":"<string>","scheduledAt":"2026-03-17T09:00:00Z"}
+```
+
+Response: `200 OK` (`CronRun`)
+
+#### GET /cronkit/run
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `runId` | `string` | Yes |
+
+Response: `200 OK` (`CronRun`)
+
+Notes:
+- `trigger` indicates how the run was started (for example, `manual` or `scheduler`).
+
+#### GET /cronkit/run/list
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `cronId` | `string` | No |
+| `after` | `string` | No |
+| `before` | `string` | No |
+| `offset` | `number` | No |
+| `limit` | `number` | No |
+
+Response: `200 OK` (`CronRunListItem[]`)
+
+#### GET /cronkit/run/messages
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `runId` | `string` | Yes |
+| `offset` | `number` | No |
+| `limit` | `number` | No |
+
+Response: `200 OK` (`CronRunMessage[]`)
+
+Notes:
+- This endpoint returns persisted `AgentMessage` records only.
+- CronKit does not expose SSE or subscribe-based run streaming.
+
+If kernel cron is unavailable, CronKit may return `503`.
+
 ## AppKit
 
 ### POST /appkit/register
@@ -376,14 +605,18 @@ Response: `200 OK`
 Request body:
 
 ```
-{"bundleId":"com.demo.app"}
+{"bundleId":"com.demo.app","appGroupId":"com.demo"}
 ```
 
 Response: `200 OK`
 
 ```
-{"token":"sk-..."}
+{"token":"sk-...","bundleId":"com.demo.app","appGroupId":"com.demo"}
 ```
+
+Notes:
+- `appGroupId` is optional.
+- If omitted, the server uses `bundleId` as the effective group ID.
 
 ### GET /appkit/subscribe
 
@@ -518,130 +751,3 @@ If a backend connection error occurs, returns `502`:
   "message": "Connection refused"
 }
 ```
-
-## IntentKit API
-
-IntentKit exposes kernel-backed intent detection for intent apps. All routes
-require a Bearer token.
-IntentKit is deprecated. Intent can trigger too frequently, and current LLM
-response speed is not yet fast enough. To reserve model compute for direct user
-interactions, prefer direct execution-oriented APIs.
-
-### POST /intentkit/submitRaw
-
-Submit a raw intent detection request. Returns a job handle for tracking.
-
-Request body:
-
-```json
-{
-  "source": "api",
-  "content": [
-    { "type": "text", "message": "Book a table for two" }
-  ],
-  "data": {
-    "locale": "en-US"
-  }
-}
-```
-
-Response body:
-
-```json
-{
-  "jobId": "job-1700000000-0",
-  "status": "CREATED"
-}
-```
-
-If the kernel is not configured, returns `503`.
-
-### POST /intentkit/submitIntent
-
-Submit a selected intent candidate directly (bypasses perception). Returns a job handle for tracking.
-
-Request body:
-
-```json
-{
-  "source": "api",
-  "intent": {
-    "action": "call_app",
-    "payload": {
-      "target": "calendar.create_event",
-      "title": "Dinner with Sam",
-      "time": "2025-06-01T19:00:00-07:00"
-    },
-    "confidence": 0.92
-  }
-}
-```
-
-Response body:
-
-```json
-{
-  "jobId": "job-1700000000-1",
-  "status": "CREATED"
-}
-```
-
-If the kernel is not configured, returns `503`.
-
-### POST /intentkit/confirmJob
-
-Confirm or reject a pending job that requires user confirmation.
-
-Request body:
-
-```json
-{
-  "jobId": "job-1700000000-1",
-  "confirmed": true
-}
-```
-
-Response body:
-
-```json
-{
-  "jobId": "job-1700000000-1",
-  "status": "RUNNING"
-}
-```
-
-If the kernel is not configured, returns `503`.
-
-### POST /intentkit/suggestNextAction
-
-Ask the kernel to suggest the next action when there is no user input.
-
-Request body:
-
-```json
-{
-  "source": "api",
-  "allowedActions": ["call_app", "reject_intent"],
-  "memoryLimit": 5
-}
-```
-
-Response body:
-
-```json
-{
-  "candidates": [
-    {
-      "action": "call_app",
-      "payload": {
-        "target": "calendar.create_event",
-        "title": "Dinner with Sam",
-        "time": "2025-06-01T19:00:00-07:00"
-      },
-      "confidence": 0.84
-    }
-  ]
-}
-```
-
-If the kernel is not configured, returns `503`.

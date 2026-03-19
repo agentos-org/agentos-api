@@ -1,12 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:logging/logging.dart';
+import 'package:unique_id_dart/unique_id_dart.dart';
+
 import '../../models/agent/agent_models.dart';
 import '../../models/app/app_models.dart';
-import 'package:unique_id_dart/unique_id_dart.dart';
+
+final Logger _appKitLogger = Logger('agentos_server');
 
 class AppKitService {
   final List<String> _apps = [];
+  final Map<String, _RegisteredApp> _tokenRegistry = {};
   final Map<String, String> _bundleTokens = {};
   final Map<String, List<String>> _bundleAgents = {};
 
@@ -14,9 +19,17 @@ class AppKitService {
 
   List<String> listApps() => List.unmodifiable(_apps);
 
-  bool isTokenValid(String token) => _bundleIdForToken(token) != null;
+  bool isTokenValid(String token) => _registeredAppForToken(token) != null;
 
-  String? bundleIdForToken(String token) => _bundleIdForToken(token);
+  String? bundleIdForToken(String token) =>
+      _registeredAppForToken(token)?.bundleId;
+
+  String? appGroupIdForToken(String token) =>
+      _registeredAppForToken(token)?.appGroupId;
+
+  String? effectiveAppGroupIdForToken(String token) {
+    return _registeredAppForToken(token)?.effectiveAppGroupId;
+  }
 
   void registerApp(String rawDefinition) {
     // Legacy placeholder registration.
@@ -27,12 +40,28 @@ class AppKitService {
 
   TokenInfo registerBundle(AppBundleDto bundle) {
     final token = _issueToken();
+    final registered = _RegisteredApp(
+      token: token,
+      bundleId: bundle.bundleId,
+      appGroupId: bundle.appGroupId,
+    );
     _bundleTokens[bundle.bundleId] = token;
-    return TokenInfo(token: token);
+    _tokenRegistry[token] = registered;
+    final tokenPreview = token.length <= 12
+        ? token
+        : '${token.substring(0, 8)}...${token.substring(token.length - 4)}';
+    _appKitLogger.info(
+      'AppKitService registerBundle: token=$tokenPreview bundleId=${registered.bundleId} appGroupId=${registered.effectiveAppGroupId}',
+    );
+    return TokenInfo(
+      token: token,
+      bundleId: registered.bundleId,
+      appGroupId: registered.effectiveAppGroupId,
+    );
   }
 
   bool bindAgents({required String token, required List<AgentInfoDto> agents}) {
-    final bundleId = _bundleIdForToken(token);
+    final bundleId = bundleIdForToken(token);
     if (bundleId == null) {
       return false;
     }
@@ -41,11 +70,12 @@ class AppKitService {
   }
 
   Stream<EventDto> subscribe(String token) {
-    final bundleId = _bundleIdForToken(token);
-    if (bundleId == null) {
+    final registered = _registeredAppForToken(token);
+    if (registered == null) {
       return const Stream<EventDto>.empty();
     }
 
+    final bundleId = registered.bundleId;
     final existing = _subscribers[bundleId];
     if (existing != null && !existing.isClosed) {
       existing.close();
@@ -57,7 +87,10 @@ class AppKitService {
         controller.add(
           EventDto(
             event: 'welcome',
-            data: jsonEncode({'bundleId': bundleId}),
+            data: jsonEncode({
+              'bundleId': bundleId,
+              'appGroupId': registered.effectiveAppGroupId,
+            }),
           ),
         );
       },
@@ -90,12 +123,21 @@ class AppKitService {
     return 'sk-$generated';
   }
 
-  String? _bundleIdForToken(String token) {
-    for (final entry in _bundleTokens.entries) {
-      if (entry.value == token) {
-        return entry.key;
-      }
-    }
-    return null;
+  _RegisteredApp? _registeredAppForToken(String token) {
+    return _tokenRegistry[token];
   }
+}
+
+class _RegisteredApp {
+  const _RegisteredApp({
+    required this.token,
+    required this.bundleId,
+    this.appGroupId,
+  });
+
+  final String token;
+  final String bundleId;
+  final String? appGroupId;
+
+  String get effectiveAppGroupId => appGroupId ?? bundleId;
 }

@@ -40,6 +40,8 @@ class SystemController {
       '/ready': 'Gateway readiness',
       '${ApiConfig.agentkitPath}/*':
           'AgentKit API (Agent service, requires Token)',
+      '${ApiConfig.cronkitPath}/*':
+          'CronKit API (Cron task management, requires Token)',
       '${ApiConfig.appkitPath}/*': 'AppKit API (App registration/subscription)',
       '${ApiConfig.toolkitPath}/*': 'ToolKit API (${ApiConfig.opentoolName})',
       '${ApiConfig.llmTextPath}/*': ApiConfig.llmTextName,

@@ -126,6 +126,7 @@ void main() {
     expect(ok, isTrue);
     expect(kernel.updatedModels, isNotNull);
     expect(kernel.updatedModels!.single.model, 'qwen');
+    expect(kernel.updatedModels!.single.type, 'text');
   });
 
   test(

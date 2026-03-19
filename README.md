@@ -3,7 +3,7 @@ configured to enable running with [Docker](https://www.docker.com/).
 
 This gateway provides a single entry point for all local AI services:
 - **AgentKit**: Agent management and chat (implemented via LiteAgent SDK)
-- **IntentKit**: Intent detection (powered by agentos_kernel, disabled by default)
+- **CronKit**: Cron task management (powered by agentos_kernel)
 - **AppKit**: Application registration and subscription
 - **ToolKit**: Tool execution (proxies to OpenTool)
 - **LLMKit**: LLM services (text generation, vision, embedding, TTS, ASR)
@@ -15,8 +15,6 @@ This gateway provides a single entry point for all local AI services:
 - `PORT`: Port to bind; defaults to `20261` when not provided.
 - `AGENTOS_BASEURL`: Base URL advertised by the service; defaults to
   `http://127.0.0.1:20261`. The helper script below sets it for you.
-- `ENABLE_INTENTKIT`: Whether to expose `/intentkit/*` routes. Defaults to
-  disabled. Set to `true` to enable.
 
 ## Running with the Dart SDK
 
@@ -40,11 +38,6 @@ To override the defaults explicitly:
 $ PORT=8080 AGENTOS_BASEURL=http://127.0.0.1:8080 dart run bin/server.dart
 Server listening on port 8080
 AGENTOS_BASEURL=http://127.0.0.1:8080
-```
-
-To expose IntentKit explicitly:
-```
-$ ENABLE_INTENTKIT=true dart run bin/server.dart
 ```
 
 ## Running with Docker
@@ -106,19 +99,45 @@ Supported routes:
 When receiving `functionCall`, external callers can post a `ToolReturn` to
 `POST /agentkit/callback?sessionId=...` to complete the pending callback.
 
-## IntentKit API
+## CronKit API
 
-IntentKit exposes kernel-backed intent detection endpoints for intent apps.
-These routes are disabled by default and must be enabled explicitly with
-`ENABLE_INTENTKIT=true`. All IntentKit routes require a Bearer token.
-IntentKit is deprecated. Intent can trigger too frequently, and current LLM
-response speed is not yet fast enough. To reserve model compute for direct user
-interactions, prefer direct execution-oriented APIs.
+CronKit exposes kernel-backed cron task management endpoints. All CronKit
+routes require a Bearer token issued by `POST /appkit/register`.
+`POST /appkit/register` accepts `bundleId` and an optional `appGroupId`.
+If `appGroupId` is omitted, the server defaults it to `bundleId`.
+Cron task ownership is derived from the bearer token:
+reads are shared within the same `appGroupId`, while write operations remain
+restricted to the owner `bundleId`.
 
-- `POST /intentkit/submitRaw`
-- `POST /intentkit/submitIntent`
-- `POST /intentkit/confirmJob`
-- `POST /intentkit/suggestNextAction`
+- `GET /cronkit/task?cronId=<id>`
+- `GET /cronkit/task/list?enabled=<bool>&offset=<n>&limit=<n>`
+- `POST /cronkit/task/create`
+- `POST /cronkit/task/update`
+- `POST /cronkit/task/delete`
+- `POST /cronkit/task/setEnabled`
+- `POST /cronkit/task/runNow`
+- `GET /cronkit/run?runId=<id>`
+- `GET /cronkit/run/list?cronId=<id>&after=<iso>&before=<iso>&offset=<n>&limit=<n>`
+- `GET /cronkit/run/messages?runId=<id>&offset=<n>&limit=<n>`
+
+CronKit request bodies use the kernel cron schema. Task `spec` now uses:
+
+```json
+{
+  "systemPrompt": "You are a scheduled agent.",
+  "content": [
+    {"type": "text", "message": "Generate the daily summary."}
+  ],
+  "timeoutSeconds": 3600
+}
+```
+
+`GET /cronkit/run` returns one run record. The response includes `trigger`
+to indicate how the run was started (for example, `manual` or `scheduler`).
+`GET /cronkit/run/messages` returns the persisted `AgentMessage[]` for that
+run. CronKit does not expose SSE or subscribe-based cron execution streaming.
+
+If kernel cron is unavailable, CronKit returns `503`.
 
 ## ToolKit API
 
@@ -136,7 +155,10 @@ interactions, prefer direct execution-oriented APIs.
 
 ## AppKit API
 
-- `POST /appkit/register` registers an app bundle: `{"bundleId": "com.demo"}` -> `{"token": "sk-..."}`.
+- `POST /appkit/register` registers an app bundle:
+  `{"bundleId": "com.demo.desktop", "appGroupId": "com.demo"}` ->
+  `{"token": "sk-...", "bundleId": "com.demo.desktop", "appGroupId": "com.demo"}`.
+- If `appGroupId` is omitted, the server uses `bundleId` as the effective group.
 - `GET /appkit/subscribe` (Bearer required) streams SSE events shaped like
   `event: welcome\ndata: {"bundleId": "..."}\n\n`.
 - When kernel triggers app invocation, subscribed app may receive

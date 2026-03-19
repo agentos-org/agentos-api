@@ -32,6 +32,9 @@ class ApiConfig {
   /// IntentKit API path (intent detection)
   static const String intentkitPath = '/intentkit';
 
+  /// CronKit API path (cron task management)
+  static const String cronkitPath = '/cronkit';
+
   // ============ LLMKit Sub-paths ============
 
   /// LLM text generation path

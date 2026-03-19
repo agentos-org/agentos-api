@@ -13,6 +13,7 @@ export 'src/locator.dart';
 export 'src/controllers/system_controller.dart';
 export 'src/controllers/agentkit/agentkit_controller.dart';
 export 'src/controllers/appkit/appkit_controller.dart';
+export 'src/controllers/cronkit/cronkit_controller.dart';
 export 'src/controllers/intentkit/intentkit_controller.dart';
 export 'src/controllers/toolkit/toolkit_controller.dart';
 export 'src/controllers/llmkit/llmkit_controller.dart';
