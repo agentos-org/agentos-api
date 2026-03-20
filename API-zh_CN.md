@@ -507,8 +507,7 @@ Query:
 
 说明：
 - 任务归属由 Bearer token 推导，不接受客户端自行决定 `source`。
-- 读取权限按有效 `appGroupId` 共享。
-- 写权限仍然只属于 owner `bundleId`。
+- CronKit 的任务和运行记录接口都按有效 `appGroupId` 共享访问。
 
 #### POST /cronkit/task/update
 

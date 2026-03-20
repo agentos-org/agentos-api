@@ -99,7 +99,7 @@ CronKit 暴露基于 kernel 的定时任务管理接口。所有 CronKit 路由�
 `POST /appkit/register` 接收 `bundleId`，也可以附带可选的 `appGroupId`。
 如果未传 `appGroupId`，服务端会默认使用 `bundleId`。
 Cron 任务归属由 bearer token 推导：
-同一个 `appGroupId` 下可以共享读取，但写操作仍然只允许 owner `bundleId`。
+同一个 `appGroupId` 下，CronKit 的任务和运行记录接口都按 group 共享访问。
 
 - `GET /cronkit/task?cronId=<id>`
 - `GET /cronkit/task/list?enabled=<bool>&offset=<n>&limit=<n>`

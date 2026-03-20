@@ -106,8 +106,7 @@ routes require a Bearer token issued by `POST /appkit/register`.
 `POST /appkit/register` accepts `bundleId` and an optional `appGroupId`.
 If `appGroupId` is omitted, the server defaults it to `bundleId`.
 Cron task ownership is derived from the bearer token:
-reads are shared within the same `appGroupId`, while write operations remain
-restricted to the owner `bundleId`.
+all CronKit task and run operations are shared within the same `appGroupId`.
 
 - `GET /cronkit/task?cronId=<id>`
 - `GET /cronkit/task/list?enabled=<bool>&offset=<n>&limit=<n>`

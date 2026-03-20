@@ -500,17 +500,15 @@ void main() {
             'authorization': 'Bearer $mobileToken',
             'content-type': 'application/json',
           },
-          body: jsonEncode(<String, dynamic>{
-            'runId': 'run-1',
-          }),
+          body: jsonEncode(<String, dynamic>{'runId': 'run-1'}),
         ),
       );
       expect(mobileDeleteResponse.statusCode, 200);
       expect(kernel.runsById.containsKey('run-1'), isFalse);
-      expect(kernel.messagesByRunId['run-1'], isEmpty);
-      final payload = jsonDecode(
-        await mobileDeleteResponse.readAsString(),
-      ) as Map<String, dynamic>;
+      expect(kernel.messagesByRunId['run-1'], isNull);
+      final payload =
+          jsonDecode(await mobileDeleteResponse.readAsString())
+              as Map<String, dynamic>;
       expect(payload['deleted'], isTrue);
       expect(payload['runId'], 'run-1');
     });
@@ -558,7 +556,8 @@ void main() {
       );
       expect(disableResponse.statusCode, 200);
       final disablePayload =
-          jsonDecode(await disableResponse.readAsString()) as Map<String, dynamic>;
+          jsonDecode(await disableResponse.readAsString())
+              as Map<String, dynamic>;
       expect(disablePayload['enabled'], isFalse);
       expect(disablePayload['status'], 'paused');
 
@@ -578,9 +577,169 @@ void main() {
       );
       expect(enableResponse.statusCode, 200);
       final enablePayload =
-          jsonDecode(await enableResponse.readAsString()) as Map<String, dynamic>;
+          jsonDecode(await enableResponse.readAsString())
+              as Map<String, dynamic>;
       expect(enablePayload['enabled'], isTrue);
       expect(enablePayload['status'], 'active');
+    });
+
+    test('same app group can update task', () async {
+      final kernel = _FakeKernelService();
+      kernel.tasksById['cron-1'] = CronTaskDto(
+        cronId: 'cron-1',
+        name: 'desktop task',
+        schedule: '* * * * *',
+        source:
+            'appkit|owner=com.litevar.agentosChat|group=com.litevar.agentos',
+        enabled: true,
+        status: 'active',
+        concurrency: CronTaskConcurrencyDto.skipIfRunning,
+        createdAt: kernel.now,
+        updatedAt: kernel.now,
+        spec: AgentCronSpecDto(
+          systemPrompt: 'system',
+          content: <Content>[
+            Content(type: ContentType.text, message: 'prompt'),
+          ],
+        ),
+      );
+      final controller = CronKitController(
+        kernelFuture: Future.value(kernel),
+        appKitService: appKitService,
+        serviceLocator: serviceLocator,
+        modelRefStore: modelRefStore,
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/task/update'),
+          headers: <String, String>{
+            'authorization': 'Bearer $mobileToken',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'cronId': 'cron-1',
+            'name': 'mobile updated task',
+            'schedule': '0 * * * *',
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      final payload =
+          jsonDecode(await response.readAsString()) as Map<String, dynamic>;
+      expect(payload['cronId'], 'cron-1');
+      expect(payload['name'], 'mobile updated task');
+      expect(payload['schedule'], '0 * * * *');
+      expect(kernel.tasksById['cron-1']?.name, 'mobile updated task');
+    });
+
+    test('same app group can delete task', () async {
+      final kernel = _FakeKernelService();
+      kernel.tasksById['cron-1'] = CronTaskDto(
+        cronId: 'cron-1',
+        name: 'desktop task',
+        schedule: '* * * * *',
+        source:
+            'appkit|owner=com.litevar.agentosChat|group=com.litevar.agentos',
+        enabled: true,
+        status: 'active',
+        concurrency: CronTaskConcurrencyDto.skipIfRunning,
+        createdAt: kernel.now,
+        updatedAt: kernel.now,
+        spec: AgentCronSpecDto(
+          systemPrompt: 'system',
+          content: <Content>[
+            Content(type: ContentType.text, message: 'prompt'),
+          ],
+        ),
+      );
+      await modelRefStore.put(
+        CronKitModelRef(
+          cronId: 'cron-1',
+          modelId: 'gpt-4o',
+          bundleId: 'com.litevar.agentosChat',
+          appGroupId: 'com.litevar.agentos',
+          updatedAt: kernel.now,
+        ),
+      );
+      final controller = CronKitController(
+        kernelFuture: Future.value(kernel),
+        appKitService: appKitService,
+        serviceLocator: serviceLocator,
+        modelRefStore: modelRefStore,
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/task/delete'),
+          headers: <String, String>{
+            'authorization': 'Bearer $mobileToken',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{'cronId': 'cron-1'}),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      expect(kernel.tasksById.containsKey('cron-1'), isFalse);
+      expect(modelRefStore.refsByCronId['cron-1'], isNull);
+      final payload =
+          jsonDecode(await response.readAsString()) as Map<String, dynamic>;
+      expect(payload['deleted'], isTrue);
+      expect(payload['cronId'], 'cron-1');
+    });
+
+    test('same app group can run task now', () async {
+      final kernel = _FakeKernelService();
+      kernel.tasksById['cron-1'] = CronTaskDto(
+        cronId: 'cron-1',
+        name: 'desktop task',
+        schedule: '* * * * *',
+        source:
+            'appkit|owner=com.litevar.agentosChat|group=com.litevar.agentos',
+        enabled: true,
+        status: 'active',
+        concurrency: CronTaskConcurrencyDto.skipIfRunning,
+        createdAt: kernel.now,
+        updatedAt: kernel.now,
+        spec: AgentCronSpecDto(
+          systemPrompt: 'system',
+          content: <Content>[
+            Content(type: ContentType.text, message: 'prompt'),
+          ],
+        ),
+      );
+      final controller = CronKitController(
+        kernelFuture: Future.value(kernel),
+        appKitService: appKitService,
+        serviceLocator: serviceLocator,
+        modelRefStore: modelRefStore,
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/task/runNow'),
+          headers: <String, String>{
+            'authorization': 'Bearer $mobileToken',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'cronId': 'cron-1',
+            'scheduledAt': '2026-03-17T12:30:00Z',
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      final payload =
+          jsonDecode(await response.readAsString()) as Map<String, dynamic>;
+      expect(payload['runId'], 'run-1');
+      expect(payload['cronId'], 'cron-1');
+      expect(payload['trigger'], 'manual');
     });
 
     test('non-displayable run is hidden from external reads', () async {
@@ -651,62 +810,65 @@ void main() {
       expect(messagesResponse.statusCode, 404);
     });
 
-    test('get task returns stored modelId without exposing llmConfig', () async {
-      final kernel = _FakeKernelService();
-      kernel.tasksById['cron-1'] = CronTaskDto(
-        cronId: 'cron-1',
-        name: 'desktop task',
-        schedule: '* * * * *',
-        source:
-            'appkit|owner=com.litevar.agentosChat|group=com.litevar.agentos',
-        enabled: true,
-        status: 'active',
-        concurrency: CronTaskConcurrencyDto.skipIfRunning,
-        createdAt: kernel.now,
-        updatedAt: kernel.now,
-        spec: AgentCronSpecDto(
-          systemPrompt: 'system',
-          content: <Content>[
-            Content(type: ContentType.text, message: 'prompt'),
-          ],
-          llmConfig: LLMConfig(
-            baseUrl: 'https://api.example.com/v1',
-            apiKey: 'secret-key',
-            model: 'gpt-4o',
-            contextWindowSize: 128000,
-          ),
-        ),
-      );
-      await modelRefStore.put(
-        CronKitModelRef(
+    test(
+      'get task returns stored modelId without exposing llmConfig',
+      () async {
+        final kernel = _FakeKernelService();
+        kernel.tasksById['cron-1'] = CronTaskDto(
           cronId: 'cron-1',
-          modelId: 'gpt-4o',
-          bundleId: 'com.litevar.agentosChat',
-          appGroupId: 'com.litevar.agentos',
+          name: 'desktop task',
+          schedule: '* * * * *',
+          source:
+              'appkit|owner=com.litevar.agentosChat|group=com.litevar.agentos',
+          enabled: true,
+          status: 'active',
+          concurrency: CronTaskConcurrencyDto.skipIfRunning,
+          createdAt: kernel.now,
           updatedAt: kernel.now,
-        ),
-      );
-      final controller = CronKitController(
-        kernelFuture: Future.value(kernel),
-        appKitService: appKitService,
-        serviceLocator: serviceLocator,
-        modelRefStore: modelRefStore,
-      );
+          spec: AgentCronSpecDto(
+            systemPrompt: 'system',
+            content: <Content>[
+              Content(type: ContentType.text, message: 'prompt'),
+            ],
+            llmConfig: LLMConfig(
+              baseUrl: 'https://api.example.com/v1',
+              apiKey: 'secret-key',
+              model: 'gpt-4o',
+              contextWindowSize: 128000,
+            ),
+          ),
+        );
+        await modelRefStore.put(
+          CronKitModelRef(
+            cronId: 'cron-1',
+            modelId: 'gpt-4o',
+            bundleId: 'com.litevar.agentosChat',
+            appGroupId: 'com.litevar.agentos',
+            updatedAt: kernel.now,
+          ),
+        );
+        final controller = CronKitController(
+          kernelFuture: Future.value(kernel),
+          appKitService: appKitService,
+          serviceLocator: serviceLocator,
+          modelRefStore: modelRefStore,
+        );
 
-      final response = await controller.router.call(
-        Request(
-          'GET',
-          Uri.parse('http://localhost/task?cronId=cron-1'),
-          headers: <String, String>{'authorization': 'Bearer $mobileToken'},
-        ),
-      );
+        final response = await controller.router.call(
+          Request(
+            'GET',
+            Uri.parse('http://localhost/task?cronId=cron-1'),
+            headers: <String, String>{'authorization': 'Bearer $mobileToken'},
+          ),
+        );
 
-      expect(response.statusCode, 200);
-      final payload =
-          jsonDecode(await response.readAsString()) as Map<String, dynamic>;
-      expect(payload['spec']['modelId'], 'gpt-4o');
-      expect(payload['spec']['modelName'], 'gpt-4o');
-      expect(payload['spec'].containsKey('llmConfig'), isFalse);
-    });
+        expect(response.statusCode, 200);
+        final payload =
+            jsonDecode(await response.readAsString()) as Map<String, dynamic>;
+        expect(payload['spec']['modelId'], 'gpt-4o');
+        expect(payload['spec']['modelName'], 'gpt-4o');
+        expect(payload['spec'].containsKey('llmConfig'), isFalse);
+      },
+    );
   });
 }

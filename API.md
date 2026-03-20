@@ -509,8 +509,7 @@ Response: `200 OK` (`CronTask`)
 
 Notes:
 - Ownership is derived from the bearer token, not from a client-supplied `source`.
-- Read access is shared within the same effective `appGroupId`.
-- Write access remains restricted to the owner `bundleId`.
+- All CronKit task and run operations are shared within the same effective `appGroupId`.
 
 #### POST /cronkit/task/update
 

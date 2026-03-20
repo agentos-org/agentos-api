@@ -82,9 +82,7 @@ class CronKitController {
         modelId: parsed.spec.modelId,
         scope: scope,
       );
-      return _jsonResponse(
-        (await _buildTaskDto(task, scope: scope)).toJson(),
-      );
+      return _jsonResponse((await _buildTaskDto(task, scope: scope)).toJson());
     } catch (error) {
       return _handleError('createTask', error);
     }
@@ -108,10 +106,10 @@ class CronKitController {
       final spec = parsed.spec == null
           ? null
           : await _resolveCronSpec(parsed.spec!);
-      final accessResponse = await _ensureTaskOwnedByBundle(
+      final accessResponse = await _ensureTaskReadableByGroup(
         kernel,
         cronId: parsed.cronId,
-        bundleId: scope.bundleId,
+        appGroupId: scope.appGroupId,
       );
       if (accessResponse != null) {
         return accessResponse;
@@ -132,9 +130,7 @@ class CronKitController {
           scope: scope,
         );
       }
-      return _jsonResponse(
-        (await _buildTaskDto(task, scope: scope)).toJson(),
-      );
+      return _jsonResponse((await _buildTaskDto(task, scope: scope)).toJson());
     } catch (error) {
       return _handleError('updateTask', error);
     }
@@ -231,10 +227,10 @@ class CronKitController {
     }
     try {
       final parsed = CronKitCronIdRequest.fromJson(payload);
-      final accessResponse = await _ensureTaskOwnedByBundle(
+      final accessResponse = await _ensureTaskReadableByGroup(
         kernel,
         cronId: parsed.cronId,
-        bundleId: scope.bundleId,
+        appGroupId: scope.appGroupId,
       );
       if (accessResponse != null) {
         return accessResponse;
@@ -298,10 +294,10 @@ class CronKitController {
     }
     try {
       final parsed = CronKitRunNowRequest.fromJson(payload);
-      final accessResponse = await _ensureTaskOwnedByBundle(
+      final accessResponse = await _ensureTaskReadableByGroup(
         kernel,
         cronId: parsed.cronId,
-        bundleId: scope.bundleId,
+        appGroupId: scope.appGroupId,
       );
       if (accessResponse != null) {
         return accessResponse;
@@ -523,7 +519,7 @@ class CronKitController {
       if (ref == null) {
         return null;
       }
-      if (ref.bundleId != scope.bundleId || ref.appGroupId != scope.appGroupId) {
+      if (ref.appGroupId != scope.appGroupId) {
         requestLogger.warning(
           'CronKit model ref scope mismatch: cronId=$cronId '
           'storedBundleId=${ref.bundleId} storedAppGroupId=${ref.appGroupId} '
@@ -533,7 +529,9 @@ class CronKitController {
       }
       return ref.modelId;
     } catch (error) {
-      requestLogger.warning('CronKit model ref read failed: cronId=$cronId error=$error');
+      requestLogger.warning(
+        'CronKit model ref read failed: cronId=$cronId error=$error',
+      );
       return null;
     }
   }
@@ -793,22 +791,6 @@ class CronKitController {
 
   bool _belongsToAppGroup(String source, String appGroupId) {
     return _decodeSource(source).appGroupId == appGroupId;
-  }
-
-  Future<Response?> _ensureTaskOwnedByBundle(
-    KernelService kernel, {
-    required String cronId,
-    required String bundleId,
-  }) async {
-    try {
-      final task = await kernel.getCronTask(cronId);
-      if (_decodeSource(task.source).bundleId != bundleId) {
-        return Response(404, body: 'Unknown cronId: $cronId');
-      }
-      return null;
-    } on StateError catch (error) {
-      return _handleError('taskAccess', error);
-    }
   }
 
   Future<Response?> _ensureTaskReadableByGroup(
