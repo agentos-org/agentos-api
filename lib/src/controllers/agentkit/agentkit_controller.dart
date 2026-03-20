@@ -423,8 +423,8 @@ class AgentKitController {
       'maxTokens': config.maxTokens,
       'contextWindowSize': config.contextWindowSize,
       'topP': config.topP,
-      'supportsToolCall': config.supportsToolCalling,
-      'supportsReasoning': config.supportsDeepThinking,
+      'supportsToolCall': config.supportsToolCall,
+      'supportsReasoning': config.supportsReasoning,
     };
     result.removeWhere((_, value) => value == null);
     return result;

@@ -44,9 +44,8 @@ class KernelBootstrapResult {
     if (kernelService == null) {
       return false;
     }
-    final llmPort = await serviceLocator.getServicePort(
-          ApiConfig.serviceLlmText,
-        ) ??
+    final llmPort =
+        await serviceLocator.getServicePort(ApiConfig.serviceLlmText) ??
         await serviceLocator.getServicePort(ApiConfig.serviceLlmVision);
     final llmModelList = await serviceLocator.getLlmModelList();
     if (llmPort == null && !llmModelList.any((m) => m.isRemote)) {
@@ -78,8 +77,9 @@ class KernelBootstrapResult {
     if (port == null) {
       return false;
     }
+    final host = serviceLocator.openToolDaemonHost.trim();
     kernelService.updateOpenToolDaemon(
-      host: ApiConfig.internalHost,
+      host: host.isEmpty ? ApiConfig.internalHost : host,
       port: port,
     );
     return true;
@@ -190,7 +190,13 @@ class KernelBootstrap {
   }) async {
     final liteagentBaseUrl = serviceLocator.liteagentBaseUrl;
     final liteAgentSdk = LiteAgentSDK(baseUrl: liteagentBaseUrl);
-    final kernelService = await kernel.KernelService.create(runtime: runtime);
+    final resolvedRuntime = await resolveRuntimeConfig(
+      serviceLocator,
+      baseRuntime: runtime,
+    );
+    final kernelService = await kernel.KernelService.create(
+      runtime: resolvedRuntime,
+    );
     final result = KernelBootstrapResult(
       kernelService: kernelService,
       liteAgentSdk: liteAgentSdk,
@@ -219,5 +225,55 @@ class KernelBootstrap {
         )
         .toList();
     kernelService.updateAppInfoList(mapped);
+  }
+
+  static Future<kernel.KernelRuntimeConfig> resolveRuntimeConfig(
+    AgentOSServiceLocator serviceLocator, {
+    kernel.KernelRuntimeConfig baseRuntime = const kernel.KernelRuntimeConfig(),
+  }) async {
+    final openToolPort = await serviceLocator.getServicePort(
+      ApiConfig.serviceOpentool,
+    );
+    final openToolHost = serviceLocator.openToolDaemonHost.trim();
+
+    return kernel.KernelRuntimeConfig(
+      hivePath: baseRuntime.hivePath,
+      memoryDbPath: baseRuntime.memoryDbPath,
+      jobBoxName: baseRuntime.jobBoxName,
+      preferenceBoxName: baseRuntime.preferenceBoxName,
+      ttftThreshold: baseRuntime.ttftThreshold,
+      tpsThreshold: baseRuntime.tpsThreshold,
+      maxConcurrency: baseRuntime.maxConcurrency,
+      maxPreferenceDistance: baseRuntime.maxPreferenceDistance,
+      vectorQueryLimit: baseRuntime.vectorQueryLimit,
+      maxPreferenceResults: baseRuntime.maxPreferenceResults,
+      memorySummaryLimit: baseRuntime.memorySummaryLimit,
+      memorySummaryRecentWindow: baseRuntime.memorySummaryRecentWindow,
+      memorySummaryMaxRecords: baseRuntime.memorySummaryMaxRecords,
+      memorySummaryMinRecords: baseRuntime.memorySummaryMinRecords,
+      memorySummaryEnabled: baseRuntime.memorySummaryEnabled,
+      memorySummaryInterval: baseRuntime.memorySummaryInterval,
+      memorySummaryMaxScopesPerRun: baseRuntime.memorySummaryMaxScopesPerRun,
+      learningDeferredEnabled: baseRuntime.learningDeferredEnabled,
+      learningInterval: baseRuntime.learningInterval,
+      learningMaxPerRun: baseRuntime.learningMaxPerRun,
+      learningQueueLimit: baseRuntime.learningQueueLimit,
+      preferenceAggregationEnabled: baseRuntime.preferenceAggregationEnabled,
+      preferenceAggregationInterval: baseRuntime.preferenceAggregationInterval,
+      preferenceAggregationMaxPerRun:
+          baseRuntime.preferenceAggregationMaxPerRun,
+      preferenceAggregationQueueLimit:
+          baseRuntime.preferenceAggregationQueueLimit,
+      opentoolDaemonHost: openToolHost.isEmpty
+          ? baseRuntime.opentoolDaemonHost
+          : openToolHost,
+      opentoolDaemonPort: openToolPort ?? baseRuntime.opentoolDaemonPort,
+      mode: baseRuntime.mode,
+      modelProfileBoxName: baseRuntime.modelProfileBoxName,
+      cronTaskBoxName: baseRuntime.cronTaskBoxName,
+      cronRunBoxName: baseRuntime.cronRunBoxName,
+      cronRunMessageBoxName: baseRuntime.cronRunMessageBoxName,
+      profileSuccessRateThreshold: baseRuntime.profileSuccessRateThreshold,
+    );
   }
 }

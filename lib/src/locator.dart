@@ -55,11 +55,11 @@ class AppInfo {
   });
 
   Map<String, dynamic> toJson() => {
-        'bundleId': bundleId,
-        'version': version,
-        'description': description,
-        'name': name,
-      };
+    'bundleId': bundleId,
+    'version': version,
+    'description': description,
+    'name': name,
+  };
 }
 
 /// LLM model information
@@ -112,24 +112,24 @@ class LlmModelInfo {
   bool get isRemote => baseUrl != null && baseUrl!.isNotEmpty;
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'alias': alias,
-        'description': description,
-        'parameters': parameters,
-        'paramsB': paramsB,
-        'quantization': quantization,
-        'sizeGB': sizeGB,
-        'minRAMGB': minRAMGB,
-        'downloadUrl': downloadUrl,
-        'tags': tags,
-        'repoId': repoId,
-        'type': type,
-        if (contextWindowSize != null) 'contextWindowSize': contextWindowSize,
-        if (baseUrl != null) 'baseUrl': baseUrl,
-        if (apiKey != null) 'apiKey': apiKey,
-        if (isCustom) 'isCustom': true,
-      };
+    'id': id,
+    'name': name,
+    'alias': alias,
+    'description': description,
+    'parameters': parameters,
+    'paramsB': paramsB,
+    'quantization': quantization,
+    'sizeGB': sizeGB,
+    'minRAMGB': minRAMGB,
+    'downloadUrl': downloadUrl,
+    'tags': tags,
+    'repoId': repoId,
+    'type': type,
+    if (contextWindowSize != null) 'contextWindowSize': contextWindowSize,
+    if (baseUrl != null) 'baseUrl': baseUrl,
+    if (apiKey != null) 'apiKey': apiKey,
+    if (isCustom) 'isCustom': true,
+  };
 }
 
 /// AgentOS Service Locator Abstract Interface
@@ -139,7 +139,6 @@ class LlmModelInfo {
 /// - Desktop implementation: Gets dynamic info from agentos_desktop service manager
 /// - Test implementation: Mock data for unit tests
 abstract class AgentOSServiceLocator {
-
   /// Gets the LiteAgent service base URL
   String get liteagentBaseUrl;
 
@@ -181,7 +180,26 @@ abstract class AgentOSServiceLocator {
   /// Returns LLM models registered by external implementations.
   /// Default implementation returns empty list.
   Future<List<LlmModelInfo>> getLlmModelList();
+}
 
+extension AgentOSServiceLocatorOpenToolConfig on AgentOSServiceLocator {
+  /// Gets the OpenTool daemon host for kernel runtime integration.
+  ///
+  /// Older external implementations may not define this member yet, so this
+  /// extension falls back to localhost.
+  String get openToolDaemonHost {
+    final dynamic self = this;
+    try {
+      final value = self.openToolDaemonHost;
+      if (value is String) {
+        final normalized = value.trim();
+        if (normalized.isNotEmpty) {
+          return normalized;
+        }
+      }
+    } catch (_) {}
+    return '127.0.0.1';
+  }
 }
 
 /// Default Service Locator Implementation
@@ -193,13 +211,15 @@ abstract class AgentOSServiceLocator {
 class DefaultServiceLocator implements AgentOSServiceLocator {
   DefaultServiceLocator({
     String? liteagentBaseUrl,
+    String? openToolDaemonHost,
     Map<String, int>? servicePorts,
-  })  : _liteagentBaseUrl = liteagentBaseUrl ?? _defaultLiteagentBaseUrl,
-        _servicePorts = servicePorts ?? _defaultPorts;
+  }) : _liteagentBaseUrl = liteagentBaseUrl ?? _defaultLiteagentBaseUrl,
+       _openToolDaemonHost = _normalizeHost(openToolDaemonHost),
+       _servicePorts = servicePorts ?? _defaultPorts;
 
   final String _liteagentBaseUrl;
+  final String _openToolDaemonHost;
   final Map<String, int> _servicePorts;
-
 
   /// Default liteagentbaseurl
   static const String _defaultLiteagentBaseUrl = 'http://127.0.0.1:9527/api/v1';
@@ -219,6 +239,8 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
   @override
   String get liteagentBaseUrl => _liteagentBaseUrl;
 
+  String get openToolDaemonHost => _openToolDaemonHost;
+
   @override
   Future<int?> getServicePort(String serviceKey, {String? modelId}) async {
     return _servicePorts[serviceKey];
@@ -236,4 +258,9 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
 
   @override
   Stream<ServiceStatusEvent> get serviceStatusStream => const Stream.empty();
+
+  static String _normalizeHost(String? host) {
+    final normalized = (host ?? '').trim();
+    return normalized.isEmpty ? '127.0.0.1' : normalized;
+  }
 }

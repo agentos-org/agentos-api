@@ -4,12 +4,20 @@ import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'package:test/test.dart';
 
 class _FakeServiceLocator implements AgentOSServiceLocator {
-  _FakeServiceLocator({this.models = const []});
+  _FakeServiceLocator({
+    this.models = const [],
+    this.openToolHost = '127.0.0.1',
+    this.openToolPort,
+  });
 
   final List<LlmModelInfo> models;
+  final String openToolHost;
+  final int? openToolPort;
 
   @override
   String get liteagentBaseUrl => 'http://127.0.0.1:9527/api/v1';
+
+  String get openToolDaemonHost => openToolHost;
 
   @override
   Future<List<AppInfo>> getAppInfoList() async => const [];
@@ -19,7 +27,7 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
 
   @override
   Future<int?> getServicePort(String serviceKey, {String? modelId}) async =>
-      null;
+      serviceKey == 'opentool' ? openToolPort : null;
 
   @override
   Stream<ServiceStatusEvent> get serviceStatusStream => const Stream.empty();
@@ -75,6 +83,23 @@ void main() {
       expect(config.llm!.models.single.type, 'text');
     },
   );
+
+  test('buildKernelConfig injects opentool daemon runtime config', () async {
+    final config = await IntentKitInitializer.buildKernelConfig(
+      serviceLocator: _FakeServiceLocator(
+        openToolHost: 'daemon.internal',
+        openToolPort: 19628,
+      ),
+      liteAgentSdk: LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1'),
+      llmBaseUrl: null,
+      embeddingsBaseUrl: 'http://127.0.0.1:52030',
+      embeddingsDocsName: 'test_docs',
+    );
+
+    expect(config, isNotNull);
+    expect(config!.runtime.opentoolDaemonHost, 'daemon.internal');
+    expect(config.runtime.opentoolDaemonPort, 19628);
+  });
 
   test('buildKernelModels filters out non-text models', () {
     final models = IntentKitInitializer.buildKernelModels(const [

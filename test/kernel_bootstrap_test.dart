@@ -6,13 +6,20 @@ import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'package:test/test.dart';
 
 class _FakeServiceLocator implements AgentOSServiceLocator {
-  _FakeServiceLocator({this.llmPort, this.models = const []});
+  _FakeServiceLocator({
+    this.llmPort,
+    this.models = const [],
+    this.openToolHost = '127.0.0.1',
+  });
 
   final int? llmPort;
   final List<LlmModelInfo> models;
+  final String openToolHost;
 
   @override
   String get liteagentBaseUrl => 'http://127.0.0.1:9527/api/v1';
+
+  String get openToolDaemonHost => openToolHost;
 
   @override
   Future<List<AppInfo>> getAppInfoList() async => const [];
@@ -184,6 +191,18 @@ void main() {
     expect(kernel.updatedOpenToolDaemon, isNotNull);
     expect(kernel.updatedOpenToolDaemon!.host, '127.0.0.1');
     expect(kernel.updatedOpenToolDaemon!.port, 19627);
+  });
+
+  test('resolveRuntimeConfig injects opentool daemon runtime values', () async {
+    final locator = _FakeServiceLocator(
+      llmPort: 52010,
+      openToolHost: 'daemon.internal',
+    );
+
+    final runtime = await KernelBootstrap.resolveRuntimeConfig(locator);
+
+    expect(runtime.opentoolDaemonHost, 'daemon.internal');
+    expect(runtime.opentoolDaemonPort, 19627);
   });
 
   test(

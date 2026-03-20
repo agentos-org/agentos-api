@@ -1,6 +1,7 @@
 import 'package:agentos_kernel/agentos_kernel.dart' as kernel;
 import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 
+import '../../config.dart';
 import '../../locator.dart';
 
 class IntentKitInitializer {
@@ -36,6 +37,10 @@ class IntentKitInitializer {
     int maxPreferenceResults = 3,
   }) async {
     final llmModelList = await serviceLocator.getLlmModelList();
+    final openToolPort = await serviceLocator.getServicePort(
+      ApiConfig.serviceOpentool,
+    );
+    final openToolHost = serviceLocator.openToolDaemonHost.trim();
     final llmModels = buildKernelModels(
       llmModelList,
       llmBaseUrl: llmBaseUrl,
@@ -60,6 +65,12 @@ class IntentKitInitializer {
         maxPreferenceDistance: maxPreferenceDistance,
         vectorQueryLimit: vectorQueryLimit,
         maxPreferenceResults: maxPreferenceResults,
+        opentoolDaemonHost: openToolHost.isEmpty
+            ? const kernel.KernelRuntimeConfig().opentoolDaemonHost
+            : openToolHost,
+        opentoolDaemonPort:
+            openToolPort ??
+            const kernel.KernelRuntimeConfig().opentoolDaemonPort,
       ),
     );
   }
