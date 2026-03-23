@@ -182,6 +182,7 @@ class _FakeKernelService implements KernelService {
             startedAt: run.startedAt,
             hasDisplayableResult: run.hasDisplayableResult,
             finishedAt: run.finishedAt,
+            llmConfig: run.llmConfig,
             displayText: run.displayText,
           ),
         )
@@ -385,7 +386,23 @@ void main() {
         startedAt: kernel.now,
         hasDisplayableResult: true,
         finishedAt: kernel.now.add(const Duration(minutes: 1)),
+        llmConfig: LLMConfig(
+          baseUrl: 'https://api.example.com/v1',
+          apiKey: 'secret-key',
+          model: 'gpt-4o',
+          contextWindowSize: 128000,
+        ),
         displayText: 'done',
+      );
+      await modelRefStore.put(
+        CronKitModelRef(
+          cronId: 'cron-1',
+          modelId: 'gpt-4o-id',
+          modelName: 'gpt-4o',
+          bundleId: 'com.litevar.agentosChat',
+          appGroupId: 'com.litevar.agentos',
+          updatedAt: kernel.now,
+        ),
       );
       kernel.messagesByRunId['run-1'] = <CronRunMessageDto>[
         CronRunMessageDto(
@@ -431,6 +448,8 @@ void main() {
       final runPayload =
           jsonDecode(await runResponse.readAsString()) as Map<String, dynamic>;
       expect(runPayload['trigger'], 'scheduler');
+      expect(runPayload['modelId'], 'gpt-4o-id');
+      expect(runPayload.containsKey('llmConfig'), isFalse);
       expect(runPayload.containsKey('displayText'), isTrue);
       final messagePayload =
           jsonDecode(await messageResponse.readAsString()) as List<dynamic>;
@@ -635,6 +654,165 @@ void main() {
       expect(kernel.tasksById['cron-1']?.name, 'mobile updated task');
     });
 
+    test('update task persists and returns latest model selection', () async {
+      final kernel = _FakeKernelService();
+      kernel.tasksById['cron-1'] = CronTaskDto(
+        cronId: 'cron-1',
+        name: 'daily reminder',
+        schedule: '0 8 * * *',
+        source:
+            'appkit|owner=com.litevar.agentosChat|group=com.litevar.agentos',
+        enabled: true,
+        status: 'active',
+        concurrency: CronTaskConcurrencyDto.skipIfRunning,
+        createdAt: kernel.now,
+        updatedAt: kernel.now,
+        spec: AgentCronSpecDto(
+          systemPrompt: 'system',
+          content: <Content>[
+            Content(type: ContentType.text, message: 'drink water'),
+          ],
+          llmConfig: LLMConfig(
+            baseUrl: 'https://api.example.com/v1',
+            apiKey: 'secret-key',
+            model: 'qwen3.5-122b-a10b',
+          ),
+        ),
+      );
+      final controller = CronKitController(
+        kernelFuture: Future.value(kernel),
+        appKitService: appKitService,
+        serviceLocator: serviceLocator,
+        modelRefStore: modelRefStore,
+      );
+
+      final updateResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/task/update'),
+          headers: <String, String>{
+            'authorization': 'Bearer $mobileToken',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'cronId': 'cron-1',
+            'spec': <String, dynamic>{
+              'systemPrompt': 'system',
+              'content': <Map<String, dynamic>>[
+                <String, dynamic>{'type': 'text', 'message': 'drink water'},
+              ],
+              'modelId': 'gpt-4o',
+            },
+          }),
+        ),
+      );
+
+      expect(updateResponse.statusCode, 200);
+      final updatePayload =
+          jsonDecode(await updateResponse.readAsString())
+              as Map<String, dynamic>;
+      expect(modelRefStore.refsByCronId['cron-1']?.modelId, 'gpt-4o');
+      expect(modelRefStore.refsByCronId['cron-1']?.modelName, 'gpt-4o');
+      expect(updatePayload['spec']['modelId'], 'gpt-4o');
+      expect(updatePayload['spec']['modelName'], 'gpt-4o');
+
+      kernel.tasksById['cron-1'] = CronTaskDto(
+        cronId: 'cron-1',
+        name: 'daily reminder',
+        schedule: '0 8 * * *',
+        source:
+            'appkit|owner=com.litevar.agentosChat|group=com.litevar.agentos',
+        enabled: true,
+        status: 'active',
+        concurrency: CronTaskConcurrencyDto.skipIfRunning,
+        createdAt: kernel.now,
+        updatedAt: kernel.now,
+        spec: AgentCronSpecDto(
+          systemPrompt: 'system',
+          content: <Content>[
+            Content(type: ContentType.text, message: 'drink water'),
+          ],
+          llmConfig: LLMConfig(
+            baseUrl: 'https://api.example.com/v1',
+            apiKey: 'secret-key',
+            model: 'qwen3.5-122b-a10b',
+          ),
+        ),
+      );
+
+      final getResponse = await controller.router.call(
+        Request(
+          'GET',
+          Uri.parse('http://localhost/task?cronId=cron-1'),
+          headers: <String, String>{'authorization': 'Bearer $mobileToken'},
+        ),
+      );
+
+      expect(getResponse.statusCode, 200);
+      final getPayload =
+          jsonDecode(await getResponse.readAsString()) as Map<String, dynamic>;
+      expect(getPayload['spec']['modelId'], 'gpt-4o');
+      expect(getPayload['spec']['modelName'], 'gpt-4o');
+    });
+
+    test('list tasks returns stored model selection', () async {
+      final kernel = _FakeKernelService();
+      kernel.tasksById['cron-1'] = CronTaskDto(
+        cronId: 'cron-1',
+        name: 'desktop task',
+        schedule: '* * * * *',
+        source:
+            'appkit|owner=com.litevar.agentosChat|group=com.litevar.agentos',
+        enabled: true,
+        status: 'active',
+        concurrency: CronTaskConcurrencyDto.skipIfRunning,
+        createdAt: kernel.now,
+        updatedAt: kernel.now,
+        spec: AgentCronSpecDto(
+          systemPrompt: 'system',
+          content: <Content>[
+            Content(type: ContentType.text, message: 'prompt'),
+          ],
+          llmConfig: LLMConfig(
+            baseUrl: 'https://api.example.com/v1',
+            apiKey: 'secret-key',
+            model: 'qwen3.5-122b-a10b',
+          ),
+        ),
+      );
+      await modelRefStore.put(
+        CronKitModelRef(
+          cronId: 'cron-1',
+          modelId: 'gpt-4o',
+          modelName: 'gpt-4o',
+          bundleId: 'com.litevar.agentosChat',
+          appGroupId: 'com.litevar.agentos',
+          updatedAt: kernel.now,
+        ),
+      );
+      final controller = CronKitController(
+        kernelFuture: Future.value(kernel),
+        appKitService: appKitService,
+        serviceLocator: serviceLocator,
+        modelRefStore: modelRefStore,
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'GET',
+          Uri.parse('http://localhost/task/list?limit=100'),
+          headers: <String, String>{'authorization': 'Bearer $mobileToken'},
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      final payload =
+          jsonDecode(await response.readAsString()) as List<dynamic>;
+      expect(payload, hasLength(1));
+      expect(payload.first['spec']['modelId'], 'gpt-4o');
+      expect(payload.first['spec']['modelName'], 'gpt-4o');
+    });
+
     test('same app group can delete task', () async {
       final kernel = _FakeKernelService();
       kernel.tasksById['cron-1'] = CronTaskDto(
@@ -808,6 +986,76 @@ void main() {
       expect(payload, isEmpty);
       expect(runResponse.statusCode, 404);
       expect(messagesResponse.statusCode, 404);
+    });
+
+    test('run list returns llmConfig and resolved modelId', () async {
+      final kernel = _FakeKernelService();
+      kernel.tasksById['cron-1'] = CronTaskDto(
+        cronId: 'cron-1',
+        name: 'desktop task',
+        schedule: '* * * * *',
+        source:
+            'appkit|owner=com.litevar.agentosChat|group=com.litevar.agentos',
+        enabled: true,
+        status: 'active',
+        concurrency: CronTaskConcurrencyDto.skipIfRunning,
+        createdAt: kernel.now,
+        updatedAt: kernel.now,
+        spec: AgentCronSpecDto(
+          systemPrompt: 'system',
+          content: <Content>[
+            Content(type: ContentType.text, message: 'prompt'),
+          ],
+        ),
+      );
+      kernel.runsById['run-1'] = CronRunDto(
+        runId: 'run-1',
+        cronId: 'cron-1',
+        trigger: 'scheduler',
+        status: 'succeeded',
+        scheduledAt: kernel.now,
+        startedAt: kernel.now,
+        hasDisplayableResult: true,
+        finishedAt: kernel.now.add(const Duration(minutes: 1)),
+        llmConfig: LLMConfig(
+          baseUrl: 'https://api.example.com/v1',
+          apiKey: 'secret-key',
+          model: 'gpt-4o',
+          contextWindowSize: 128000,
+        ),
+        displayText: 'done',
+      );
+      await modelRefStore.put(
+        CronKitModelRef(
+          cronId: 'cron-1',
+          modelId: 'gpt-4o-id',
+          modelName: 'gpt-4o',
+          bundleId: 'com.litevar.agentosChat',
+          appGroupId: 'com.litevar.agentos',
+          updatedAt: kernel.now,
+        ),
+      );
+      final controller = CronKitController(
+        kernelFuture: Future.value(kernel),
+        appKitService: appKitService,
+        serviceLocator: serviceLocator,
+        modelRefStore: modelRefStore,
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'GET',
+          Uri.parse('http://localhost/run/list?limit=100'),
+          headers: <String, String>{'authorization': 'Bearer $mobileToken'},
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      final payload =
+          jsonDecode(await response.readAsString()) as List<dynamic>;
+      expect(payload, hasLength(1));
+      expect(payload.first['modelId'], 'gpt-4o-id');
+      expect(payload.first.containsKey('llmConfig'), isFalse);
     });
 
     test(

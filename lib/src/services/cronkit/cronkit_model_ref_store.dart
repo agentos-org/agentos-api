@@ -6,6 +6,7 @@ class CronKitModelRef {
   const CronKitModelRef({
     required this.cronId,
     required this.modelId,
+    this.modelName,
     required this.bundleId,
     required this.appGroupId,
     required this.updatedAt,
@@ -13,6 +14,7 @@ class CronKitModelRef {
 
   final String cronId;
   final String modelId;
+  final String? modelName;
   final String bundleId;
   final String appGroupId;
   final DateTime updatedAt;
@@ -20,6 +22,7 @@ class CronKitModelRef {
   Map<String, dynamic> toJson() => <String, dynamic>{
     'cronId': cronId,
     'modelId': modelId,
+    'modelName': modelName,
     'bundleId': bundleId,
     'appGroupId': appGroupId,
     'updatedAt': updatedAt.toIso8601String(),
@@ -29,6 +32,7 @@ class CronKitModelRef {
     return CronKitModelRef(
       cronId: json['cronId'] as String,
       modelId: json['modelId'] as String,
+      modelName: json['modelName'] as String?,
       bundleId: json['bundleId'] as String,
       appGroupId: json['appGroupId'] as String,
       updatedAt: DateTime.parse(json['updatedAt'] as String),

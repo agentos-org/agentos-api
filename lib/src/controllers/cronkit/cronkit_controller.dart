@@ -80,6 +80,7 @@ class CronKitController {
       await _persistModelRef(
         task.cronId,
         modelId: parsed.spec.modelId,
+        modelName: spec.llmConfig?.model,
         scope: scope,
       );
       return _jsonResponse((await _buildTaskDto(task, scope: scope)).toJson());
@@ -123,12 +124,18 @@ class CronKitController {
         concurrency: parsed.concurrency,
         enabled: parsed.enabled,
       );
-      if (parsed.spec?.modelId != null) {
-        await _persistModelRef(
-          task.cronId,
-          modelId: parsed.spec!.modelId,
-          scope: scope,
-        );
+      if (parsed.spec != null) {
+        final normalizedModelId = parsed.spec!.modelId?.trim();
+        if (normalizedModelId == null || normalizedModelId.isEmpty) {
+          await _deleteModelRef(task.cronId);
+        } else {
+          await _persistModelRef(
+            task.cronId,
+            modelId: normalizedModelId,
+            modelName: spec?.llmConfig?.model,
+            scope: scope,
+          );
+        }
       }
       return _jsonResponse((await _buildTaskDto(task, scope: scope)).toJson());
     } catch (error) {
@@ -193,20 +200,18 @@ class CronKitController {
         offset: 0,
         limit: 1000000,
       );
-      final readableTasks = <CronTaskListItemDto>[];
+      final readableTasks = <CronTaskDto>[];
       for (final item in tasks) {
         final task = await kernel.getCronTask(item.cronId);
         if (_belongsToAppGroup(task.source, scope.appGroupId)) {
-          readableTasks.add(item);
+          readableTasks.add(task);
         }
       }
-      return _jsonResponse(
-        readableTasks
-            .skip(offset)
-            .take(limit)
-            .map((item) => CronKitTaskListItemDto.fromKernel(item).toJson())
-            .toList(growable: false),
-      );
+      final payload = <Map<String, dynamic>>[];
+      for (final task in readableTasks.skip(offset).take(limit)) {
+        payload.add((await _buildTaskListItemDto(task, scope: scope)).toJson());
+      }
+      return _jsonResponse(payload);
     } catch (error) {
       return _handleError('listTasks', error);
     }
@@ -371,11 +376,11 @@ class CronKitController {
           )
           .toList(growable: false);
       _logRunListPayload(visibleRuns);
-      return _jsonResponse(
-        visibleRuns
-            .map((item) => CronKitRunListItemDto.fromKernel(item).toJson())
-            .toList(growable: false),
-      );
+      final payload = <Map<String, dynamic>>[];
+      for (final run in visibleRuns) {
+        payload.add((await _buildRunListItemDto(run, scope: scope)).toJson());
+      }
+      return _jsonResponse(payload);
     } catch (error) {
       return _handleError('listRuns', error);
     }
@@ -409,7 +414,7 @@ class CronKitController {
       }
       final run = await kernel.getCronRun(parsed.runId);
       _logRunPayload(run);
-      return _jsonResponse(CronKitRunDto.fromKernel(run).toJson());
+      return _jsonResponse((await _buildRunDto(run, scope: scope)).toJson());
     } catch (error) {
       return _handleError('getRun', error);
     }
@@ -506,11 +511,43 @@ class CronKitController {
     CronTaskDto task, {
     required _AppScope scope,
   }) async {
-    final modelId = await _resolveModelIdForTask(task.cronId, scope: scope);
-    return CronKitTaskDto.fromKernel(task, modelId: modelId);
+    final modelRef = await _resolveModelRefForTask(task.cronId, scope: scope);
+    return CronKitTaskDto.fromKernel(
+      task,
+      modelId: modelRef?.modelId,
+      modelName: modelRef?.modelName,
+    );
   }
 
-  Future<String?> _resolveModelIdForTask(
+  Future<CronKitTaskListItemDto> _buildTaskListItemDto(
+    CronTaskDto task, {
+    required _AppScope scope,
+  }) async {
+    final modelRef = await _resolveModelRefForTask(task.cronId, scope: scope);
+    return CronKitTaskListItemDto.fromTask(
+      task,
+      modelId: modelRef?.modelId,
+      modelName: modelRef?.modelName,
+    );
+  }
+
+  Future<CronKitRunDto> _buildRunDto(
+    CronRunDto run, {
+    required _AppScope scope,
+  }) async {
+    final modelRef = await _resolveModelRefForTask(run.cronId, scope: scope);
+    return CronKitRunDto.fromKernel(run, modelId: modelRef?.modelId);
+  }
+
+  Future<CronKitRunListItemDto> _buildRunListItemDto(
+    CronRunListItemDto run, {
+    required _AppScope scope,
+  }) async {
+    final modelRef = await _resolveModelRefForTask(run.cronId, scope: scope);
+    return CronKitRunListItemDto.fromKernel(run, modelId: modelRef?.modelId);
+  }
+
+  Future<CronKitModelRef?> _resolveModelRefForTask(
     String cronId, {
     required _AppScope scope,
   }) async {
@@ -527,7 +564,7 @@ class CronKitController {
         );
         return null;
       }
-      return ref.modelId;
+      return ref;
     } catch (error) {
       requestLogger.warning(
         'CronKit model ref read failed: cronId=$cronId error=$error',
@@ -539,9 +576,11 @@ class CronKitController {
   Future<void> _persistModelRef(
     String cronId, {
     required String? modelId,
+    String? modelName,
     required _AppScope scope,
   }) async {
     final normalized = modelId?.trim();
+    final normalizedName = modelName?.trim();
     if (normalized == null || normalized.isEmpty) {
       return;
     }
@@ -550,6 +589,9 @@ class CronKitController {
         CronKitModelRef(
           cronId: cronId,
           modelId: normalized,
+          modelName: normalizedName == null || normalizedName.isEmpty
+              ? null
+              : normalizedName,
           bundleId: scope.bundleId,
           appGroupId: scope.appGroupId,
           updatedAt: DateTime.now().toUtc(),

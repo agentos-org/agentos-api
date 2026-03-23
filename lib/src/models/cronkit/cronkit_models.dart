@@ -195,7 +195,11 @@ class CronKitTaskDto {
   final DateTime? nextRunAt;
   final Map<String, dynamic> spec;
 
-  factory CronKitTaskDto.fromKernel(CronTaskDto dto, {String? modelId}) {
+  factory CronKitTaskDto.fromKernel(
+    CronTaskDto dto, {
+    String? modelId,
+    String? modelName,
+  }) {
     return CronKitTaskDto(
       cronId: dto.cronId,
       name: dto.name,
@@ -211,7 +215,7 @@ class CronKitTaskDto {
       updatedAt: dto.updatedAt,
       lastRunAt: dto.lastRunAt,
       nextRunAt: dto.nextRunAt,
-      spec: _cronSpecToJson(dto.spec, modelId: modelId),
+      spec: _cronSpecToJson(dto.spec, modelId: modelId, modelName: modelName),
     );
   }
 
@@ -241,6 +245,7 @@ class CronKitTaskListItemDto {
     required this.schedule,
     required this.enabled,
     required this.status,
+    this.spec,
     this.lastRunAt,
     this.nextRunAt,
   });
@@ -250,16 +255,22 @@ class CronKitTaskListItemDto {
   final String schedule;
   final bool enabled;
   final String status;
+  final Map<String, dynamic>? spec;
   final DateTime? lastRunAt;
   final DateTime? nextRunAt;
 
-  factory CronKitTaskListItemDto.fromKernel(CronTaskListItemDto dto) {
+  factory CronKitTaskListItemDto.fromTask(
+    CronTaskDto dto, {
+    String? modelId,
+    String? modelName,
+  }) {
     return CronKitTaskListItemDto(
       cronId: dto.cronId,
       name: dto.name,
       schedule: dto.schedule,
       enabled: dto.enabled,
       status: dto.status,
+      spec: _cronSpecToJson(dto.spec, modelId: modelId, modelName: modelName),
       lastRunAt: dto.lastRunAt,
       nextRunAt: dto.nextRunAt,
     );
@@ -271,6 +282,7 @@ class CronKitTaskListItemDto {
     'schedule': schedule,
     'enabled': enabled,
     'status': status,
+    'spec': spec,
     'lastRunAt': lastRunAt?.toIso8601String(),
     'nextRunAt': nextRunAt?.toIso8601String(),
   };
@@ -286,6 +298,7 @@ class CronKitRunDto {
     required this.startedAt,
     required this.hasDisplayableResult,
     this.finishedAt,
+    this.modelId,
     this.liteAgentSessionId,
     this.error,
     this.result,
@@ -301,13 +314,14 @@ class CronKitRunDto {
   final DateTime startedAt;
   final bool hasDisplayableResult;
   final DateTime? finishedAt;
+  final String? modelId;
   final String? liteAgentSessionId;
   final String? error;
   final Map<String, dynamic>? result;
   final String? displayMessageId;
   final String? displayText;
 
-  factory CronKitRunDto.fromKernel(CronRunDto dto) {
+  factory CronKitRunDto.fromKernel(CronRunDto dto, {String? modelId}) {
     return CronKitRunDto(
       runId: dto.runId,
       cronId: dto.cronId,
@@ -317,6 +331,7 @@ class CronKitRunDto {
       startedAt: dto.startedAt,
       hasDisplayableResult: dto.hasDisplayableResult,
       finishedAt: dto.finishedAt,
+      modelId: modelId,
       liteAgentSessionId: dto.liteAgentSessionId,
       error: dto.error,
       result: dto.result,
@@ -334,6 +349,7 @@ class CronKitRunDto {
     'startedAt': startedAt.toIso8601String(),
     'hasDisplayableResult': hasDisplayableResult,
     'finishedAt': finishedAt?.toIso8601String(),
+    'modelId': modelId,
     'liteAgentSessionId': liteAgentSessionId,
     'error': error,
     'result': result,
@@ -352,6 +368,7 @@ class CronKitRunListItemDto {
     required this.startedAt,
     required this.hasDisplayableResult,
     this.finishedAt,
+    this.modelId,
     this.displayText,
   });
 
@@ -363,9 +380,13 @@ class CronKitRunListItemDto {
   final DateTime startedAt;
   final bool hasDisplayableResult;
   final DateTime? finishedAt;
+  final String? modelId;
   final String? displayText;
 
-  factory CronKitRunListItemDto.fromKernel(CronRunListItemDto dto) {
+  factory CronKitRunListItemDto.fromKernel(
+    CronRunListItemDto dto, {
+    String? modelId,
+  }) {
     return CronKitRunListItemDto(
       runId: dto.runId,
       cronId: dto.cronId,
@@ -375,6 +396,7 @@ class CronKitRunListItemDto {
       startedAt: dto.startedAt,
       hasDisplayableResult: dto.hasDisplayableResult,
       finishedAt: dto.finishedAt,
+      modelId: modelId,
       displayText: dto.displayText,
     );
   }
@@ -388,6 +410,7 @@ class CronKitRunListItemDto {
     'startedAt': startedAt.toIso8601String(),
     'hasDisplayableResult': hasDisplayableResult,
     'finishedAt': finishedAt?.toIso8601String(),
+    'modelId': modelId,
     'displayText': displayText,
   };
 }
@@ -556,7 +579,11 @@ List<Content> _parseContentList(Object? value) {
       .toList(growable: false);
 }
 
-Map<String, dynamic> _cronSpecToJson(AgentCronSpecDto spec, {String? modelId}) {
+Map<String, dynamic> _cronSpecToJson(
+  AgentCronSpecDto spec, {
+  String? modelId,
+  String? modelName,
+}) {
   final result = <String, dynamic>{
     'systemPrompt': spec.systemPrompt,
     'content': spec.content
@@ -568,9 +595,14 @@ Map<String, dynamic> _cronSpecToJson(AgentCronSpecDto spec, {String? modelId}) {
   if (normalizedModelId != null && normalizedModelId.isNotEmpty) {
     result['modelId'] = normalizedModelId;
   }
-  final modelName = spec.llmConfig?.model;
-  if (modelName != null && modelName.trim().isNotEmpty) {
-    result['modelName'] = modelName;
+  final normalizedModelName = modelName?.trim();
+  if (normalizedModelName != null && normalizedModelName.isNotEmpty) {
+    result['modelName'] = normalizedModelName;
+  } else {
+    final llmModelName = spec.llmConfig?.model.trim();
+    if (llmModelName != null && llmModelName.isNotEmpty) {
+      result['modelName'] = llmModelName;
+    }
   }
   return result;
 }
