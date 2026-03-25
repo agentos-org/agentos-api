@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
@@ -129,9 +130,9 @@ class AgentKitController {
 
   // POST /initSession
   Future<Response> _handleInitSession(Request request) async {
+    Capability? capability;
     try {
       final agentId = request.url.queryParameters['agentId'];
-      Capability? capability;
       if (agentId == null || agentId.isEmpty) {
         final body = await _readJsonBody(request);
         final liteAgentBody = await _buildLiteAgentCapabilityFromAgentKitBody(
@@ -145,22 +146,27 @@ class AgentKitController {
       );
       return _jsonResponse(session.toJson());
     } catch (e) {
-      return _errorResponse(e, 'initSession');
+      return _errorResponse(e, 'initSession', llmConfig: capability?.llmConfig);
     }
   }
 
   // POST /initSimple
   Future<Response> _handleInitSimple(Request request) async {
+    SimpleCapability? simpleCapability;
     try {
       final body = await _readJsonBody(request);
       final liteAgentBody = await _buildLiteAgentCapabilityFromAgentKitBody(
         body,
       );
-      final simpleCapability = SimpleCapability.fromJson(liteAgentBody);
+      simpleCapability = SimpleCapability.fromJson(liteAgentBody);
       final session = await _sdk.initSimple(simpleCapability);
       return _jsonResponse(session.toJson());
     } catch (e) {
-      return _errorResponse(e, 'initSimple');
+      return _errorResponse(
+        e,
+        'initSimple',
+        llmConfig: simpleCapability?.llmConfig,
+      );
     }
   }
 
@@ -768,14 +774,51 @@ class AgentKitController {
     );
   }
 
-  Response _errorResponse(dynamic error, String operation) {
+  Response _errorResponse(
+    dynamic error,
+    String operation, {
+    LLMConfig? llmConfig,
+  }) {
     requestLogger.severe('AgentKit $operation error: $error');
-    final message = error.toString();
+    final message = _buildErrorMessage(error, operation, llmConfig: llmConfig);
     return Response(
       502,
       body: jsonEncode({'error': message}),
       headers: {'content-type': 'application/json'},
     );
+  }
+
+  String _buildErrorMessage(
+    dynamic error,
+    String operation, {
+    LLMConfig? llmConfig,
+  }) {
+    final message = error.toString();
+    final baseUrl = llmConfig?.baseUrl.trim();
+    final model = llmConfig?.model.trim();
+    if (!_looksLikeConnectionRefused(error, message) ||
+        baseUrl == null ||
+        baseUrl.isEmpty) {
+      return message;
+    }
+
+    final details = <String>[
+      'Unable to connect to resolved LLM endpoint $baseUrl',
+      if (model != null && model.isNotEmpty) 'for model $model',
+      'during $operation',
+    ].join(' ');
+    return '$details. Original error: $message';
+  }
+
+  bool _looksLikeConnectionRefused(dynamic error, String message) {
+    final normalized = message.toLowerCase();
+    if (normalized.contains('connection refused')) {
+      return true;
+    }
+    if (error is SocketException) {
+      return error.message.toLowerCase().contains('connection refused');
+    }
+    return false;
   }
 
   void _ingestAgentMessageForLearning(

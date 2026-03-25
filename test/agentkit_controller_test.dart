@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:agentos_api/src/controllers/agentkit/agentkit_controller.dart';
 import 'package:agentos_api/src/config.dart';
@@ -29,6 +30,20 @@ class _FakeLiteAgentSDK extends LiteAgentSDK {
     capturedCapability = capability;
     capturedInitSessionAgentId = agentId;
     return Session(sessionId: 'test-session');
+  }
+}
+
+class _ThrowingLiteAgentSDK extends LiteAgentSDK {
+  _ThrowingLiteAgentSDK() : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
+
+  @override
+  Future<Session> initSession({Capability? capability, String? agentId}) async {
+    throw const SocketException('Connection refused');
+  }
+
+  @override
+  Future<Session> initSimple(SimpleCapability simpleCapability) async {
+    throw const SocketException('Connection refused');
   }
 }
 
@@ -404,6 +419,80 @@ void main() {
     expect(fakeSdk.capturedCapability, isNotNull);
     expect(fakeSdk.capturedCapability!.systemPrompt, '');
   });
+
+  test(
+    'initSession surfaces resolved llm endpoint on connection refusal',
+    () async {
+      final controller = AgentKitController(
+        sdk: _ThrowingLiteAgentSDK(),
+        kernelFuture: Future.value(null),
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'hello',
+            'llmConfig': <String, dynamic>{
+              'baseUrl': 'http://127.0.0.1:52200',
+              'model': 'qwen3.5-9b',
+            },
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 502);
+      final payload =
+          jsonDecode(await response.readAsString()) as Map<String, dynamic>;
+      final error = payload['error'] as String;
+      expect(error, contains('http://127.0.0.1:52200'));
+      expect(error, contains('qwen3.5-9b'));
+      expect(error, contains('initSession'));
+      expect(error, contains('Connection refused'));
+    },
+  );
+
+  test(
+    'initSimple surfaces resolved llm endpoint on connection refusal',
+    () async {
+      final controller = AgentKitController(
+        sdk: _ThrowingLiteAgentSDK(),
+        kernelFuture: Future.value(null),
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSimple'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'hello',
+            'llmConfig': <String, dynamic>{
+              'baseUrl': 'http://127.0.0.1:52200',
+              'model': 'qwen3.5-9b',
+            },
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 502);
+      final payload =
+          jsonDecode(await response.readAsString()) as Map<String, dynamic>;
+      final error = payload['error'] as String;
+      expect(error, contains('http://127.0.0.1:52200'));
+      expect(error, contains('qwen3.5-9b'));
+      expect(error, contains('initSimple'));
+      expect(error, contains('Connection refused'));
+    },
+  );
 
   test(
     'avoids null cast for /initSession when llmConfig.modelId has null fields',
