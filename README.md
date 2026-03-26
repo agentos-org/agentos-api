@@ -99,6 +99,27 @@ Supported routes:
 When receiving `functionCall`, external callers can post a `ToolReturn` to
 `POST /agentkit/callback?sessionId=...` to complete the pending callback.
 
+`POST /agentkit/initSession` and `POST /agentkit/initSimple` also support a
+`skills` field on `Capability` / `SimpleCapability`. AgentKit forwards it
+as-is to LiteAgent SDK. Each entry should be a complete Agent Skills markdown
+document, not just a skill name. The source spec is the official Agent Skills
+specification: [agentskills.io/specification](https://agentskills.io/specification).
+In particular, the skill content should follow the `SKILL.md` format there:
+YAML frontmatter first, then Markdown instructions. Example:
+
+```json
+{
+  "systemPrompt": "You are a helpful planner.",
+  "skills": [
+    "---\nname: planner\ndescription: Plan before acting.\n---\n\nAlways produce a short plan before tool use.\n"
+  ],
+  "llmConfig": {
+    "baseUrl": "http://127.0.0.1:52010",
+    "model": "qwen3-8b"
+  }
+}
+```
+
 ## CronKit API
 
 CronKit exposes kernel-backed cron task management endpoints. All CronKit

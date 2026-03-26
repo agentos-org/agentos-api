@@ -260,11 +260,19 @@ Query（可选）：
 
 请求体（未传 `agentId` 时）：`Capability`
 
+说明：
+- 支持 `Capability.skills`，并会原样转发给 LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown 文档。
+- 每个 skill 文档的规范来源为 [agentskills.io/specification](https://agentskills.io/specification)，重点遵循其中 `SKILL.md` 的格式要求：YAML frontmatter 加 Markdown 正文。
+
 响应：`200 OK`（`Session`）
 
 #### POST /agentkit/initSimple
 
 请求体：`SimpleCapability`
+
+说明：
+- 支持 `SimpleCapability.skills`，并会原样转发给 LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown 文档。
+- 每个 skill 文档的规范来源为 [agentskills.io/specification](https://agentskills.io/specification)，重点遵循其中 `SKILL.md` 的格式要求：YAML frontmatter 加 Markdown 正文。
 
 响应：`200 OK`（`Session`）
 

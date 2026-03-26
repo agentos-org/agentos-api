@@ -262,11 +262,19 @@ Query (optional):
 
 Request body (when `agentId` is not provided): `Capability`
 
+Notes:
+- `Capability.skills` is supported and forwarded as-is to LiteAgent SDK. Each item should be a complete Agent Skills markdown document.
+- The source spec for each skill document is [agentskills.io/specification](https://agentskills.io/specification), especially the `SKILL.md` format with YAML frontmatter followed by Markdown content.
+
 Response: `200 OK` (`Session`)
 
 #### POST /agentkit/initSimple
 
 Request body: `SimpleCapability`
+
+Notes:
+- `SimpleCapability.skills` is supported and forwarded as-is to LiteAgent SDK. Each item should be a complete Agent Skills markdown document.
+- The source spec for each skill document is [agentskills.io/specification](https://agentskills.io/specification), especially the `SKILL.md` format with YAML frontmatter followed by Markdown content.
 
 Response: `200 OK` (`Session`)
 

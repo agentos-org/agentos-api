@@ -17,6 +17,8 @@ class _FakeLiteAgentSDK extends LiteAgentSDK {
 
   SimpleCapability? capturedSimpleCapability;
   Capability? capturedCapability;
+  Agent? capturedAgent;
+  String? capturedUpdatedAgentId;
   String? capturedInitSessionAgentId;
 
   @override
@@ -30,6 +32,19 @@ class _FakeLiteAgentSDK extends LiteAgentSDK {
     capturedCapability = capability;
     capturedInitSessionAgentId = agentId;
     return Session(sessionId: 'test-session');
+  }
+
+  @override
+  Future<AgentId> createAgent(Agent agent) async {
+    capturedAgent = agent;
+    return AgentId(agentId: 'agent-1');
+  }
+
+  @override
+  Future<AgentId> updateAgent(String agentId, Agent agent) async {
+    capturedUpdatedAgentId = agentId;
+    capturedAgent = agent;
+    return AgentId(agentId: agentId);
   }
 }
 
@@ -204,6 +219,15 @@ class _FakeKernelService implements KernelService {
 }
 
 void main() {
+  const plannerSkill = '''
+---
+name: planner
+description: Plan before acting.
+---
+
+Always produce a short plan before tool use.
+''';
+
   test('maps llmConfig.modelId to model for /initSession', () async {
     final fakeSdk = _FakeLiteAgentSDK();
     final controller = AgentKitController(
@@ -294,6 +318,37 @@ void main() {
       expect(fakeSdk.capturedCapability!.llmConfig?.model, 'qwen');
     },
   );
+
+  test('forwards skills for /initSession', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSession'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'systemPrompt': 'hello',
+          'skills': const [plannerSkill],
+          'llmConfig': <String, dynamic>{
+            'baseUrl': 'http://127.0.0.1:52010',
+            'model': 'qwen3-8b',
+          },
+        }),
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedCapability, isNotNull);
+    expect(fakeSdk.capturedCapability!.skills, const [plannerSkill]);
+  });
 
   test('maps llmConfig.modelId to model for /initSimple', () async {
     final fakeSdk = _FakeLiteAgentSDK();
@@ -389,6 +444,106 @@ void main() {
       fakeSdk.capturedSimpleCapability!.llmConfig?.model,
       'explicit-model',
     );
+  });
+
+  test('forwards skills for /initSimple', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSimple'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'systemPrompt': 'hello',
+          'skills': const [plannerSkill],
+          'llmConfig': <String, dynamic>{
+            'baseUrl': 'http://127.0.0.1:52010',
+            'model': 'qwen3-8b',
+          },
+        }),
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedSimpleCapability, isNotNull);
+    expect(fakeSdk.capturedSimpleCapability!.skills, const [plannerSkill]);
+  });
+
+  test('forwards skills for /agent/create', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/agent/create'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'name': 'planner-agent',
+          'capability': <String, dynamic>{
+            'systemPrompt': 'hello',
+            'skills': const [plannerSkill],
+            'llmConfig': <String, dynamic>{
+              'baseUrl': 'http://127.0.0.1:52010',
+              'model': 'qwen3-8b',
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedAgent, isNotNull);
+    expect(fakeSdk.capturedAgent!.capability.skills, const [plannerSkill]);
+  });
+
+  test('forwards skills for /agent/update', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/agent/update?agentId=agent-1'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'name': 'planner-agent',
+          'capability': <String, dynamic>{
+            'systemPrompt': 'hello',
+            'skills': const [plannerSkill],
+            'llmConfig': <String, dynamic>{
+              'baseUrl': 'http://127.0.0.1:52010',
+              'model': 'qwen3-8b',
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedUpdatedAgentId, 'agent-1');
+    expect(fakeSdk.capturedAgent, isNotNull);
+    expect(fakeSdk.capturedAgent!.capability.skills, const [plannerSkill]);
   });
 
   test('fills empty systemPrompt when missing for /initSession', () async {

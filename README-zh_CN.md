@@ -92,6 +92,27 @@ AgentKit 在 `/agentkit/` 下提供 LiteAgent 兼容接口，并通过 LiteAgent
 外部收到 `functionCall` 后，可调用
 `POST /agentkit/callback?sessionId=...` 并提交 `ToolReturn` 完成该回调。
 
+`POST /agentkit/initSession` 与 `POST /agentkit/initSimple` 也支持在
+`Capability` / `SimpleCapability` 中传入 `skills`。AgentKit 会原样转发给
+LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown
+文档，而不是仅传技能名。规范来源是官方 Agent Skills 规范：
+[agentskills.io/specification](https://agentskills.io/specification)。
+具体应遵循其中的 `SKILL.md` 格式：先写 YAML frontmatter，再写 Markdown
+说明正文。示例：
+
+```json
+{
+  "systemPrompt": "You are a helpful planner.",
+  "skills": [
+    "---\nname: planner\ndescription: Plan before acting.\n---\n\nAlways produce a short plan before tool use.\n"
+  ],
+  "llmConfig": {
+    "baseUrl": "http://127.0.0.1:52010",
+    "model": "qwen3-8b"
+  }
+}
+```
+
 ## CronKit API
 
 CronKit 暴露基于 kernel 的定时任务管理接口。所有 CronKit 路由都需要
