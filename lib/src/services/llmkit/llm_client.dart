@@ -8,6 +8,7 @@ import 'package:unique_id_dart/unique_id_dart.dart';
 
 import '../../locator.dart';
 import '../../config.dart';
+import '../../middleware.dart';
 
 /// LLM client response
 class LLMClientResponse {
@@ -66,6 +67,8 @@ extension LLMServiceTypeExtension on LLMServiceType {
 ///
 /// Used to proxy requests to various LLM services
 class LLMClient {
+  static const int _errorBodyPreviewLimit = 512;
+
   /// Creates LLMClient
   ///
   /// [httpClient] HTTP client for making requests
@@ -131,6 +134,11 @@ class LLMClient {
         : null;
 
     final modelName = resolvedModel?.name ?? modelIdentifier;
+    final requestBody = _rewriteRequestBodyModel(
+      body,
+      resolvedModel: resolvedModel,
+      upstreamModel: modelName,
+    );
 
     if (kernel != null && modelName != null) {
       metrics = kernel.createLlmMetrics(
@@ -169,10 +177,7 @@ class LLMClient {
           statusCode: 503,
           headers: {'content-type': 'application/json'},
           bodyBytes: utf8.encode(
-            jsonEncode({
-              'error': errorMsg,
-              'service': serviceType.serviceKey,
-            }),
+            jsonEncode({'error': errorMsg, 'service': serviceType.serviceKey}),
           ),
         );
       }
@@ -188,11 +193,23 @@ class LLMClient {
           request.headers.set(name, value);
         });
       }
-      if (body != null && body.isNotEmpty) {
-        request.add(body);
+      if (requestBody != null && requestBody.isNotEmpty) {
+        request.add(requestBody);
       }
       final response = await request.close();
       final responseHeaders = _sanitizeResponseHeaders(response.headers);
+
+      if (response.statusCode >= 400 && streamResponse) {
+        requestLogger.warning(
+          'LLM proxy upstream error: '
+          'service=${serviceType.serviceKey} '
+          'model=${modelName ?? '-'} '
+          'method=$method '
+          'uri=$uri '
+          'status=${response.statusCode} '
+          'stream=true',
+        );
+      }
 
       if (streamResponse) {
         // Wrap the stream to monitor tokens
@@ -216,6 +233,18 @@ class LLMClient {
         return buffer;
       });
 
+      if (response.statusCode >= 400) {
+        requestLogger.warning(
+          'LLM proxy upstream error: '
+          'service=${serviceType.serviceKey} '
+          'model=${modelName ?? '-'} '
+          'method=$method '
+          'uri=$uri '
+          'status=${response.statusCode} '
+          'bodyPreview="${_truncateForLog(_decodeResponseBody(bytes))}"',
+        );
+      }
+
       // Complete tracking
       stopwatch.stop();
       final totalTokens = _extractTokenCountFromResponse(bytes);
@@ -226,10 +255,20 @@ class LLMClient {
         headers: responseHeaders,
         bodyBytes: bytes,
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
       // Mark as failed
       stopwatch.stop();
       metrics?.failed(e.toString());
+      requestLogger.severe(
+        'LLM proxy request failed: '
+        'service=${serviceType.serviceKey} '
+        'model=${modelName ?? '-'} '
+        'method=$method '
+        'uri=$uri '
+        'error=$e',
+        e,
+        stackTrace,
+      );
 
       return LLMClientResponse(
         statusCode: 502,
@@ -558,6 +597,51 @@ class LLMClient {
           '$normalizedNext';
     }
     return '$normalizedBase$normalizedNext';
+  }
+
+  List<int>? _rewriteRequestBodyModel(
+    List<int>? body, {
+    required LlmModelInfo? resolvedModel,
+    required String? upstreamModel,
+  }) {
+    if (body == null ||
+        body.isEmpty ||
+        resolvedModel == null ||
+        !resolvedModel.isRemote ||
+        upstreamModel == null ||
+        upstreamModel.isEmpty) {
+      return body;
+    }
+
+    try {
+      final decoded = jsonDecode(utf8.decode(body));
+      if (decoded is! Map<String, dynamic>) {
+        return body;
+      }
+      if (decoded['model'] == upstreamModel) {
+        return body;
+      }
+
+      decoded['model'] = upstreamModel;
+      return utf8.encode(jsonEncode(decoded));
+    } catch (_) {
+      return body;
+    }
+  }
+
+  String _decodeResponseBody(List<int> bytes) {
+    if (bytes.isEmpty) {
+      return '';
+    }
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  String _truncateForLog(String value) {
+    final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length <= _errorBodyPreviewLimit) {
+      return normalized;
+    }
+    return '${normalized.substring(0, _errorBodyPreviewLimit)}...';
   }
 }
 

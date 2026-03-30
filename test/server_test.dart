@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:agentos_api/agentos_api.dart';
 import 'package:agentos_kernel/agentos_kernel.dart' show KernelService;
 import 'package:http/http.dart';
+import 'package:logging/logging.dart';
 import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:test/test.dart';
@@ -338,6 +339,158 @@ void main() {
       }
     },
   );
+
+  test('LLM upstream 504 is logged with target context', () async {
+    final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final records = <LogRecord>[];
+    late StreamSubscription<LogRecord> subscription;
+    subscription = requestLogger.onRecord.listen(records.add);
+
+    upstream.listen((request) async {
+      expect(request.uri.path, '/v1/chat/completions');
+      request.response.statusCode = 504;
+      request.response.headers.set(
+        HttpHeaders.contentTypeHeader,
+        'application/json',
+      );
+      request.response.write(
+        jsonEncode(<String, dynamic>{
+          'error': 'upstream timeout',
+          'provider': 'mock-remote',
+        }),
+      );
+      await request.response.close();
+    });
+
+    final serviceLocator = _FakeServiceLocator(
+      runningModelIds: const {},
+      models: <LlmModelInfo>[
+        LlmModelInfo(
+          id: 'remote-gpt',
+          name: 'gpt-4.1',
+          alias: 'gpt-4.1',
+          description: 'remote custom model',
+          parameters: 'remote',
+          paramsB: 0,
+          quantization: 'none',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: const ['chat'],
+          repoId: 'remote',
+          type: 'text',
+          contextWindowSize: 128000,
+          baseUrl: 'http://${upstream.address.host}:${upstream.port}',
+          isCustom: true,
+        ),
+      ],
+    );
+    final client = LLMClient(
+      serviceLocator: serviceLocator,
+      kernelFuture: Future<KernelService?>.value(null),
+    );
+
+    try {
+      final response = await client.send(
+        serviceType: LLMServiceType.text,
+        method: 'POST',
+        path: '/v1/chat/completions',
+        queryParameters: const {'source': 'test'},
+        body: utf8.encode(jsonEncode(<String, dynamic>{'model': 'remote-gpt'})),
+      );
+
+      expect(response.statusCode, 504);
+      expect(utf8.decode(response.bodyBytes!), contains('upstream timeout'));
+
+      final warning = records.lastWhere(
+        (record) =>
+            record.level == Level.WARNING &&
+            record.message.contains('LLM proxy upstream error'),
+      );
+      expect(warning.message, contains('status=504'));
+      expect(warning.message, contains('service=llm_text'));
+      expect(warning.message, contains('/v1/chat/completions?source=test'));
+      expect(warning.message, contains('upstream timeout'));
+    } finally {
+      await subscription.cancel();
+      await upstream.close(force: true);
+    }
+  });
+
+  test('LLM remote model id is rewritten to upstream model name', () async {
+    final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+
+    upstream.listen((request) async {
+      expect(request.uri.path, '/v1/chat/completions');
+      final body =
+          jsonDecode(await utf8.decoder.bind(request).join())
+              as Map<String, dynamic>;
+      expect(body['model'], 'gpt-4.1');
+
+      request.response.statusCode = 200;
+      request.response.headers.set(
+        HttpHeaders.contentTypeHeader,
+        'application/json',
+      );
+      request.response.write(
+        jsonEncode(<String, dynamic>{
+          'id': 'chatcmpl-test',
+          'object': 'chat.completion',
+          'choices': <Map<String, dynamic>>[],
+        }),
+      );
+      await request.response.close();
+    });
+
+    final serviceLocator = _FakeServiceLocator(
+      runningModelIds: const {},
+      models: <LlmModelInfo>[
+        LlmModelInfo(
+          id: 'remote-gpt',
+          name: 'gpt-4.1',
+          alias: 'gpt-4.1',
+          description: 'remote custom model',
+          parameters: 'remote',
+          paramsB: 0,
+          quantization: 'none',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: const ['chat'],
+          repoId: 'remote',
+          type: 'text',
+          contextWindowSize: 128000,
+          baseUrl: 'http://${upstream.address.host}:${upstream.port}',
+          isCustom: true,
+        ),
+      ],
+    );
+    final client = LLMClient(
+      serviceLocator: serviceLocator,
+      kernelFuture: Future<KernelService?>.value(null),
+    );
+
+    try {
+      final response = await client.send(
+        serviceType: LLMServiceType.text,
+        method: 'POST',
+        path: '/v1/chat/completions',
+        body: utf8.encode(
+          jsonEncode(<String, dynamic>{
+            'model': 'remote-gpt',
+            'messages': <Map<String, String>>[
+              <String, String>{'role': 'user', 'content': 'hello'},
+            ],
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      expect(utf8.decode(response.bodyBytes!), contains('chatcmpl-test'));
+    } finally {
+      await upstream.close(force: true);
+    }
+  });
 }
 
 String _readPubspecVersion() {
