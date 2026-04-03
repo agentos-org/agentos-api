@@ -82,7 +82,6 @@ void main() {
     expect(payload['name'], 'AgentOS API Gateway');
     expect(payload['endpoints'], isNotEmpty);
     final endpoints = Map<String, dynamic>.from(payload['endpoints'] as Map);
-    expect(endpoints.containsKey('/intentkit/*'), isFalse);
     expect(endpoints.containsKey('/cronkit/*'), isTrue);
   });
 
@@ -99,19 +98,6 @@ void main() {
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     expect(payload['ready'], isFalse);
     expect(payload['reasons'], isNotEmpty);
-  });
-
-  test('IntentKit submitRaw is disabled by default', () async {
-    final response = await post(
-      Uri.parse('$host/intentkit/submitRaw'),
-      headers: {'content-type': 'application/json'},
-      body: jsonEncode(<String, dynamic>{
-        'content': [
-          {'type': 'text', 'message': 'hello'},
-        ],
-      }),
-    );
-    expect(response.statusCode, 404);
   });
 
   test('AgentKit create agent requires bearer', () async {
@@ -178,46 +164,6 @@ void main() {
     expect(registerPayload['appGroupId'], 'com.demo');
   });
 
-  test('IntentKit routes can be enabled explicitly', () async {
-    final serviceLocator = DefaultServiceLocator();
-    final kernelFuture = Future<KernelService?>.value(null);
-    final liteAgentSdk = LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1');
-    final handler = createGatewayHandler(
-      serviceLocator: serviceLocator,
-      kernelFuture: kernelFuture,
-      liteAgentSdk: liteAgentSdk,
-      enableIntentKit: true,
-      enableLogging: false,
-    );
-    final localServer = await shelf_io.serve(
-      handler,
-      InternetAddress.loopbackIPv4,
-      0,
-    );
-    final localHost = 'http://${localServer.address.host}:${localServer.port}';
-
-    try {
-      final rootResponse = await get(Uri.parse('$localHost/'));
-      final rootPayload = jsonDecode(rootResponse.body) as Map<String, dynamic>;
-      final endpoints = Map<String, dynamic>.from(
-        rootPayload['endpoints'] as Map,
-      );
-      expect(endpoints.containsKey('/intentkit/*'), isTrue);
-
-      final response = await post(
-        Uri.parse('$localHost/intentkit/submitRaw'),
-        headers: {'content-type': 'application/json'},
-        body: jsonEncode(<String, dynamic>{
-          'content': [
-            {'type': 'text', 'message': 'hello'},
-          ],
-        }),
-      );
-      expect(response.statusCode, 401);
-    } finally {
-      await localServer.close(force: true);
-    }
-  });
 
   test(
     '/llmkit/models returns available text generation models only',

@@ -13,14 +13,11 @@ import '../version.dart';
 class SystemController {
   SystemController({
     required int gatewayPort,
-    bool enableIntentKit = false,
     Future<KernelService?>? kernelFuture,
   }) : _gatewayPort = gatewayPort,
-       _enableIntentKit = enableIntentKit,
        _kernelFuture = kernelFuture ?? Future.value(null);
 
   final int _gatewayPort;
-  final bool _enableIntentKit;
   final Future<KernelService?> _kernelFuture;
 
   Router get router {
@@ -50,10 +47,6 @@ class SystemController {
       '${ApiConfig.llmTtsPath}/*': ApiConfig.llmTtsName,
       '${ApiConfig.llmAsrPath}/*': ApiConfig.llmAsrName,
     };
-    if (_enableIntentKit) {
-      endpoints['${ApiConfig.intentkitPath}/*'] =
-          'IntentKit API (Intent detection, requires Token)';
-    }
     final info = {
       'name': 'AgentOS API Gateway',
       'version': packageVersion,

@@ -6,7 +6,7 @@ import 'package:shelf_router/shelf_router.dart';
 
 import '../../config.dart';
 import '../../locator.dart';
-import '../../services/intentkit/intentkit_initializer.dart';
+import '../../services/kernel/kernel_model_support.dart';
 import '../../services/llmkit/llm_client.dart';
 
 /// LLMKit Controller
@@ -63,9 +63,7 @@ class LLMKitController {
       final models = await _client.serviceLocator.getLlmModelList();
       final availableModels = <Map<String, dynamic>>[];
 
-      for (final model in models.where(
-        IntentKitInitializer.supportsTextInference,
-      )) {
+      for (final model in models.where(supportsTextInference)) {
         if (!await _isModelAvailable(model)) {
           continue;
         }

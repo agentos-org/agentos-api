@@ -2,8 +2,8 @@ import 'package:agentos_kernel/agentos_kernel.dart' as kernel;
 import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 
 import '../../locator.dart';
-import '../intentkit/intentkit_initializer.dart';
 import '../../config.dart';
+import 'kernel_model_support.dart';
 
 /// Result of kernel bootstrap containing both the kernel service and
 /// the shared LiteAgentSDK instance.
@@ -51,7 +51,7 @@ class KernelBootstrapResult {
     if (llmPort == null && !llmModelList.any((m) => m.isRemote)) {
       return false;
     }
-    final llmModels = IntentKitInitializer.buildKernelModels(
+    final llmModels = buildKernelLlmModels(
       llmModelList,
       llmBaseUrl: llmPort != null ? 'http://localhost:$llmPort' : null,
       llmApiKey: llmApiKey,
@@ -106,9 +106,7 @@ class KernelBootstrapResult {
       return false;
     }
     final llmModelList = await serviceLocator.getLlmModelList();
-    final inferenceModels = llmModelList
-        .where(IntentKitInitializer.supportsTextInference)
-        .toList();
+    final inferenceModels = llmModelList.where(supportsTextInference).toList();
     final preferredLlmModel =
         embeddingsLlmModel ??
         (inferenceModels.isEmpty ? null : inferenceModels.first.id);
@@ -202,29 +200,7 @@ class KernelBootstrap {
       liteAgentSdk: liteAgentSdk,
     );
     await result.syncServicesFromServiceLocator(serviceLocator);
-    await applyAppInfoList(serviceLocator, kernelService);
     return result;
-  }
-
-  static Future<void> applyAppInfoList(
-    AgentOSServiceLocator serviceLocator,
-    kernel.KernelService kernelService,
-  ) async {
-    final apps = await serviceLocator.getAppInfoList();
-    if (apps.isEmpty) {
-      return;
-    }
-    final mapped = apps
-        .map(
-          (app) => kernel.AppInfo(
-            bundleId: app.bundleId,
-            version: app.version,
-            description: app.description,
-            name: app.name,
-          ),
-        )
-        .toList();
-    kernelService.updateAppInfoList(mapped);
   }
 
   static Future<kernel.KernelRuntimeConfig> resolveRuntimeConfig(
@@ -237,42 +213,24 @@ class KernelBootstrap {
     final openToolHost = serviceLocator.openToolDaemonHost.trim();
 
     return kernel.KernelRuntimeConfig(
-      hivePath: baseRuntime.hivePath,
       memoryDbPath: baseRuntime.memoryDbPath,
-      jobBoxName: baseRuntime.jobBoxName,
-      preferenceBoxName: baseRuntime.preferenceBoxName,
+      preferenceDbPath: baseRuntime.preferenceDbPath,
+      modelProfilerDbPath: baseRuntime.modelProfilerDbPath,
+      cronDbPath: baseRuntime.cronDbPath,
       ttftThreshold: baseRuntime.ttftThreshold,
       tpsThreshold: baseRuntime.tpsThreshold,
       maxConcurrency: baseRuntime.maxConcurrency,
-      maxPreferenceDistance: baseRuntime.maxPreferenceDistance,
-      vectorQueryLimit: baseRuntime.vectorQueryLimit,
-      maxPreferenceResults: baseRuntime.maxPreferenceResults,
-      memorySummaryLimit: baseRuntime.memorySummaryLimit,
       memorySummaryRecentWindow: baseRuntime.memorySummaryRecentWindow,
       memorySummaryMaxRecords: baseRuntime.memorySummaryMaxRecords,
       memorySummaryMinRecords: baseRuntime.memorySummaryMinRecords,
       memorySummaryEnabled: baseRuntime.memorySummaryEnabled,
       memorySummaryInterval: baseRuntime.memorySummaryInterval,
       memorySummaryMaxScopesPerRun: baseRuntime.memorySummaryMaxScopesPerRun,
-      learningDeferredEnabled: baseRuntime.learningDeferredEnabled,
-      learningInterval: baseRuntime.learningInterval,
-      learningMaxPerRun: baseRuntime.learningMaxPerRun,
-      learningQueueLimit: baseRuntime.learningQueueLimit,
-      preferenceAggregationEnabled: baseRuntime.preferenceAggregationEnabled,
-      preferenceAggregationInterval: baseRuntime.preferenceAggregationInterval,
-      preferenceAggregationMaxPerRun:
-          baseRuntime.preferenceAggregationMaxPerRun,
-      preferenceAggregationQueueLimit:
-          baseRuntime.preferenceAggregationQueueLimit,
       opentoolDaemonHost: openToolHost.isEmpty
           ? baseRuntime.opentoolDaemonHost
           : openToolHost,
       opentoolDaemonPort: openToolPort ?? baseRuntime.opentoolDaemonPort,
       mode: baseRuntime.mode,
-      modelProfileBoxName: baseRuntime.modelProfileBoxName,
-      cronTaskBoxName: baseRuntime.cronTaskBoxName,
-      cronRunBoxName: baseRuntime.cronRunBoxName,
-      cronRunMessageBoxName: baseRuntime.cronRunMessageBoxName,
       profileSuccessRateThreshold: baseRuntime.profileSuccessRateThreshold,
     );
   }

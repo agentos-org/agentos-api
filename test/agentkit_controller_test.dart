@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:agentos_api/src/controllers/agentkit/agentkit_controller.dart';
 import 'package:agentos_api/src/config.dart';
 import 'package:agentos_api/src/locator.dart';
-import 'package:agentos_kernel/agentos_kernel.dart' hide AppInfo;
+import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'package:opentool_dart/opentool_client.dart';
 import 'package:shelf/shelf.dart';

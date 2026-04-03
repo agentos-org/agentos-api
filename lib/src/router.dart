@@ -6,16 +6,13 @@ import 'locator.dart';
 import 'controllers/agentkit/agentkit_controller.dart';
 import 'controllers/appkit/appkit_controller.dart';
 import 'controllers/cronkit/cronkit_controller.dart';
-import 'controllers/intentkit/intentkit_controller.dart';
 import 'controllers/llmkit/llmkit_controller.dart';
 import 'controllers/system_controller.dart';
 import 'controllers/toolkit/toolkit_controller.dart';
 import 'config.dart';
 import 'middleware.dart';
-import 'services/appkit/app_called_handler_impl.dart';
 import 'services/appkit/appkit_service.dart';
 import 'services/cronkit/cronkit_model_ref_store.dart';
-import 'services/intentkit/intentkit_service.dart';
 import 'services/llmkit/llm_client.dart';
 import 'services/toolkit/opentool_client.dart';
 
@@ -37,7 +34,6 @@ Handler createGatewayHandler({
   required AgentOSServiceLocator serviceLocator,
   required Future<KernelService?> kernelFuture,
   required LiteAgentSDK liteAgentSdk,
-  bool enableIntentKit = false,
   bool enableLogging = true,
   bool enableCors = true,
   int gatewayPort = ApiConfig.defaultPort,
@@ -46,7 +42,6 @@ Handler createGatewayHandler({
     serviceLocator: serviceLocator,
     kernelFuture: kernelFuture,
     liteAgentSdk: liteAgentSdk,
-    enableIntentKit: enableIntentKit,
     gatewayPort: gatewayPort,
   );
 
@@ -80,7 +75,6 @@ Router createGatewayRouter({
   required AgentOSServiceLocator serviceLocator,
   required Future<KernelService?> kernelFuture,
   required LiteAgentSDK liteAgentSdk,
-  bool enableIntentKit = false,
   int gatewayPort = ApiConfig.defaultPort,
 }) {
   final instanceId = _createGatewayInstanceId();
@@ -90,21 +84,12 @@ Router createGatewayRouter({
   // System endpoints (version)
   final systemController = SystemController(
     gatewayPort: gatewayPort,
-    enableIntentKit: enableIntentKit,
     kernelFuture: kernelFuture,
   );
   router.mount('/', systemController.router.call);
 
   // AppKit service (shared instance for token-bundleId resolution)
   final appKitService = AppKitService();
-
-  // register AppCalledHandler to KernelService
-  kernelFuture.then((kernelService) {
-    if (kernelService != null) {
-      final handler = AppCalledHandlerImpl(appKitService: appKitService);
-      kernelService.setAppCalledHandler(handler);
-    }
-  });
 
   // AgentKit API (LiteAgent SDK, requires Token)
   final agentKitController = AgentKitController(
@@ -114,16 +99,6 @@ Router createGatewayRouter({
     serviceLocator: serviceLocator,
   );
   router.mount('${ApiConfig.agentkitPath}/', agentKitController.router.call);
-
-  if (enableIntentKit) {
-    // IntentKit API (intent detection, requires Token)
-    final intentKitService = IntentKitService(kernelFuture: kernelFuture);
-    final intentKitController = IntentKitController(service: intentKitService);
-    router.mount(
-      '${ApiConfig.intentkitPath}/',
-      intentKitController.router.call,
-    );
-  }
 
   // AppKit API (app registration/subscription)
   final appKitController = AppKitController(service: appKitService);

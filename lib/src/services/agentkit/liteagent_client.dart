@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:agentos_kernel/agentos_kernel.dart';
-import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 
 import '../../locator.dart';
 
@@ -28,8 +26,6 @@ class LiteagentClient {
   /// 1. Explicitly provided [baseUri]
   /// 2. Obtained from [serviceLocator]
   /// 3. Resolved from environment variables (default behavior)
-  ///
-  /// [kernelFuture] Future that resolves to KernelService for agent message ingestion
   LiteagentClient({
     Uri? baseUri,
     HttpClient? httpClient,
@@ -85,8 +81,6 @@ class LiteagentClient {
   /// [queryParameters] Query parameters
   /// [body] Request body
   /// [streamResponse] Whether to use streaming response
-  /// [userId] User ID for agent message ingestion
-  /// [bundleId] Bundle ID for agent message ingestion
   Future<LiteagentClientResponse> send({
     required String method,
     required String path,
@@ -94,8 +88,6 @@ class LiteagentClient {
     Map<String, String>? queryParameters,
     List<int>? body,
     bool streamResponse = false,
-    String? userId,
-    String? bundleId,
   }) async {
     final uri = _buildUri(path, queryParameters);
     final request = await _httpClient.openUrl(method, uri);
@@ -106,15 +98,10 @@ class LiteagentClient {
     final response = await request.close();
     final responseHeaders = _sanitizeResponseHeaders(response.headers);
     if (streamResponse) {
-      final monitoredStream = _createMonitoredStream(
-        stream: response,
-        userId: userId,
-        bundleId: bundleId,
-      );
       return LiteagentClientResponse(
         statusCode: response.statusCode,
         headers: responseHeaders,
-        bodyStream: monitoredStream,
+        bodyStream: response,
       );
     }
     final bytes = await response.fold<List<int>>(<int>[], (buffer, data) {
@@ -122,165 +109,11 @@ class LiteagentClient {
       return buffer;
     });
 
-    _ingestAgentMessagesFromBytes(bytes, userId: userId, bundleId: bundleId);
-
     return LiteagentClientResponse(
       statusCode: response.statusCode,
       headers: responseHeaders,
       bodyBytes: bytes,
     );
-  }
-
-  /// Creates a monitored stream that ingests agent messages from SSE events
-  ///
-  /// SSE format from LiteAgent:
-  /// - event:MESSAGE\ndata:{AgentMessage json}\n\n
-  /// - event:CHUNK\ndata:{AgentMessageChunk json}\n\n
-  /// - event:FUNCTION_CALL\ndata:{AgentMessage json}\n\n
-  Stream<List<int>> _createMonitoredStream({
-    required Stream<List<int>> stream,
-    String? userId,
-    String? bundleId,
-  }) {
-    final buffer = StringBuffer();
-
-    return stream.transform(
-      StreamTransformer<List<int>, List<int>>.fromHandlers(
-        handleData: (data, sink) {
-          _parseAndRecordSSEMessages(
-            data,
-            buffer,
-            userId: userId,
-            bundleId: bundleId,
-          );
-          sink.add(data);
-        },
-        handleError: (error, stackTrace, sink) {
-          sink.addError(error, stackTrace);
-        },
-        handleDone: (sink) {
-          sink.close();
-        },
-      ),
-    );
-  }
-
-  /// Parses SSE data and ingests final AgentMessage events to KernelService.
-  ///
-  /// Only complete MESSAGE events are ingested for learning. Streaming chunks
-  /// and function-call events are intentionally excluded because they are
-  /// transport/intermediate artifacts and would add noisy preference signals.
-  void _parseAndRecordSSEMessages(
-    List<int> data,
-    StringBuffer buffer, {
-    String? userId,
-    String? bundleId,
-  }) {
-    if (userId == null || bundleId == null) return;
-
-    try {
-      final text = utf8.decode(data, allowMalformed: true);
-      buffer.write(text);
-
-      final content = buffer.toString();
-      final events = content.split('\n\n');
-
-      buffer.clear();
-      if (!content.endsWith('\n\n') && events.isNotEmpty) {
-        buffer.write(events.removeLast());
-      }
-
-      for (final event in events) {
-        if (event.trim().isEmpty) continue;
-
-        String? eventType;
-        String? dataPayload;
-
-        final lines = event.split('\n');
-        for (final line in lines) {
-          if (line.startsWith('event:')) {
-            eventType = line.substring(6).trim();
-          } else if (line.startsWith('data:')) {
-            dataPayload = line.substring(5).trim();
-          }
-        }
-
-        if (eventType == 'MESSAGE' && dataPayload != null) {
-          _ingestSingleAgentMessageForLearning(
-            dataPayload,
-            userId: userId,
-            bundleId: bundleId,
-          );
-        }
-      }
-    } catch (_) {
-      //
-    }
-  }
-
-  /// Ingests a single AgentMessage from JSON string for memory + learning.
-  void _ingestSingleAgentMessageForLearning(
-    String jsonStr, {
-    required String userId,
-    required String bundleId,
-  }) {
-    try {
-      final json = jsonDecode(jsonStr) as Map<String, dynamic>;
-      final agentMessage = AgentMessage.fromJson(json);
-
-      _kernelFuture
-          .then((kernel) {
-            if (kernel == null) return;
-            // Responses proxied back from LiteAgent are external agent replies
-            // visible to the host app/user, so they should also enter the
-            // preference-learning pipeline after being archived.
-            kernel.ingestAgentMessageForLearning(
-              userId: userId,
-              bundleId: bundleId,
-              agentMessage: agentMessage,
-            );
-          })
-          .catchError((_) {
-            //
-          });
-    } catch (_) {
-      //
-    }
-  }
-
-  /// Ingests AgentMessages from non-streaming response bytes
-  void _ingestAgentMessagesFromBytes(
-    List<int> bytes, {
-    String? userId,
-    String? bundleId,
-  }) {
-    if (userId == null || bundleId == null) return;
-    if (bytes.isEmpty) return;
-
-    try {
-      final text = utf8.decode(bytes, allowMalformed: true);
-      final json = jsonDecode(text);
-
-      if (json is Map<String, dynamic>) {
-        _ingestSingleAgentMessageForLearning(
-          jsonEncode(json),
-          userId: userId,
-          bundleId: bundleId,
-        );
-      } else if (json is List) {
-        for (final item in json) {
-          if (item is Map<String, dynamic>) {
-            _ingestSingleAgentMessageForLearning(
-              jsonEncode(item),
-              userId: userId,
-              bundleId: bundleId,
-            );
-          }
-        }
-      }
-    } catch (_) {
-      //
-    }
   }
 
   Uri _buildUri(String path, Map<String, String>? queryParameters) {

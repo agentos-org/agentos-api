@@ -11,6 +11,8 @@ import 'package:shelf_router/shelf_router.dart';
 import '../../config.dart';
 import '../../locator.dart';
 import '../../middleware.dart';
+import '../../services/agentkit/agent_request_context_service.dart';
+import '../../services/agentkit/agentkit_service.dart';
 import '../../services/appkit/appkit_service.dart';
 
 class AgentKitController {
@@ -20,14 +22,20 @@ class AgentKitController {
     Future<KernelService?>? kernelFuture,
     AgentOSServiceLocator? serviceLocator,
   }) : _sdk = sdk,
-       _appKitService = appKitService,
        _kernelFuture = kernelFuture ?? Future.value(null),
-       _serviceLocator = serviceLocator ?? DefaultServiceLocator();
+       _serviceLocator = serviceLocator ?? DefaultServiceLocator(),
+       _agentKitService = AgentKitService(
+         kernelFuture: kernelFuture ?? Future.value(null),
+       ),
+       _requestContextService = AgentRequestContextService(
+         appKitService: appKitService,
+       );
 
   final LiteAgentSDK _sdk;
-  final AppKitService? _appKitService;
   final Future<KernelService?> _kernelFuture;
   final AgentOSServiceLocator _serviceLocator;
+  final AgentKitService _agentKitService;
+  final AgentRequestContextService _requestContextService;
   static const Duration _functionCallTimeout = Duration(minutes: 5);
   final Map<String, Completer<ToolReturn>> _pendingToolReturns = {};
 
@@ -196,10 +204,7 @@ class AgentKitController {
       );
       final session = Session(sessionId: sessionId);
 
-      final token = bearerTokenFrom(request);
-      final bundleId = (token != null && _appKitService != null)
-          ? _appKitService.bundleIdForToken(token)
-          : null;
+      final requestContext = _requestContextService.resolve(request);
 
       final controller = StreamController<List<int>>();
 
@@ -207,11 +212,16 @@ class AgentKitController {
         onMessage: (agentMessage) {
           final json = jsonEncode(agentMessage.toJson());
           controller.add(utf8.encode('event:message\ndata:$json\n\n'));
-          _ingestAgentMessageForLearning(
-            agentMessage,
-            userId: token,
-            bundleId: bundleId,
-          );
+          if (requestContext != null) {
+            unawaited(
+              _agentKitService.archiveAgentMessage(
+                sessionId: sessionId,
+                username: requestContext.username,
+                bundleId: requestContext.bundleId,
+                agentMessage: agentMessage,
+              ),
+            );
+          }
         },
         onChunk: (chunk) {
           final json = jsonEncode(chunk.toJson());
@@ -292,15 +302,17 @@ class AgentKitController {
       final session = Session(sessionId: sessionId);
       final message = await _sdk.chatSimple(session, userTask);
 
-      final token = bearerTokenFrom(request);
-      final bundleId = (token != null && _appKitService != null)
-          ? _appKitService.bundleIdForToken(token)
-          : null;
-      _ingestAgentMessageForLearning(
-        message,
-        userId: token,
-        bundleId: bundleId,
-      );
+      final requestContext = _requestContextService.resolve(request);
+      if (requestContext != null) {
+        unawaited(
+          _agentKitService.archiveAgentMessage(
+            sessionId: sessionId,
+            username: requestContext.username,
+            bundleId: requestContext.bundleId,
+            agentMessage: message,
+          ),
+        );
+      }
 
       return _jsonResponse(message.toJson());
     } catch (e) {
@@ -819,27 +831,6 @@ class AgentKitController {
       return error.message.toLowerCase().contains('connection refused');
     }
     return false;
-  }
-
-  void _ingestAgentMessageForLearning(
-    AgentMessage agentMessage, {
-    String? userId,
-    String? bundleId,
-  }) {
-    if (userId == null || bundleId == null) return;
-    _kernelFuture
-        .then((kernel) {
-          if (kernel == null) return;
-          // AgentKit chat/chatSimple messages are the externally visible final
-          // agent replies returned to the host app, so they should be archived
-          // and contribute preference-learning signals.
-          kernel.ingestAgentMessageForLearning(
-            userId: userId,
-            bundleId: bundleId,
-            agentMessage: agentMessage,
-          );
-        })
-        .catchError((_) {});
   }
 
   Future<ToolReturn> _waitExternalToolReturn(

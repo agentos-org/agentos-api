@@ -25,13 +25,11 @@ void main(List<String> args) async {
   );
   final kernelFuture = Future.value(bootstrapResult.kernelService);
   final liteAgentSdk = bootstrapResult.liteAgentSdk;
-  final enableIntentKit = ApiConfig.isIntentKitEnabled(Platform.environment);
 
   final handler = createGatewayHandler(
     serviceLocator: serviceLocator,
     kernelFuture: kernelFuture,
     liteAgentSdk: liteAgentSdk,
-    enableIntentKit: enableIntentKit,
   );
 
   // For running in containers, we respect the PORT environment variable.
@@ -41,10 +39,9 @@ void main(List<String> args) async {
   final server = await serve(handler, ip, port);
   print('Server listening on port ${server.port}');
   print('AGENTOS_BASEURL=$baseUrl');
-  print('ENABLE_INTENTKIT=$enableIntentKit');
   print('KERNEL_CWD=${Directory.current.path}');
-  print('KERNEL_HIVE_PATH=${runtime.hivePath}');
-  print('KERNEL_CRON_TASK_BOX=${runtime.cronTaskBoxName}');
-  print('KERNEL_CRON_RUN_BOX=${runtime.cronRunBoxName}');
-  print('KERNEL_CRON_RUN_MESSAGE_BOX=${runtime.cronRunMessageBoxName}');
+  print('KERNEL_MEMORY_DB_PATH=${runtime.memoryDbPath}');
+  print('KERNEL_PREFERENCE_DB_PATH=${runtime.preferenceDbPath}');
+  print('KERNEL_MODEL_PROFILER_DB_PATH=${runtime.modelProfilerDbPath}');
+  print('KERNEL_CRON_DB_PATH=${runtime.cronDbPath}');
 }
