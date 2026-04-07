@@ -43,8 +43,8 @@ class OpenSpec {
       apiKey: json['apiKey'] is Map<String, dynamic>
           ? ApiKey.fromJson(json['apiKey'] as Map<String, dynamic>)
           : json['apiKey'] is Map
-              ? ApiKey.fromJson(Map<String, dynamic>.from(json['apiKey'] as Map))
-              : null,
+          ? ApiKey.fromJson(Map<String, dynamic>.from(json['apiKey'] as Map))
+          : null,
     );
   }
 
@@ -76,8 +76,5 @@ class ApiKey {
     );
   }
 
-  Map<String, dynamic> toJson() => {
-        'type': type,
-        'apiKey': apiKey,
-      };
+  Map<String, dynamic> toJson() => {'type': type, 'apiKey': apiKey};
 }

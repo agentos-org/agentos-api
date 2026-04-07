@@ -10,7 +10,7 @@ import '../../services/appkit/appkit_service.dart';
 
 class AppKitController {
   AppKitController({AppKitService? service})
-      : _service = service ?? AppKitService();
+    : _service = service ?? AppKitService();
 
   final AppKitService _service;
 

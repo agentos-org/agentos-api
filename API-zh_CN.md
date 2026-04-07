@@ -1,15 +1,19 @@
 # AgentOS HTTP API
 
-基础地址：`http://<host>:<port>`（默认端口：`20261`）。
+基础地址：`http://<host>:<port>`（默认端口：`8888`）。
 
 ## 鉴权
 
-所有 `/agentkit/*`、`/cronkit/*` 路由以及 `GET /appkit/subscribe`
+所有 `/agentkit/*`、`/cronkit/*`、`/ragkit/*` 路由以及 `GET /appkit/subscribe`
 都需要 Bearer token。
 
 对于 `/cronkit/*`，Bearer token 必须来自 `POST /appkit/register`。
 Cron 任务权限按该 token 解析出的 app 身份控制：
 同一 `appGroupId` 可共享读取，写操作仍只允许 owner `bundleId`。
+
+对于 `/ragkit/*`，Bearer token 也必须来自 `POST /appkit/register`。
+Rag base 的归属信息会写入 base metadata：
+写操作只允许 owner `bundleId`，读取与检索则按有效 `appGroupId` 共享。
 
 ```
 Authorization: Bearer <token>
@@ -228,6 +232,24 @@ Query:
 
 响应：`200 OK`（`AgentId`）
 
+示例请求：
+
+```json
+{
+  "name": "planner",
+  "capability": {
+    "systemPrompt": "You are a helpful planner.",
+    "timeoutSeconds": 3600
+  }
+}
+```
+
+示例响应：
+
+```json
+{"agentId":"agent-1"}
+```
+
 #### POST /agentkit/agent/update
 
 Query:
@@ -266,6 +288,25 @@ Query（可选）：
 
 响应：`200 OK`（`Session`）
 
+示例请求：
+
+```json
+{
+  "systemPrompt": "You are a helpful planner.",
+  "llmConfig": {
+    "baseUrl": "http://127.0.0.1:52010",
+    "apiKey": "",
+    "model": "qwen3-8b"
+  }
+}
+```
+
+示例响应：
+
+```json
+{"sessionId":"session-1"}
+```
+
 #### POST /agentkit/initSimple
 
 请求体：`SimpleCapability`
@@ -293,6 +334,17 @@ Query:
 - `chunk`：`AgentMessageChunk`
 - `functionCall`：`{"sessionId":"<string>","functionCall":FunctionCall}`
 
+示例请求：
+
+```json
+{
+  "content": [
+    {"type": "text", "message": "Summarize this repository."}
+  ],
+  "isChunk": true
+}
+```
+
 #### POST /agentkit/chat/simple
 
 Query:
@@ -305,6 +357,20 @@ Query:
 
 响应：`200 OK`（`AgentMessage`）
 
+示例响应：
+
+```json
+{
+  "sessionId": "session-1",
+  "taskId": "task-1",
+  "role": "llm",
+  "to": "user",
+  "type": "text",
+  "content": "This repository provides a unified API gateway for local AI services.",
+  "createTime": "2026-04-08T10:00:02.000Z"
+}
+```
+
 #### GET /agentkit/history
 
 Query:
@@ -314,6 +380,24 @@ Query:
 | `sessionId` | `string` | 是 |
 
 响应：`200 OK`（`AgentMessage[]`）
+
+示例响应：
+
+```json
+[
+  {
+    "sessionId": "session-1",
+    "taskId": "task-1",
+    "role": "user",
+    "to": "agent",
+    "type": "contentList",
+    "content": [
+      {"type": "text", "message": "Summarize this repository."}
+    ],
+    "createTime": "2026-04-08T10:00:00.000Z"
+  }
+]
+```
 
 #### GET /agentkit/stop
 
@@ -364,6 +448,18 @@ Query:
 - 如果存在相同 `sessionId` + `toolReturn.id` 的待完成外部 `functionCall`，该接口会优先完成该调用。
 - 否则会按兼容逻辑转发到 LiteAgent 的 `/callback`。
 
+示例请求：
+
+```json
+{
+  "id": "call-1",
+  "result": {
+    "ok": true,
+    "content": "Tool execution finished."
+  }
+}
+```
+
 #### POST /agentkit/streamCallback
 
 Query:
@@ -379,6 +475,25 @@ Query:
 ```json
 {"status":"ok"}
 ```
+
+示例请求：
+
+```json
+{
+  "event": "functionCall",
+  "toolReturn": {
+    "id": "call-1",
+    "result": {
+      "ok": true,
+      "content": "Tool execution finished."
+    }
+  }
+}
+```
+
+说明：
+- 该接口是 `/agentkit/callback` 的流式配套版本。
+- 适用于客户端保留了原始流事件上下文，并希望带着事件类型回传工具结果的场景。
 
 ## CronKit
 
@@ -517,12 +632,46 @@ Query:
 - 任务归属由 Bearer token 推导，不接受客户端自行决定 `source`。
 - CronKit 的任务和运行记录接口都按有效 `appGroupId` 共享访问。
 
+示例响应：
+
+```json
+{
+  "cronId": "cron-1",
+  "name": "Daily Summary",
+  "schedule": "0 9 * * *",
+  "source": "appkit|owner=com.demo.app|group=com.demo",
+  "timezone": "Asia/Shanghai",
+  "enabled": true,
+  "status": "active",
+  "concurrency": "skipIfRunning",
+  "createdAt": "2026-04-08T09:00:00.000Z",
+  "updatedAt": "2026-04-08T09:00:00.000Z",
+  "nextRunAt": "2026-04-09T09:00:00.000Z",
+  "spec": {
+    "systemPrompt": "You are a scheduled agent.",
+    "content": [
+      {"type": "text", "message": "Generate today's summary."}
+    ],
+    "timeoutSeconds": 3600
+  }
+}
+```
+
 #### POST /cronkit/task/update
 
 请求体：带必填 `cronId` 的局部更新对象。
 如果提供 `spec`，必须使用与创建时相同的 `AgentCronSpec` 结构。
 
 响应：`200 OK`（`CronTask`）
+
+示例请求：
+
+```json
+{
+  "cronId": "cron-1",
+  "enabled": false
+}
+```
 
 #### POST /cronkit/task/delete
 
@@ -558,6 +707,24 @@ Query:
 
 响应：`200 OK`（`CronRun`）
 
+示例响应：
+
+```json
+{
+  "runId": "run-1",
+  "cronId": "cron-1",
+  "trigger": "manual",
+  "status": "succeeded",
+  "scheduledAt": "2026-03-17T09:00:00.000Z",
+  "startedAt": "2026-03-17T09:00:01.000Z",
+  "finishedAt": "2026-03-17T09:00:30.000Z",
+  "hasDisplayableResult": false,
+  "result": {
+    "message": "ok"
+  }
+}
+```
+
 #### GET /cronkit/run
 
 Query:
@@ -585,6 +752,23 @@ Query:
 
 响应：`200 OK`（`CronRunListItem[]`）
 
+示例响应：
+
+```json
+[
+  {
+    "runId": "run-1",
+    "cronId": "cron-1",
+    "trigger": "manual",
+    "status": "succeeded",
+    "scheduledAt": "2026-03-17T09:00:00.000Z",
+    "startedAt": "2026-03-17T09:00:01.000Z",
+    "finishedAt": "2026-03-17T09:00:30.000Z",
+    "hasDisplayableResult": false
+  }
+]
+```
+
 #### GET /cronkit/run/messages
 
 Query:
@@ -601,7 +785,399 @@ Query:
 - 该接口只返回已持久化的 `AgentMessage` 记录。
 - 当前 CronKit 不提供 cron 执行过程的 SSE 或订阅流接口。
 
+示例响应：
+
+```json
+[
+  {
+    "messageId": "msg-1",
+    "runId": "run-1",
+    "cronId": "cron-1",
+    "timestamp": "2026-03-17T09:00:02.000Z",
+    "message": {
+      "sessionId": "session-1",
+      "taskId": "task-1",
+      "role": "llm",
+      "to": "user",
+      "type": "text",
+      "content": "Today's summary is ready.",
+      "createTime": "2026-03-17T09:00:02.000Z"
+    }
+  }
+]
+```
+
 如果 kernel 未配置 cron 模块，CronKit 可能返回 `503`。
+
+## RagKit
+
+RagKit 提供基于 kernel 的 RAG base、文档、同步与检索接口。
+本节所有路由都需要使用 `POST /appkit/register` 获取的 Bearer token。
+
+权限模型：
+- Base/文档写操作要求 owner `bundleId`
+- Base/文档读取与 query 按 `appGroupId` 共享
+
+### Schema（数据结构）
+
+#### RagBase
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `string` | 是 | RAG base ID。 |
+| `name` | `string` | 是 | Base 名称。 |
+| `docsName` | `string` | 是 | embeddings docs collection 名称。 |
+| `docsId` | `string` | 是 | embeddings docs collection ID；embeddings 未就绪时可能为空。 |
+| `metadata` | `object` | 否 | 用户 metadata，加上系统写入的归属 metadata。 |
+| `createdAt` | `string` | 是 | ISO 时间。 |
+| `updatedAt` | `string` | 是 | ISO 时间。 |
+
+`metadata` 中的归属字段：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `ownerBundleId` | `string` | 是 | 允许修改该 base 的 bundleId。 |
+| `ownerAppGroupId` | `string` | 是 | 允许读取/检索该 base 的 appGroupId。 |
+
+#### RagBaseListItem
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `string` | 是 | RAG base ID。 |
+| `name` | `string` | 是 | Base 名称。 |
+| `createdAt` | `string` | 是 | ISO 时间。 |
+| `updatedAt` | `string` | 是 | ISO 时间。 |
+
+#### RagDocument
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `string` | 是 | base 内唯一 document ID。 |
+| `baseId` | `string` | 是 | 所属 base ID。 |
+| `title` | `string` | 是 | 文档标题。 |
+| `markdown` | `string` | 是 | 完整 markdown 内容。 |
+| `contentHash` | `string` | 是 | 归一化内容 hash。 |
+| `metadata` | `object` | 否 | 用户 metadata。 |
+| `createdAt` | `string` | 是 | ISO 时间。 |
+| `updatedAt` | `string` | 是 | ISO 时间。 |
+| `indexedAt` | `string` | 否 | 最近一次成功同步时间。 |
+| `syncStatus` | `string` | 是 | `pending`、`synced`、`failed`。 |
+
+#### RagDocumentListItem
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `string` | 是 | base 内唯一 document ID。 |
+| `baseId` | `string` | 是 | 所属 base ID。 |
+| `title` | `string` | 是 | 文档标题。 |
+| `updatedAt` | `string` | 是 | ISO 时间。 |
+| `indexedAt` | `string` | 否 | 最近一次成功同步时间。 |
+| `syncStatus` | `string` | 是 | `pending`、`synced`、`failed`。 |
+
+#### RagMarkdownDocumentInput
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `documentId` | `string` | 是 | base 内唯一 document ID。 |
+| `title` | `string` | 是 | 文档标题。 |
+| `markdown` | `string` | 是 | 完整 markdown 内容。 |
+| `metadata` | `object` | 否 | 用户 metadata。 |
+
+#### RagDocumentSyncResult
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `baseId` | `string` | 是 | Base ID。 |
+| `documentId` | `string` | 是 | Document ID。 |
+| `syncStatus` | `string` | 是 | `pending`、`synced`、`failed`。 |
+| `keptCount` | `number` | 是 | 未变更 segment 数。 |
+| `updatedCount` | `number` | 是 | 更新 segment 数。 |
+| `insertedCount` | `number` | 是 | 新增 segment 数。 |
+| `deletedCount` | `number` | 是 | 删除 segment 数。 |
+| `syncedAt` | `string` | 是 | 本次同步尝试时间。 |
+
+#### RagBatchItemResult
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `baseId` | `string` | 是 | Base ID。 |
+| `documentId` | `string` | 是 | Document ID。 |
+| `status` | `string` | 是 | `success`、`failed`、`skipped`。 |
+| `syncStatus` | `string` | 是 | `pending`、`synced`、`failed`。 |
+| `message` | `string` | 否 | 可选失败/跳过说明。 |
+
+#### RagBatchResult
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `totalCount` | `number` | 是 | 处理总数。 |
+| `successCount` | `number` | 是 | 成功数。 |
+| `failedCount` | `number` | 是 | 失败数。 |
+| `skippedCount` | `number` | 是 | 跳过数。 |
+| `processedAt` | `string` | 是 | ISO 时间。 |
+| `items` | `RagBatchItemResult[]` | 是 | 每个文档的处理结果。 |
+
+#### RagQueryResult
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `baseId` | `string` | 是 | Base ID。 |
+| `query` | `string` | 是 | 原始 query 文本。 |
+| `hits` | `RagDocumentHit[]` | 是 | 聚合后的文档命中结果。 |
+
+#### RagDocumentHit
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `documentId` | `string` | 是 | Document ID。 |
+| `title` | `string` | 是 | 文档标题。 |
+| `score` | `number` | 是 | 聚合分数。 |
+| `snippet` | `string` | 是 | 顶部命中片段。 |
+| `segments` | `RagSegmentHit[]` | 是 | 命中的 segment。 |
+
+#### RagSegmentHit
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `segmentId` | `string` | 是 | Segment ID。 |
+| `score` | `number` | 是 | Segment 分数。 |
+| `text` | `string` | 是 | Segment 文本。 |
+| `headingPath` | `string` | 是 | Markdown 标题路径。 |
+
+### 端点
+
+#### GET /ragkit/base
+
+Query:
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `baseId` | `string` | 是 |
+
+响应：`200 OK`（`RagBase`）
+
+#### GET /ragkit/base/list
+
+Query:
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `offset` | `number` | 否 |
+| `limit` | `number` | 否 |
+
+响应：`200 OK`（`RagBaseListItem[]`）
+
+说明：
+- 只返回当前 token 所属有效 `appGroupId` 可见的 base。
+
+#### POST /ragkit/base/create
+
+请求体：
+
+```json
+{
+  "baseId": "product-docs",
+  "name": "Product Docs",
+  "metadata": {
+    "domain": "docs",
+    "language": "en"
+  }
+}
+```
+
+响应：`200 OK`（`RagBase`）
+
+说明：
+- 归属字段由网关注入，客户端传入的 `ownerBundleId` / `ownerAppGroupId`
+  会被覆盖。
+
+#### POST /ragkit/base/update
+
+请求体：
+
+```json
+{
+  "baseId": "product-docs",
+  "name": "Product Docs v2",
+  "metadata": {
+    "language": "en"
+  }
+}
+```
+
+响应：`200 OK`（`RagBase`）
+
+#### POST /ragkit/base/delete
+
+请求体：
+
+```json
+{"baseId":"product-docs"}
+```
+
+响应：`200 OK`
+
+```json
+{"deleted":true,"baseId":"product-docs"}
+```
+
+#### GET /ragkit/document
+
+Query:
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `baseId` | `string` | 是 |
+| `documentId` | `string` | 是 |
+
+响应：`200 OK`（`RagDocument`）
+
+#### GET /ragkit/document/list
+
+Query:
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `baseId` | `string` | 是 |
+| `offset` | `number` | 否 |
+| `limit` | `number` | 否 |
+
+响应：`200 OK`（`RagDocumentListItem[]`）
+
+#### POST /ragkit/document/upsert
+
+请求体：
+
+```json
+{
+  "baseId": "product-docs",
+  "documentId": "intro",
+  "title": "Introduction",
+  "markdown": "# Intro\n\nHello world",
+  "metadata": {
+    "source": "manual"
+  },
+  "sync": true
+}
+```
+
+响应：`200 OK`（`RagDocument`）
+
+说明：
+- `sync=false` 时仅写入本地存储，不强制立即做 embeddings 同步。
+
+#### POST /ragkit/document/upsertBatch
+
+请求体：
+
+```json
+{
+  "baseId": "product-docs",
+  "sync": false,
+  "documents": [
+    {
+      "documentId": "intro",
+      "title": "Introduction",
+      "markdown": "# Intro\n\nHello world"
+    },
+    {
+      "documentId": "faq",
+      "title": "FAQ",
+      "markdown": "# FAQ\n\nCommon questions"
+    }
+  ]
+}
+```
+
+响应：`200 OK`（`RagBatchResult`）
+
+#### POST /ragkit/document/delete
+
+请求体：
+
+```json
+{"baseId":"product-docs","documentId":"intro"}
+```
+
+响应：`200 OK`
+
+```json
+{"deleted":true,"baseId":"product-docs","documentId":"intro"}
+```
+
+#### POST /ragkit/sync/document
+
+请求体：
+
+```json
+{"baseId":"product-docs","documentId":"intro"}
+```
+
+响应：`200 OK`（`RagDocumentSyncResult`）
+
+#### POST /ragkit/sync/base
+
+请求体：
+
+```json
+{"baseId":"product-docs"}
+```
+
+响应：`200 OK`（`RagBatchResult`）
+
+#### POST /ragkit/sync/retryFailed
+
+请求体：
+
+```json
+{"baseId":"product-docs"}
+```
+
+响应：`200 OK`（`RagBatchResult`）
+
+说明：
+- 如果省略 `baseId` 或传空，网关会在当前 token 可见的所有 base 范围内重试失败文档。
+- 具体写权限仍按每个 base 的 owner `bundleId` 校验。
+
+#### POST /ragkit/query
+
+请求体：
+
+```json
+{
+  "baseId": "product-docs",
+  "query": "How do I ingest markdown?",
+  "limit": 5,
+  "candidateLimit": 20
+}
+```
+
+响应：`200 OK`（`RagQueryResult`）
+
+示例：
+
+```json
+{
+  "baseId": "product-docs",
+  "query": "How do I ingest markdown?",
+  "hits": [
+    {
+      "documentId": "intro",
+      "title": "Introduction",
+      "score": 0.91,
+      "snippet": "RAG documents are ingested from markdown text.",
+      "segments": [
+        {
+          "segmentId": "seg-1",
+          "score": 0.91,
+          "text": "RAG documents are ingested from markdown text.",
+          "headingPath": "Intro"
+        }
+      ]
+    }
+  ]
+}
+```
 
 ## AppKit
 
@@ -617,6 +1193,18 @@ Query:
 
 ```
 {"token":"sk-...","bundleId":"com.demo.app","appGroupId":"com.demo"}
+```
+
+未显式传 `appGroupId` 的示例请求：
+
+```json
+{"bundleId":"com.demo.app"}
+```
+
+示例响应：
+
+```json
+{"token":"sk-...","bundleId":"com.demo.app","appGroupId":"com.demo.app"}
 ```
 
 说明：
@@ -657,10 +1245,13 @@ data: {"bundleId":"com.demo.app","contentList":[{"type":"text","message":"..."}]
   "name": "AgentOS API Gateway",
   "version": "1.0.0",
   "description": "统一 API 网关，提供所有本地 AI 服务的统一访问入口",
-  "baseUrl": "http://localhost:20261",
+  "baseUrl": "http://localhost:8888",
   "endpoints": {
     "/version": "网关版本",
+    "/ready": "网关就绪状态",
     "/agentkit/*": "AgentKit API（智能体服务，需要 Token）",
+    "/cronkit/*": "CronKit API（定时任务管理，需要 Token）",
+    "/ragkit/*": "RagKit API（RAG 知识库/检索，需要 Token）",
     "/appkit/*": "AppKit API（应用注册/订阅）",
     "/toolkit/*": "ToolKit API（OpenTool）",
     "/llmkit/text/*": "文本生成",
@@ -678,6 +1269,22 @@ data: {"bundleId":"com.demo.app","contentList":[{"type":"text","message":"..."}]
 
 ```json
 {"version":"1.0.0"}
+```
+
+### GET /ready
+
+响应：`200 OK` 或 `503 Service Unavailable`
+
+```json
+{
+  "ready": true,
+  "llmConfigured": true,
+  "llmServicesReady": true,
+  "liteAgentReady": true,
+  "openToolDaemonReady": true,
+  "embeddingsReady": true,
+  "reasons": []
+}
 ```
 
 ## ToolKit（代理 OpenTool 服务）
@@ -718,6 +1325,34 @@ LLMKit 代理请求到各种 LLM 服务。每种服务类型有独立的端点�
 代理到文本生成服务。当请求头包含 `Accept: text/event-stream` 或
 请求体包含 `"stream": true` 时支持流式响应。
 
+示例请求：
+
+```json
+{
+  "model": "qwen3-8b",
+  "messages": [
+    {"role": "user", "content": "Hello"}
+  ]
+}
+```
+
+示例响应：
+
+```json
+{
+  "id": "chatcmpl-1",
+  "object": "chat.completion",
+  "model": "qwen3-8b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "Hello!"},
+      "finish_reason": "stop"
+    }
+  ]
+}
+```
+
 #### ALL /llmkit/vision/*
 
 代理到图文理解服务。
@@ -726,6 +1361,31 @@ LLMKit 代理请求到各种 LLM 服务。每种服务类型有独立的端点�
 
 代理到文本嵌入服务。
 
+示例请求：
+
+```json
+{
+  "model": "bge-large-zh-v1.5-q8_0",
+  "input": ["hello world"]
+}
+```
+
+示例响应：
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [0.1, 0.2, 0.3]
+    }
+  ],
+  "model": "bge-large-zh-v1.5-q8_0"
+}
+```
+
 #### ALL /llmkit/tts/*
 
 代理到文本转语音服务。
@@ -733,6 +1393,28 @@ LLMKit 代理请求到各种 LLM 服务。每种服务类型有独立的端点�
 #### ALL /llmkit/asr/*
 
 代理到语音转文本服务。
+
+#### GET /llmkit/models
+
+列出当前通过 service locator 可见的文本能力模型。返回运行中的本地模型，
+以及远程模型。
+
+响应：`200 OK`
+
+```json
+[
+  {
+    "id": "qwen3-8b",
+    "name": "qwen3-8b",
+    "alias": "qwen3-8b",
+    "description": "text model",
+    "type": "textGeneration",
+    "contextWindowSize": 8192,
+    "isRemote": false,
+    "isCustom": false
+  }
+]
+```
 
 ### 错误响应
 

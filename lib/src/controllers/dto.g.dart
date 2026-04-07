@@ -7,15 +7,12 @@ part of 'dto.dart';
 // **************************************************************************
 
 AgentKitStatusResponse _$AgentKitStatusResponseFromJson(
-        Map<String, dynamic> json) =>
-    AgentKitStatusResponse(
-      status: json['status'] as String,
-      version: json['version'] as String,
-    );
+  Map<String, dynamic> json,
+) => AgentKitStatusResponse(
+  status: json['status'] as String,
+  version: json['version'] as String,
+);
 
 Map<String, dynamic> _$AgentKitStatusResponseToJson(
-        AgentKitStatusResponse instance) =>
-    <String, dynamic>{
-      'status': instance.status,
-      'version': instance.version,
-    };
+  AgentKitStatusResponse instance,
+) => <String, dynamic>{'status': instance.status, 'version': instance.version};

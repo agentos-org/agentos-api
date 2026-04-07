@@ -33,9 +33,9 @@ class OpenToolClient {
     Uri? baseUri,
     HttpClient? httpClient,
     AgentOSServiceLocator? serviceLocator,
-  })  : _baseUri = baseUri,
-        _httpClient = httpClient ?? HttpClient(),
-        _serviceLocator = serviceLocator ?? DefaultServiceLocator();
+  }) : _baseUri = baseUri,
+       _httpClient = httpClient ?? HttpClient(),
+       _serviceLocator = serviceLocator ?? DefaultServiceLocator();
 
   final Uri? _baseUri;
   final HttpClient _httpClient;
@@ -101,14 +101,17 @@ class OpenToolClient {
     return Uri.parse(ApiConfig.getInternalUrl(port));
   }
 
-  Uri _buildUri(Uri baseUri, String path, Map<String, String>? queryParameters) {
+  Uri _buildUri(
+    Uri baseUri,
+    String path,
+    Map<String, String>? queryParameters,
+  ) {
     final joinedPath = _joinPaths(baseUri.path, path);
     return baseUri.replace(
       path: joinedPath,
-      queryParameters:
-          (queryParameters == null || queryParameters.isEmpty)
-              ? null
-              : queryParameters,
+      queryParameters: (queryParameters == null || queryParameters.isEmpty)
+          ? null
+          : queryParameters,
     );
   }
 
@@ -160,8 +163,7 @@ class OpenToolClient {
   }
 
   String _joinPaths(String basePath, String path) {
-    final normalizedBase =
-        basePath.isEmpty || basePath == '/' ? '' : basePath;
+    final normalizedBase = basePath.isEmpty || basePath == '/' ? '' : basePath;
     final normalizedNext = path.startsWith('/') ? path : '/$path';
     if (normalizedBase.endsWith('/')) {
       return '${normalizedBase.substring(0, normalizedBase.length - 1)}'

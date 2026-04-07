@@ -33,9 +33,9 @@ void main(List<String> args) async {
   );
 
   // For running in containers, we respect the PORT environment variable.
-  final port = int.parse(Platform.environment['PORT'] ?? '20261');
+  final port = int.parse(Platform.environment['PORT'] ?? '8888');
   final baseUrl =
-      Platform.environment['AGENTOS_BASEURL'] ?? 'http://127.0.0.1:20261';
+      Platform.environment['AGENTOS_BASEURL'] ?? 'http://127.0.0.1:8888';
   final server = await serve(handler, ip, port);
   print('Server listening on port ${server.port}');
   print('AGENTOS_BASEURL=$baseUrl');

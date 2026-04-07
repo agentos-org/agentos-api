@@ -1,16 +1,21 @@
 # AgentOS HTTP API
 
-Base URL: `http://<host>:<port>` (default port: `20261`).
+Base URL: `http://<host>:<port>` (default port: `8888`).
 
 ## Authentication
 
-Bearer token is required for all `/agentkit/*` and `/cronkit/*` routes, and for
-`GET /appkit/subscribe`.
+Bearer token is required for all `/agentkit/*`, `/cronkit/*`, and `/ragkit/*`
+routes, and for `GET /appkit/subscribe`.
 
 For `/cronkit/*`, the bearer token must be an AppKit-issued token from
 `POST /appkit/register`. Cron task ownership is isolated by the token's
 resolved app identity. Reads are shared within the same effective
 `appGroupId`, while writes stay restricted to the owner `bundleId`.
+
+For `/ragkit/*`, the bearer token must also be an AppKit-issued token from
+`POST /appkit/register`. Rag base ownership is stored on the base metadata:
+write operations are restricted to the owner `bundleId`, while reads and query
+are shared within the same effective `appGroupId`.
 
 ```
 Authorization: Bearer <token>
@@ -230,6 +235,24 @@ Request body: `Agent`
 
 Response: `200 OK` (`AgentId`)
 
+Example request:
+
+```json
+{
+  "name": "planner",
+  "capability": {
+    "systemPrompt": "You are a helpful planner.",
+    "timeoutSeconds": 3600
+  }
+}
+```
+
+Example response:
+
+```json
+{"agentId":"agent-1"}
+```
+
 #### POST /agentkit/agent/update
 
 Query:
@@ -268,6 +291,25 @@ Notes:
 
 Response: `200 OK` (`Session`)
 
+Example request:
+
+```json
+{
+  "systemPrompt": "You are a helpful planner.",
+  "llmConfig": {
+    "baseUrl": "http://127.0.0.1:52010",
+    "apiKey": "",
+    "model": "qwen3-8b"
+  }
+}
+```
+
+Example response:
+
+```json
+{"sessionId":"session-1"}
+```
+
 #### POST /agentkit/initSimple
 
 Request body: `SimpleCapability`
@@ -295,6 +337,17 @@ Events:
 - `chunk`: `AgentMessageChunk`
 - `functionCall`: `{"sessionId":"<string>","functionCall":FunctionCall}`
 
+Example request:
+
+```json
+{
+  "content": [
+    {"type": "text", "message": "Summarize this repository."}
+  ],
+  "isChunk": true
+}
+```
+
 #### POST /agentkit/chat/simple
 
 Query:
@@ -307,6 +360,20 @@ Request body: `UserTask`
 
 Response: `200 OK` (`AgentMessage`)
 
+Example response:
+
+```json
+{
+  "sessionId": "session-1",
+  "taskId": "task-1",
+  "role": "llm",
+  "to": "user",
+  "type": "text",
+  "content": "This repository provides a unified API gateway for local AI services.",
+  "createTime": "2026-04-08T10:00:02.000Z"
+}
+```
+
 #### GET /agentkit/history
 
 Query:
@@ -316,6 +383,24 @@ Query:
 | `sessionId` | `string` | Yes |
 
 Response: `200 OK` (`AgentMessage[]`)
+
+Example response:
+
+```json
+[
+  {
+    "sessionId": "session-1",
+    "taskId": "task-1",
+    "role": "user",
+    "to": "agent",
+    "type": "contentList",
+    "content": [
+      {"type": "text", "message": "Summarize this repository."}
+    ],
+    "createTime": "2026-04-08T10:00:00.000Z"
+  }
+]
+```
 
 #### GET /agentkit/stop
 
@@ -366,6 +451,18 @@ Notes:
 - If there is a pending external `functionCall` for the same `sessionId` + `toolReturn.id`, this endpoint completes that pending call.
 - Otherwise, the request is forwarded to LiteAgent `/callback` (legacy behavior).
 
+Example request:
+
+```json
+{
+  "id": "call-1",
+  "result": {
+    "ok": true,
+    "content": "Tool execution finished."
+  }
+}
+```
+
 #### POST /agentkit/streamCallback
 
 Query:
@@ -381,6 +478,25 @@ Response: `200 OK`
 ```json
 {"status":"ok"}
 ```
+
+Example request:
+
+```json
+{
+  "event": "functionCall",
+  "toolReturn": {
+    "id": "call-1",
+    "result": {
+      "ok": true,
+      "content": "Tool execution finished."
+    }
+  }
+}
+```
+
+Notes:
+- This endpoint is the stream-oriented callback companion to `/agentkit/callback`.
+- It is typically used when the client keeps event context and wants to return a tool result tagged with the original stream event type.
 
 ## CronKit
 
@@ -519,12 +635,46 @@ Notes:
 - Ownership is derived from the bearer token, not from a client-supplied `source`.
 - All CronKit task and run operations are shared within the same effective `appGroupId`.
 
+Example response:
+
+```json
+{
+  "cronId": "cron-1",
+  "name": "Daily Summary",
+  "schedule": "0 9 * * *",
+  "source": "appkit|owner=com.demo.app|group=com.demo",
+  "timezone": "Asia/Shanghai",
+  "enabled": true,
+  "status": "active",
+  "concurrency": "skipIfRunning",
+  "createdAt": "2026-04-08T09:00:00.000Z",
+  "updatedAt": "2026-04-08T09:00:00.000Z",
+  "nextRunAt": "2026-04-09T09:00:00.000Z",
+  "spec": {
+    "systemPrompt": "You are a scheduled agent.",
+    "content": [
+      {"type": "text", "message": "Generate today's summary."}
+    ],
+    "timeoutSeconds": 3600
+  }
+}
+```
+
 #### POST /cronkit/task/update
 
 Request body: partial `CronTask` update payload with required `cronId`.
 `spec`, when provided, must use the same `AgentCronSpec` shape as creation.
 
 Response: `200 OK` (`CronTask`)
+
+Example request:
+
+```json
+{
+  "cronId": "cron-1",
+  "enabled": false
+}
+```
 
 #### POST /cronkit/task/delete
 
@@ -560,6 +710,24 @@ Request body:
 
 Response: `200 OK` (`CronRun`)
 
+Example response:
+
+```json
+{
+  "runId": "run-1",
+  "cronId": "cron-1",
+  "trigger": "manual",
+  "status": "succeeded",
+  "scheduledAt": "2026-03-17T09:00:00.000Z",
+  "startedAt": "2026-03-17T09:00:01.000Z",
+  "finishedAt": "2026-03-17T09:00:30.000Z",
+  "hasDisplayableResult": false,
+  "result": {
+    "message": "ok"
+  }
+}
+```
+
 #### GET /cronkit/run
 
 Query:
@@ -587,6 +755,23 @@ Query:
 
 Response: `200 OK` (`CronRunListItem[]`)
 
+Example response:
+
+```json
+[
+  {
+    "runId": "run-1",
+    "cronId": "cron-1",
+    "trigger": "manual",
+    "status": "succeeded",
+    "scheduledAt": "2026-03-17T09:00:00.000Z",
+    "startedAt": "2026-03-17T09:00:01.000Z",
+    "finishedAt": "2026-03-17T09:00:30.000Z",
+    "hasDisplayableResult": false
+  }
+]
+```
+
 #### GET /cronkit/run/messages
 
 Query:
@@ -603,7 +788,400 @@ Notes:
 - This endpoint returns persisted `AgentMessage` records only.
 - CronKit does not expose SSE or subscribe-based run streaming.
 
+Example response:
+
+```json
+[
+  {
+    "messageId": "msg-1",
+    "runId": "run-1",
+    "cronId": "cron-1",
+    "timestamp": "2026-03-17T09:00:02.000Z",
+    "message": {
+      "sessionId": "session-1",
+      "taskId": "task-1",
+      "role": "llm",
+      "to": "user",
+      "type": "text",
+      "content": "Today's summary is ready.",
+      "createTime": "2026-03-17T09:00:02.000Z"
+    }
+  }
+]
+```
+
 If kernel cron is unavailable, CronKit may return `503`.
+
+## RagKit
+
+RagKit exposes kernel-backed RAG base, document, sync, and query APIs.
+All routes in this section require a Bearer token from `POST /appkit/register`.
+
+Authorization model:
+- Base/document write operations require the owner `bundleId`
+- Base/document reads and query are shared within the same `appGroupId`
+
+### Schemas
+
+#### RagBase
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | RAG base ID. |
+| `name` | `string` | Yes | Base name. |
+| `docsName` | `string` | Yes | Embeddings docs collection name. |
+| `docsId` | `string` | Yes | Embeddings docs collection ID. May be empty before embeddings are ready. |
+| `metadata` | `object` | No | User metadata plus system ownership metadata. |
+| `createdAt` | `string` | Yes | ISO timestamp. |
+| `updatedAt` | `string` | Yes | ISO timestamp. |
+
+Ownership fields stored in `metadata`:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `ownerBundleId` | `string` | Yes | Bundle allowed to modify this base. |
+| `ownerAppGroupId` | `string` | Yes | App group allowed to read/query this base. |
+
+#### RagBaseListItem
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | RAG base ID. |
+| `name` | `string` | Yes | Base name. |
+| `createdAt` | `string` | Yes | ISO timestamp. |
+| `updatedAt` | `string` | Yes | ISO timestamp. |
+
+#### RagDocument
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Base-scoped document ID. |
+| `baseId` | `string` | Yes | Parent base ID. |
+| `title` | `string` | Yes | Document title. |
+| `markdown` | `string` | Yes | Full markdown body. |
+| `contentHash` | `string` | Yes | Stable normalized content hash. |
+| `metadata` | `object` | No | User metadata. |
+| `createdAt` | `string` | Yes | ISO timestamp. |
+| `updatedAt` | `string` | Yes | ISO timestamp. |
+| `indexedAt` | `string` | No | ISO timestamp of last successful sync. |
+| `syncStatus` | `string` | Yes | `pending`, `synced`, or `failed`. |
+
+#### RagDocumentListItem
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Base-scoped document ID. |
+| `baseId` | `string` | Yes | Parent base ID. |
+| `title` | `string` | Yes | Document title. |
+| `updatedAt` | `string` | Yes | ISO timestamp. |
+| `indexedAt` | `string` | No | ISO timestamp of last successful sync. |
+| `syncStatus` | `string` | Yes | `pending`, `synced`, or `failed`. |
+
+#### RagMarkdownDocumentInput
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `documentId` | `string` | Yes | Base-scoped document ID. |
+| `title` | `string` | Yes | Document title. |
+| `markdown` | `string` | Yes | Full markdown body. |
+| `metadata` | `object` | No | User metadata. |
+
+#### RagDocumentSyncResult
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `baseId` | `string` | Yes | Base ID. |
+| `documentId` | `string` | Yes | Document ID. |
+| `syncStatus` | `string` | Yes | `pending`, `synced`, or `failed`. |
+| `keptCount` | `number` | Yes | Unchanged segment count. |
+| `updatedCount` | `number` | Yes | Updated segment count. |
+| `insertedCount` | `number` | Yes | Inserted segment count. |
+| `deletedCount` | `number` | Yes | Deleted segment count. |
+| `syncedAt` | `string` | Yes | ISO timestamp for this sync attempt. |
+
+#### RagBatchItemResult
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `baseId` | `string` | Yes | Base ID. |
+| `documentId` | `string` | Yes | Document ID. |
+| `status` | `string` | Yes | `success`, `failed`, or `skipped`. |
+| `syncStatus` | `string` | Yes | `pending`, `synced`, or `failed`. |
+| `message` | `string` | No | Optional failure or skip message. |
+
+#### RagBatchResult
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `totalCount` | `number` | Yes | Total processed item count. |
+| `successCount` | `number` | Yes | Success item count. |
+| `failedCount` | `number` | Yes | Failed item count. |
+| `skippedCount` | `number` | Yes | Skipped item count. |
+| `processedAt` | `string` | Yes | ISO timestamp. |
+| `items` | `RagBatchItemResult[]` | Yes | Per-document results. |
+
+#### RagQueryResult
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `baseId` | `string` | Yes | Base ID. |
+| `query` | `string` | Yes | Original query text. |
+| `hits` | `RagDocumentHit[]` | Yes | Aggregated document hits. |
+
+#### RagDocumentHit
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `documentId` | `string` | Yes | Document ID. |
+| `title` | `string` | Yes | Document title. |
+| `score` | `number` | Yes | Aggregated score. |
+| `snippet` | `string` | Yes | Top matching snippet. |
+| `segments` | `RagSegmentHit[]` | Yes | Matching segments. |
+
+#### RagSegmentHit
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `segmentId` | `string` | Yes | Segment ID. |
+| `score` | `number` | Yes | Segment score. |
+| `text` | `string` | Yes | Segment text. |
+| `headingPath` | `string` | Yes | Markdown heading path. |
+
+### Endpoints
+
+#### GET /ragkit/base
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `baseId` | `string` | Yes |
+
+Response: `200 OK` (`RagBase`)
+
+#### GET /ragkit/base/list
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `offset` | `number` | No |
+| `limit` | `number` | No |
+
+Response: `200 OK` (`RagBaseListItem[]`)
+
+Notes:
+- Returns only bases visible to the current token's effective `appGroupId`.
+
+#### POST /ragkit/base/create
+
+Request body:
+
+```json
+{
+  "baseId": "product-docs",
+  "name": "Product Docs",
+  "metadata": {
+    "domain": "docs",
+    "language": "en"
+  }
+}
+```
+
+Response: `200 OK` (`RagBase`)
+
+Notes:
+- Ownership metadata is injected by the gateway. Client-supplied
+  `ownerBundleId` / `ownerAppGroupId` values are overwritten.
+
+#### POST /ragkit/base/update
+
+Request body:
+
+```json
+{
+  "baseId": "product-docs",
+  "name": "Product Docs v2",
+  "metadata": {
+    "language": "en"
+  }
+}
+```
+
+Response: `200 OK` (`RagBase`)
+
+#### POST /ragkit/base/delete
+
+Request body:
+
+```json
+{"baseId":"product-docs"}
+```
+
+Response: `200 OK`
+
+```json
+{"deleted":true,"baseId":"product-docs"}
+```
+
+#### GET /ragkit/document
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `baseId` | `string` | Yes |
+| `documentId` | `string` | Yes |
+
+Response: `200 OK` (`RagDocument`)
+
+#### GET /ragkit/document/list
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `baseId` | `string` | Yes |
+| `offset` | `number` | No |
+| `limit` | `number` | No |
+
+Response: `200 OK` (`RagDocumentListItem[]`)
+
+#### POST /ragkit/document/upsert
+
+Request body:
+
+```json
+{
+  "baseId": "product-docs",
+  "documentId": "intro",
+  "title": "Introduction",
+  "markdown": "# Intro\n\nHello world",
+  "metadata": {
+    "source": "manual"
+  },
+  "sync": true
+}
+```
+
+Response: `200 OK` (`RagDocument`)
+
+Notes:
+- `sync=false` stores the document locally without forcing immediate embeddings sync.
+
+#### POST /ragkit/document/upsertBatch
+
+Request body:
+
+```json
+{
+  "baseId": "product-docs",
+  "sync": false,
+  "documents": [
+    {
+      "documentId": "intro",
+      "title": "Introduction",
+      "markdown": "# Intro\n\nHello world"
+    },
+    {
+      "documentId": "faq",
+      "title": "FAQ",
+      "markdown": "# FAQ\n\nCommon questions"
+    }
+  ]
+}
+```
+
+Response: `200 OK` (`RagBatchResult`)
+
+#### POST /ragkit/document/delete
+
+Request body:
+
+```json
+{"baseId":"product-docs","documentId":"intro"}
+```
+
+Response: `200 OK`
+
+```json
+{"deleted":true,"baseId":"product-docs","documentId":"intro"}
+```
+
+#### POST /ragkit/sync/document
+
+Request body:
+
+```json
+{"baseId":"product-docs","documentId":"intro"}
+```
+
+Response: `200 OK` (`RagDocumentSyncResult`)
+
+#### POST /ragkit/sync/base
+
+Request body:
+
+```json
+{"baseId":"product-docs"}
+```
+
+Response: `200 OK` (`RagBatchResult`)
+
+#### POST /ragkit/sync/retryFailed
+
+Request body:
+
+```json
+{"baseId":"product-docs"}
+```
+
+Response: `200 OK` (`RagBatchResult`)
+
+Notes:
+- If `baseId` is omitted or empty, the gateway retries failed documents across
+  all bases visible to the current token's `appGroupId`.
+- Writes are still restricted to owner `bundleId` on a per-base basis.
+
+#### POST /ragkit/query
+
+Request body:
+
+```json
+{
+  "baseId": "product-docs",
+  "query": "How do I ingest markdown?",
+  "limit": 5,
+  "candidateLimit": 20
+}
+```
+
+Response: `200 OK` (`RagQueryResult`)
+
+Example:
+
+```json
+{
+  "baseId": "product-docs",
+  "query": "How do I ingest markdown?",
+  "hits": [
+    {
+      "documentId": "intro",
+      "title": "Introduction",
+      "score": 0.91,
+      "snippet": "RAG documents are ingested from markdown text.",
+      "segments": [
+        {
+          "segmentId": "seg-1",
+          "score": 0.91,
+          "text": "RAG documents are ingested from markdown text.",
+          "headingPath": "Intro"
+        }
+      ]
+    }
+  ]
+}
+```
 
 ## AppKit
 
@@ -619,6 +1197,18 @@ Response: `200 OK`
 
 ```
 {"token":"sk-...","bundleId":"com.demo.app","appGroupId":"com.demo"}
+```
+
+Example request without explicit `appGroupId`:
+
+```json
+{"bundleId":"com.demo.app"}
+```
+
+Example response:
+
+```json
+{"token":"sk-...","bundleId":"com.demo.app","appGroupId":"com.demo.app"}
 ```
 
 Notes:
@@ -659,10 +1249,13 @@ Response: `200 OK`
   "name": "AgentOS API Gateway",
   "version": "1.0.0",
   "description": "Unified API gateway for all local AI services",
-  "baseUrl": "http://localhost:20261",
+  "baseUrl": "http://localhost:8888",
   "endpoints": {
     "/version": "Gateway version",
+    "/ready": "Gateway readiness",
     "/agentkit/*": "AgentKit API (agent service, requires Token)",
+    "/cronkit/*": "CronKit API (cron task management, requires Token)",
+    "/ragkit/*": "RagKit API (RAG knowledge/query, requires Token)",
     "/appkit/*": "AppKit API (app registration/subscription)",
     "/toolkit/*": "ToolKit API (OpenTool)",
     "/llmkit/text/*": "Text generation",
@@ -680,6 +1273,22 @@ Response: `200 OK`
 
 ```json
 {"version":"1.0.0"}
+```
+
+### GET /ready
+
+Response: `200 OK` or `503 Service Unavailable`
+
+```json
+{
+  "ready": true,
+  "llmConfigured": true,
+  "llmServicesReady": true,
+  "liteAgentReady": true,
+  "openToolDaemonReady": true,
+  "embeddingsReady": true,
+  "reasons": []
+}
 ```
 
 ## ToolKit (Proxy to OpenTool Service)
@@ -722,6 +1331,34 @@ Proxies to text generation service. Supports streaming responses when
 `Accept: text/event-stream` header is present or request body contains
 `"stream": true`.
 
+Example request:
+
+```json
+{
+  "model": "qwen3-8b",
+  "messages": [
+    {"role": "user", "content": "Hello"}
+  ]
+}
+```
+
+Example response:
+
+```json
+{
+  "id": "chatcmpl-1",
+  "object": "chat.completion",
+  "model": "qwen3-8b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "Hello!"},
+      "finish_reason": "stop"
+    }
+  ]
+}
+```
+
 #### ALL /llmkit/vision/*
 
 Proxies to image-text-to-text service.
@@ -730,6 +1367,31 @@ Proxies to image-text-to-text service.
 
 Proxies to text embedding service.
 
+Example request:
+
+```json
+{
+  "model": "bge-large-zh-v1.5-q8_0",
+  "input": ["hello world"]
+}
+```
+
+Example response:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [0.1, 0.2, 0.3]
+    }
+  ],
+  "model": "bge-large-zh-v1.5-q8_0"
+}
+```
+
 #### ALL /llmkit/tts/*
 
 Proxies to text-to-speech service.
@@ -737,6 +1399,28 @@ Proxies to text-to-speech service.
 #### ALL /llmkit/asr/*
 
 Proxies to speech-to-text service.
+
+#### GET /llmkit/models
+
+Lists currently available text-capable models visible through the service
+locator. Returns local running models plus remote models.
+
+Response: `200 OK`
+
+```json
+[
+  {
+    "id": "qwen3-8b",
+    "name": "qwen3-8b",
+    "alias": "qwen3-8b",
+    "description": "text model",
+    "type": "textGeneration",
+    "contextWindowSize": 8192,
+    "isRemote": false,
+    "isCustom": false
+  }
+]
+```
 
 ### Error Responses
 

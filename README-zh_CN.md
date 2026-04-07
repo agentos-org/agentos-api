@@ -4,29 +4,34 @@
 该网关为所有本地 AI 服务提供统一入口：
 - **AgentKit**：智能体管理与对话（基于 LiteAgent SDK）
 - **CronKit**：定时任务管理（基于 agentos_kernel）
+- **RagKit**：RAG 知识库管理与检索（基于 agentos_kernel）
 - **AppKit**：应用注册与订阅
 - **ToolKit**：工具执行（代理 OpenTool）
 - **LLMKit**：LLM 服务（文本生成、图文理解、文本嵌入、TTS、ASR）
+
+详细 HTTP API 文档：
+- [API.md](API.md)
+- [API-zh_CN.md](API-zh_CN.md)
 
 # 运行示例
 
 ## 配置
 
-- `PORT`: 绑定端口；默认 `20261`。
+- `PORT`: 绑定端口；默认 `8888`。
 - `AGENTOS_BASEURL`: 服务对外宣告的 base URL；默认
-  `http://127.0.0.1:20261`。辅助脚本会自动设置。
+  `http://127.0.0.1:8888`。辅助脚本会自动设置。
 
 ## 使用 Dart SDK 运行
 
 ```
 $ ./tool/run_server.sh
-Server listening on port 20261
-AGENTOS_BASEURL=http://127.0.0.1:20261
+Server listening on port 8888
+AGENTOS_BASEURL=http://127.0.0.1:8888
 ```
 
 另开一个终端：
 ```
-$ curl http://127.0.0.1:20261/version
+$ curl http://127.0.0.1:8888/version
 {"version":"1.0.0"}
 ```
 
@@ -41,14 +46,14 @@ AGENTOS_BASEURL=http://127.0.0.1:8080
 
 ```
 $ docker build . -t myserver
-$ docker run -it -p 20261:20261 myserver
-Server listening on port 20261
-AGENTOS_BASEURL=http://127.0.0.1:20261
+$ docker run -it -p 8888:8888 myserver
+Server listening on port 8888
+AGENTOS_BASEURL=http://127.0.0.1:8888
 ```
 
 另开一个终端：
 ```
-$ curl http://0.0.0.0:20261/version
+$ curl http://0.0.0.0:8888/version
 {"version":"1.0.0"}
 ```
 
@@ -151,6 +156,36 @@ CronKit 的任务 `spec` 请求体已对齐 kernel 新 schema：
 当前 CronKit 不提供 cron 执行过程的 SSE 或订阅式流输出。
 
 如果 kernel 没有配置 cron 模块，CronKit 会返回 `503`。
+
+## RagKit API
+
+RagKit 暴露基于 kernel 的 RAG base、文档、同步与检索接口。
+所有 RagKit 路由都需要通过 `POST /appkit/register` 获取的 Bearer token。
+
+RagKit 的权限边界分成两层：
+
+- 写操作只允许 owner `bundleId`
+- 读和检索操作按 `appGroupId` 共享
+
+也就是说，创建某个 RAG base 的 app 可以更新、删除、同步它；同一个
+`appGroupId` 下的其他 app 则可以读取并检索这个 base。
+
+支持的路由：
+
+- `GET /ragkit/base?baseId=<id>`
+- `GET /ragkit/base/list?offset=<n>&limit=<n>`
+- `POST /ragkit/base/create`
+- `POST /ragkit/base/update`
+- `POST /ragkit/base/delete`
+- `GET /ragkit/document?baseId=<id>&documentId=<id>`
+- `GET /ragkit/document/list?baseId=<id>&offset=<n>&limit=<n>`
+- `POST /ragkit/document/upsert`
+- `POST /ragkit/document/upsertBatch`
+- `POST /ragkit/document/delete`
+- `POST /ragkit/sync/document`
+- `POST /ragkit/sync/base`
+- `POST /ragkit/sync/retryFailed`
+- `POST /ragkit/query`
 
 ## ToolKit API
 

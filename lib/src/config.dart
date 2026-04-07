@@ -7,7 +7,7 @@ class ApiConfig {
   ApiConfig._();
 
   /// Default port
-  static const int defaultPort = 20261;
+  static const int defaultPort = 8888;
 
   /// Hostname (externally exposed)
   static const String host = 'localhost';
@@ -31,6 +31,9 @@ class ApiConfig {
 
   /// CronKit API path (cron task management)
   static const String cronkitPath = '/cronkit';
+
+  /// RagKit API path (RAG knowledge management and query)
+  static const String ragkitPath = '/ragkit';
 
   // ============ LLMKit Sub-paths ============
 

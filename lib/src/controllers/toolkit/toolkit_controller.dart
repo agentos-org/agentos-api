@@ -8,7 +8,7 @@ import '../../services/toolkit/opentool_client.dart';
 /// Proxies requests to OpenTool service
 class ToolKitController {
   ToolKitController({OpenToolClient? client})
-      : _client = client ?? OpenToolClient();
+    : _client = client ?? OpenToolClient();
 
   final OpenToolClient _client;
 
@@ -64,13 +64,10 @@ class ToolKitController {
     if (request.method == 'GET' || request.method == 'HEAD') {
       return null;
     }
-    final bytes = await request.read().fold<List<int>>(
-      <int>[],
-      (buffer, data) {
-        buffer.addAll(data);
-        return buffer;
-      },
-    );
+    final bytes = await request.read().fold<List<int>>(<int>[], (buffer, data) {
+      buffer.addAll(data);
+      return buffer;
+    });
     return bytes.isEmpty ? null : bytes;
   }
 }

@@ -9,10 +9,7 @@ class AgentRequestContext {
   final String username;
   final String bundleId;
 
-  const AgentRequestContext({
-    required this.username,
-    required this.bundleId,
-  });
+  const AgentRequestContext({required this.username, required this.bundleId});
 }
 
 class AgentRequestContextService {

@@ -164,7 +164,6 @@ void main() {
     expect(registerPayload['appGroupId'], 'com.demo');
   });
 
-
   test(
     '/llmkit/models returns available text generation models only',
     () async {

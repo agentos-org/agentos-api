@@ -4,17 +4,22 @@ configured to enable running with [Docker](https://www.docker.com/).
 This gateway provides a single entry point for all local AI services:
 - **AgentKit**: Agent management and chat (implemented via LiteAgent SDK)
 - **CronKit**: Cron task management (powered by agentos_kernel)
+- **RagKit**: RAG knowledge base management and query (powered by agentos_kernel)
 - **AppKit**: Application registration and subscription
 - **ToolKit**: Tool execution (proxies to OpenTool)
 - **LLMKit**: LLM services (text generation, vision, embedding, TTS, ASR)
+
+Detailed HTTP API reference:
+- [API.md](API.md)
+- [API-zh_CN.md](API-zh_CN.md)
 
 # Running the sample
 
 ## Configuration
 
-- `PORT`: Port to bind; defaults to `20261` when not provided.
+- `PORT`: Port to bind; defaults to `8888` when not provided.
 - `AGENTOS_BASEURL`: Base URL advertised by the service; defaults to
-  `http://127.0.0.1:20261`. The helper script below sets it for you.
+  `http://127.0.0.1:8888`. The helper script below sets it for you.
 
 ## Running with the Dart SDK
 
@@ -23,13 +28,13 @@ like this:
 
 ```
 $ ./tool/run_server.sh
-Server listening on port 20261
-AGENTOS_BASEURL=http://127.0.0.1:20261
+Server listening on port 8888
+AGENTOS_BASEURL=http://127.0.0.1:8888
 ```
 
 And then from a second terminal:
 ```
-$ curl http://127.0.0.1:20261/version
+$ curl http://127.0.0.1:8888/version
 {"version":"1.0.0"}
 ```
 
@@ -47,14 +52,14 @@ can build and run with the `docker` command:
 
 ```
 $ docker build . -t myserver
-$ docker run -it -p 20261:20261 myserver
-Server listening on port 20261
-AGENTOS_BASEURL=http://127.0.0.1:20261
+$ docker run -it -p 8888:8888 myserver
+Server listening on port 8888
+AGENTOS_BASEURL=http://127.0.0.1:8888
 ```
 
 And then from a second terminal:
 ```
-$ curl http://0.0.0.0:20261/version
+$ curl http://0.0.0.0:8888/version
 {"version":"1.0.0"}
 ```
 
@@ -158,6 +163,36 @@ to indicate how the run was started (for example, `manual` or `scheduler`).
 run. CronKit does not expose SSE or subscribe-based cron execution streaming.
 
 If kernel cron is unavailable, CronKit returns `503`.
+
+## RagKit API
+
+RagKit exposes kernel-backed RAG base, document, sync, and query endpoints.
+All RagKit routes require a Bearer token issued by `POST /appkit/register`.
+
+RagKit authorization is split by app identity:
+
+- Write operations are restricted to the owner `bundleId`
+- Read and query operations are shared within the same `appGroupId`
+
+That means the app that created a RAG base can update/delete/sync it, while
+other apps in the same app group can still list and query that base.
+
+Supported routes:
+
+- `GET /ragkit/base?baseId=<id>`
+- `GET /ragkit/base/list?offset=<n>&limit=<n>`
+- `POST /ragkit/base/create`
+- `POST /ragkit/base/update`
+- `POST /ragkit/base/delete`
+- `GET /ragkit/document?baseId=<id>&documentId=<id>`
+- `GET /ragkit/document/list?baseId=<id>&offset=<n>&limit=<n>`
+- `POST /ragkit/document/upsert`
+- `POST /ragkit/document/upsertBatch`
+- `POST /ragkit/document/delete`
+- `POST /ragkit/sync/document`
+- `POST /ragkit/sync/base`
+- `POST /ragkit/sync/retryFailed`
+- `POST /ragkit/query`
 
 ## ToolKit API
 

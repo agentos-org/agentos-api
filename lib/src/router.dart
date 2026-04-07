@@ -7,6 +7,7 @@ import 'controllers/agentkit/agentkit_controller.dart';
 import 'controllers/appkit/appkit_controller.dart';
 import 'controllers/cronkit/cronkit_controller.dart';
 import 'controllers/llmkit/llmkit_controller.dart';
+import 'controllers/ragkit/ragkit_controller.dart';
 import 'controllers/system_controller.dart';
 import 'controllers/toolkit/toolkit_controller.dart';
 import 'config.dart';
@@ -114,6 +115,12 @@ Router createGatewayRouter({
     liteAgentBaseUrl: serviceLocator.liteagentBaseUrl,
   );
   router.mount('${ApiConfig.cronkitPath}/', cronKitController.router.call);
+
+  final ragKitController = RagKitController(
+    kernelFuture: kernelFuture,
+    appKitService: appKitService,
+  );
+  router.mount('${ApiConfig.ragkitPath}/', ragKitController.router.call);
 
   // ToolKit API (proxy to OpenTool, requires Token)
   final openToolClient = OpenToolClient(serviceLocator: serviceLocator);
