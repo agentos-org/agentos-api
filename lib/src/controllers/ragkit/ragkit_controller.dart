@@ -493,24 +493,43 @@ class RagKitController {
   }
 
   Future<Response> _query(Request request) async {
+    final stopwatch = Stopwatch()..start();
     final scope = _requireAppScope(request);
     if (scope == null) {
+      requestLogger.warning(
+        'RagKit query rejected: unauthorized elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       return unauthorizedResponse();
     }
+    requestLogger.info(
+      'RagKit query received: appGroupId=${scope.appGroupId} bundleId=${scope.bundleId}',
+    );
     final kernel = await _resolveKernel();
     if (kernel == null) {
+      requestLogger.warning(
+        'RagKit query unavailable: appGroupId=${scope.appGroupId} elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       return _notConfigured();
     }
     final payload = await _readJsonBody(request);
     if (payload == null) {
+      requestLogger.warning(
+        'RagKit query rejected: invalidJson appGroupId=${scope.appGroupId} elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       return _badRequest('Invalid JSON payload.');
     }
     final baseId = (payload['baseId'] ?? '').toString().trim();
     final query = (payload['query'] ?? '').toString().trim();
     if (baseId.isEmpty) {
+      requestLogger.warning(
+        'RagKit query rejected: missingBaseId appGroupId=${scope.appGroupId} elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       return _badRequest('baseId is required');
     }
     if (query.isEmpty) {
+      requestLogger.warning(
+        'RagKit query rejected: missingQuery baseId=$baseId appGroupId=${scope.appGroupId} elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       return _badRequest('query is required');
     }
     final limit = _parseIntValue(payload['limit'], defaultValue: 5);
@@ -521,6 +540,9 @@ class RagKitController {
     try {
       final base = await kernel.getRagBase(baseId);
       if (!_isReadableByGroup(base, scope.appGroupId)) {
+        requestLogger.warning(
+          'RagKit query notFound: baseId=$baseId appGroupId=${scope.appGroupId} elapsedMs=${stopwatch.elapsedMilliseconds}',
+        );
         return Response(404, body: 'Unknown baseId: $baseId');
       }
       final result = await kernel.queryRag(
@@ -529,8 +551,14 @@ class RagKitController {
         limit: limit,
         candidateLimit: candidateLimit,
       );
+      requestLogger.info(
+        'RagKit query completed: baseId=$baseId appGroupId=${scope.appGroupId} status=200 hits=${result.hits.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       return _jsonResponse(result.toJson());
     } catch (error) {
+      requestLogger.warning(
+        'RagKit query failed: baseId=$baseId appGroupId=${scope.appGroupId} error=$error elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       return _handleError('query', error);
     }
   }
@@ -690,6 +718,10 @@ class RagKitController {
 
   Response _handleError(String action, Object error) {
     if (error is StateError) {
+      final message = error.message.toString();
+      if (message.contains('RAG embeddings are not configured')) {
+        return Response(503, body: message);
+      }
       return Response(404, body: error.message.toString());
     }
     if (error is ArgumentError) {

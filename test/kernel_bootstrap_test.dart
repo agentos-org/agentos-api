@@ -206,7 +206,7 @@ void main() {
   });
 
   test(
-    'syncEmbeddingsFromServiceLocator prefers text model when embedding model exists',
+    'syncEmbeddingsFromServiceLocator configures embeddings without llmModel',
     () async {
       final kernel = _FakeKernelService();
       final result = KernelBootstrapResult(
@@ -255,7 +255,9 @@ void main() {
 
       expect(ok, isTrue);
       expect(kernel.updatedEmbeddings, isNotNull);
-      expect(kernel.updatedEmbeddings!.llmModel, 'qwen3-8b');
+      expect(kernel.updatedEmbeddings!.baseUrl, 'http://localhost:52030');
+      expect(kernel.updatedEmbeddings!.docsName, 'agentos_default_embeddings');
+      expect(kernel.updatedEmbeddings!.model, 'bge-large-zh-v1.5-q8_0');
     },
   );
 }

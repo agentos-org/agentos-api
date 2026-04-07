@@ -1,9 +1,12 @@
 import 'package:agentos_kernel/agentos_kernel.dart' as kernel;
 import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
+import 'package:logging/logging.dart';
 
 import '../../locator.dart';
 import '../../config.dart';
 import 'kernel_model_support.dart';
+
+final Logger _kernelBootstrapLogger = Logger('agentos_server');
 
 /// Result of kernel bootstrap containing both the kernel service and
 /// the shared LiteAgentSDK instance.
@@ -49,6 +52,9 @@ class KernelBootstrapResult {
         await serviceLocator.getServicePort(ApiConfig.serviceLlmVision);
     final llmModelList = await serviceLocator.getLlmModelList();
     if (llmPort == null && !llmModelList.any((m) => m.isRemote)) {
+      _kernelBootstrapLogger.info(
+        'KernelBootstrap syncLlmModels: skipped because no local LLM port and no remote models are available.',
+      );
       return false;
     }
     final llmModels = buildKernelLlmModels(
@@ -57,9 +63,15 @@ class KernelBootstrapResult {
       llmApiKey: llmApiKey,
     );
     if (llmModels.isEmpty) {
+      _kernelBootstrapLogger.info(
+        'KernelBootstrap syncLlmModels: skipped because service locator returned 0 text-inference models.',
+      );
       return false;
     }
     kernelService.updateLlmModels(llmModels, refreshServices: true);
+    _kernelBootstrapLogger.info(
+      'KernelBootstrap syncLlmModels: configured ${llmModels.length} model(s): ${llmModels.map((model) => '${model.model}[${model.type}]').join(",")}',
+    );
     return true;
   }
 
@@ -93,7 +105,6 @@ class KernelBootstrapResult {
     String embeddingsApiKey = '',
     String embeddingsDocsName = 'agentos_default_embeddings',
     String? embeddingsModel,
-    String? embeddingsLlmModel,
   }) async {
     final kernelService = this.kernelService;
     if (kernelService == null) {
@@ -103,20 +114,47 @@ class KernelBootstrapResult {
       ApiConfig.serviceEmbeddings,
     );
     if (embeddingsPort == null) {
+      _kernelBootstrapLogger.info(
+        'KernelBootstrap syncEmbeddings: skipped because embeddings service is not running.',
+      );
       return false;
     }
     final llmModelList = await serviceLocator.getLlmModelList();
-    final inferenceModels = llmModelList.where(supportsTextInference).toList();
-    final preferredLlmModel =
-        embeddingsLlmModel ??
-        (inferenceModels.isEmpty ? null : inferenceModels.first.id);
+    _kernelBootstrapLogger.info(
+      'KernelBootstrap syncEmbeddings: service locator returned ${llmModelList.length} model(s): ${llmModelList.map((model) => '${model.name}[type=${model.type},params=${model.parameters},tags=${model.tags.join("/")}]').join(",")}',
+    );
+    final availableEmbeddingModels = llmModelList
+        .where(supportsEmbeddingInference)
+        .toList();
+    _kernelBootstrapLogger.info(
+      'KernelBootstrap syncEmbeddings: detected ${availableEmbeddingModels.length} embedding model(s): ${availableEmbeddingModels.map((model) => model.name).join(",")}',
+    );
+    final resolvedEmbeddingsModel =
+        embeddingsModel ??
+        (availableEmbeddingModels.isEmpty
+            ? null
+            : availableEmbeddingModels.first.name);
+    if (resolvedEmbeddingsModel == null || resolvedEmbeddingsModel.isEmpty) {
+      _kernelBootstrapLogger.warning(
+        'KernelBootstrap syncEmbeddings: embeddings service is running on port $embeddingsPort, but no embeddings model is available from service locator.',
+      );
+      return false;
+    }
+    _kernelBootstrapLogger.info(
+      'KernelBootstrap syncEmbeddings: configuring embeddings on port $embeddingsPort with model=$resolvedEmbeddingsModel.',
+    );
+    final llmEmbeddingPort = await serviceLocator.getServicePort(
+      ApiConfig.serviceLlmEmbedding,
+    );
     return kernelService.updateEmbeddingsConfig(
       kernel.EmbeddingsConfig(
         baseUrl: 'http://localhost:$embeddingsPort',
+        embeddingModelBaseUrl: llmEmbeddingPort != null
+            ? 'http://localhost:$llmEmbeddingPort'
+            : null,
         apiKey: embeddingsApiKey,
         docsName: embeddingsDocsName,
-        model: embeddingsModel,
-        llmModel: preferredLlmModel,
+        model: resolvedEmbeddingsModel,
       ),
     );
   }
@@ -130,7 +168,6 @@ class KernelBootstrapResult {
     String embeddingsApiKey = '',
     String embeddingsDocsName = 'agentos_default_embeddings',
     String? embeddingsModel,
-    String? embeddingsLlmModel,
   }) async {
     final liteagentUpdated = await syncLiteagentBaseUrlFromServiceLocator(
       serviceLocator,
@@ -147,7 +184,6 @@ class KernelBootstrapResult {
       embeddingsApiKey: embeddingsApiKey,
       embeddingsDocsName: embeddingsDocsName,
       embeddingsModel: embeddingsModel,
-      embeddingsLlmModel: embeddingsLlmModel,
     );
     return liteagentUpdated ||
         llmUpdated ||
@@ -200,6 +236,17 @@ class KernelBootstrap {
       liteAgentSdk: liteAgentSdk,
     );
     await result.syncServicesFromServiceLocator(serviceLocator);
+    final readiness = result.getReadiness(requireEmbeddings: true);
+    if (readiness != null) {
+      _kernelBootstrapLogger.info(
+        'KernelBootstrap createKernel: llmConfigured=${readiness.llmConfigured} llmServicesReady=${readiness.llmServicesReady} liteAgentReady=${readiness.liteAgentReady} openToolDaemonReady=${readiness.openToolDaemonReady} embeddingsReady=${readiness.embeddingsReady}',
+      );
+      if (readiness.reasons.isNotEmpty) {
+        _kernelBootstrapLogger.info(
+          'KernelBootstrap createKernel reasons: ${readiness.reasons.join(" | ")}',
+        );
+      }
+    }
     return result;
   }
 

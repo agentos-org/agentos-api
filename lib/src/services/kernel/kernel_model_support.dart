@@ -78,3 +78,15 @@ bool supportsTextInference(LlmModelInfo model) {
   }
   return true;
 }
+
+bool supportsEmbeddingInference(LlmModelInfo model) {
+  final normalizedType = model.type.trim().toLowerCase();
+  final normalizedParameters = model.parameters.trim().toLowerCase();
+  if (normalizedType.contains('embedding') ||
+      normalizedParameters.contains('embedding')) {
+    return true;
+  }
+  return model.tags.any(
+    (tag) => tag.trim().toLowerCase().contains('embedding'),
+  );
+}
