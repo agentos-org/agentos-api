@@ -139,13 +139,6 @@ class LLMClient {
       resolvedModel: resolvedModel,
       upstreamModel: modelName,
     );
-    final normalizedRequestBody = _normalizeResponsesToolsForLocalModel(
-      requestBody,
-      serviceType: serviceType,
-      method: method,
-      path: path,
-      resolvedModel: resolvedModel,
-    );
 
     if (kernel != null && modelName != null) {
       metrics = kernel.createLlmMetrics(
@@ -200,8 +193,8 @@ class LLMClient {
           request.headers.set(name, value);
         });
       }
-      if (normalizedRequestBody != null && normalizedRequestBody.isNotEmpty) {
-        request.add(normalizedRequestBody);
+      if (requestBody != null && requestBody.isNotEmpty) {
+        request.add(requestBody);
       }
       final response = await request.close();
       final responseHeaders = _sanitizeResponseHeaders(response.headers);
@@ -239,39 +232,6 @@ class LLMClient {
         buffer.addAll(data);
         return buffer;
       });
-
-      // Compatibility shim:
-      // Some local llama.cpp builds support POST /responses but return 404 for
-      // GET /responses (list endpoint). Codex app-server periodically probes
-      // this endpoint during reconnect/health checks; converting this specific
-      // 404 into an empty list prevents false reconnect loops.
-      final isLocalTextResponsesListProbe =
-          serviceType == LLMServiceType.text &&
-          method.toUpperCase() == 'GET' &&
-          path == '/responses' &&
-          (resolvedModel == null || !resolvedModel.isRemote);
-      if (isLocalTextResponsesListProbe && response.statusCode == 404) {
-        requestLogger.warning(
-          'LLM proxy compatibility fallback: '
-          'service=${serviceType.serviceKey} '
-          'method=$method '
-          'uri=$uri '
-          'status=404 -> synthetic 200 empty list for GET /responses',
-        );
-        return LLMClientResponse(
-          statusCode: 200,
-          headers: const {'content-type': 'application/json'},
-          bodyBytes: utf8.encode(
-            jsonEncode({
-              'object': 'list',
-              'data': <Object>[],
-              'first_id': null,
-              'last_id': null,
-              'has_more': false,
-            }),
-          ),
-        );
-      }
 
       if (response.statusCode >= 400) {
         requestLogger.warning(
@@ -663,100 +623,6 @@ class LLMClient {
       }
 
       decoded['model'] = upstreamModel;
-      return utf8.encode(jsonEncode(decoded));
-    } catch (_) {
-      return body;
-    }
-  }
-
-  List<int>? _normalizeResponsesToolsForLocalModel(
-    List<int>? body, {
-    required LLMServiceType serviceType,
-    required String method,
-    required String path,
-    required LlmModelInfo? resolvedModel,
-  }) {
-    final shouldNormalize =
-        body != null &&
-        body.isNotEmpty &&
-        serviceType == LLMServiceType.text &&
-        method.toUpperCase() == 'POST' &&
-        path == '/responses' &&
-        (resolvedModel == null || !resolvedModel.isRemote);
-    if (!shouldNormalize) {
-      return body;
-    }
-
-    try {
-      final decoded = jsonDecode(utf8.decode(body));
-      if (decoded is! Map<String, dynamic>) {
-        return body;
-      }
-      final tools = decoded['tools'];
-      if (tools is! List) {
-        return body;
-      }
-
-      bool changed = false;
-      final normalizedTools = <Object>[];
-      for (final tool in tools) {
-        if (tool is! Map) {
-          normalizedTools.add(tool as Object);
-          continue;
-        }
-        final map = Map<String, dynamic>.from(tool);
-        final type = (map['type'] ?? '').toString();
-        if (type == 'function') {
-          normalizedTools.add(map);
-          continue;
-        }
-
-        final name = (map['name'] ?? map['tool_name'] ?? type).toString();
-        final description = (map['description'] ?? 'Converted from "$type" tool').toString();
-        final params = map['parameters'];
-        final inputSchema = map['input_schema'];
-        final parameters = params is Map<String, dynamic>
-            ? params
-            : (inputSchema is Map<String, dynamic>
-                  ? inputSchema
-                  : <String, dynamic>{
-                      'type': 'object',
-                      'properties': <String, dynamic>{},
-                      'additionalProperties': true,
-                    });
-
-        normalizedTools.add(<String, dynamic>{
-          'type': 'function',
-          'name': name,
-          'description': description,
-          'parameters': parameters,
-        });
-        changed = true;
-      }
-
-      final toolChoice = decoded['tool_choice'];
-      if (toolChoice is Map) {
-        final choiceMap = Map<String, dynamic>.from(toolChoice);
-        final choiceType = (choiceMap['type'] ?? '').toString();
-        if (choiceType.isNotEmpty && choiceType != 'function') {
-          final choiceName =
-              (choiceMap['name'] ?? choiceMap['tool_name'] ?? choiceType).toString();
-          decoded['tool_choice'] = <String, dynamic>{
-            'type': 'function',
-            'name': choiceName,
-          };
-          changed = true;
-        }
-      }
-
-      if (!changed) {
-        return body;
-      }
-      decoded['tools'] = normalizedTools;
-      requestLogger.warning(
-        'LLM proxy compatibility fallback: normalized responses tools to '
-        'function type for local model on POST /responses',
-      );
       return utf8.encode(jsonEncode(decoded));
     } catch (_) {
       return body;
