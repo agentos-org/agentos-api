@@ -9,6 +9,7 @@ import 'package:unique_id_dart/unique_id_dart.dart';
 import '../../locator.dart';
 import '../../config.dart';
 import '../../middleware.dart';
+import '../kernel/kernel_model_support.dart';
 
 /// LLM client response
 class LLMClientResponse {
@@ -112,27 +113,83 @@ class LLMClient {
 
     var modelIdentifier = _extractModelName(body);
     var baseUrl = _extractBaseUrl(body);
+    var apiKey = _extractApiKey(body);
 
     final kernel = await _kernelFuture;
+    final availableConfig = kernel != null && serviceType == LLMServiceType.text
+        ? kernel.getAvailableLlmConfig()
+        : null;
     LlmMetrics? metrics;
 
     // When no model specified, fall back to kernel's available config.
     if (kernel != null &&
         serviceType == LLMServiceType.text &&
         (modelIdentifier == null || modelIdentifier.isEmpty)) {
-      final availableConfig = kernel.getAvailableLlmConfig();
       if (availableConfig != null) {
         modelIdentifier = availableConfig.model;
         baseUrl ??= availableConfig.baseUrl;
+        apiKey ??= availableConfig.apiKey;
       }
     }
 
+    final configuredBaseUrl = (baseUrl == null || baseUrl.isEmpty)
+        ? availableConfig?.baseUrl
+        : baseUrl;
+    final configuredApiKey = (apiKey == null || apiKey.isEmpty)
+        ? availableConfig?.apiKey
+        : apiKey;
+
     // Resolve model: look up all models (local + remote), match by id first, then name.
-    final resolvedModel = modelIdentifier != null && modelIdentifier.isNotEmpty
+    var resolvedModel = modelIdentifier != null && modelIdentifier.isNotEmpty
         ? await _resolveModel(modelIdentifier)
         : null;
 
-    final modelName = resolvedModel?.name ?? modelIdentifier;
+    if (resolvedModel != null &&
+        serviceType == LLMServiceType.text &&
+        !supportsTextInference(resolvedModel)) {
+      final fallbackModel = await _resolveFallbackTextModel(
+        preferRemote: resolvedModel.isRemote,
+        excludingModelId: resolvedModel.id,
+      );
+      if (fallbackModel != null) {
+        requestLogger.warning(
+          'LLM proxy model type mismatch: '
+          'service=${serviceType.serviceKey} '
+          'requestedModel=${resolvedModel.name} '
+          'requestedType=${resolvedModel.type} '
+          'fallbackModel=${fallbackModel.name} '
+          'fallbackType=${fallbackModel.type}',
+        );
+        resolvedModel = fallbackModel;
+      } else {
+        final errorMsg =
+            'Model "${resolvedModel.name}" (type=${resolvedModel.type}) is not compatible with text endpoint';
+        requestLogger.warning(
+          'LLM proxy model type mismatch without fallback: '
+          'service=${serviceType.serviceKey} '
+          'requestedModel=${resolvedModel.name} '
+          'requestedType=${resolvedModel.type}',
+        );
+        return LLMClientResponse(
+          statusCode: 400,
+          headers: {'content-type': 'application/json'},
+          bodyBytes: utf8.encode(
+            jsonEncode({
+              'error': errorMsg,
+              'hint': 'Use /llmkit/vision/* or choose a textGeneration model.',
+              'service': serviceType.serviceKey,
+            }),
+          ),
+        );
+      }
+    }
+
+    var modelName = resolvedModel?.name ?? modelIdentifier;
+    if ((modelName == null || modelName.isEmpty) &&
+        availableConfig != null &&
+        availableConfig.model.isNotEmpty) {
+      modelName = availableConfig.model;
+    }
     final requestBody = _rewriteRequestBodyModel(
       body,
       resolvedModel: resolvedModel,
@@ -142,7 +199,7 @@ class LLMClient {
     if (kernel != null && modelName != null) {
       metrics = kernel.createLlmMetrics(
         requestId: requestId,
-        baseUrl: resolvedModel?.baseUrl ?? baseUrl ?? 'unknown',
+        baseUrl: configuredBaseUrl ?? resolvedModel?.baseUrl ?? 'unknown',
         model: modelName,
         apiKey: null,
         jobId: null,
@@ -155,11 +212,21 @@ class LLMClient {
     final Uri uri;
     Map<String, String>? remoteAuthHeaders;
 
-    if (resolvedModel != null && resolvedModel.isRemote) {
-      uri = _buildUri(Uri.parse(resolvedModel.baseUrl!), path, queryParameters);
-      final apiKey = resolvedModel.apiKey;
-      if (apiKey != null && apiKey.isNotEmpty) {
-        remoteAuthHeaders = {'authorization': 'Bearer $apiKey'};
+    final shouldUseConfiguredRemote =
+        configuredBaseUrl != null && configuredBaseUrl.isNotEmpty;
+
+    if (shouldUseConfiguredRemote ||
+        (resolvedModel != null && resolvedModel.isRemote)) {
+      final selectedBaseUrl = shouldUseConfiguredRemote
+          ? configuredBaseUrl
+          : resolvedModel!.baseUrl;
+      uri = _buildUri(Uri.parse(selectedBaseUrl!), path, queryParameters);
+      final selectedApiKey =
+          (configuredApiKey != null && configuredApiKey.isNotEmpty)
+          ? configuredApiKey
+          : resolvedModel?.apiKey;
+      if (selectedApiKey != null && selectedApiKey.isNotEmpty) {
+        remoteAuthHeaders = {'authorization': 'Bearer $selectedApiKey'};
       }
     } else {
       final port = await _serviceLocator.getServicePort(
@@ -472,6 +539,28 @@ class LLMClient {
     return null;
   }
 
+  Future<LlmModelInfo?> _resolveFallbackTextModel({
+    required bool preferRemote,
+    required String excludingModelId,
+  }) async {
+    final models = await _serviceLocator.getLlmModelList();
+    final candidates = models
+        .where((model) => model.id != excludingModelId)
+        .where(supportsTextInference)
+        .toList();
+    if (candidates.isEmpty) {
+      return null;
+    }
+
+    // Prefer same deploy mode (remote/local) to minimize behavior changes.
+    for (final model in candidates) {
+      if (model.isRemote == preferRemote) {
+        return model;
+      }
+    }
+    return candidates.first;
+  }
+
   /// Extracts model name from request body
   String? _extractModelName(List<int>? body) {
     if (body == null || body.isEmpty) return null;
@@ -490,7 +579,56 @@ class LLMClient {
     try {
       final bodyString = utf8.decode(body);
       final json = jsonDecode(bodyString) as Map<String, dynamic>;
-      return json['base_url'] as String?;
+      final directSnake = json['base_url'];
+      if (directSnake is String && directSnake.isNotEmpty) {
+        return directSnake;
+      }
+      final directCamel = json['baseUrl'];
+      if (directCamel is String && directCamel.isNotEmpty) {
+        return directCamel;
+      }
+      final nested = json['llmConfig'];
+      if (nested is Map<String, dynamic>) {
+        final nestedSnake = nested['base_url'];
+        if (nestedSnake is String && nestedSnake.isNotEmpty) {
+          return nestedSnake;
+        }
+        final nestedCamel = nested['baseUrl'];
+        if (nestedCamel is String && nestedCamel.isNotEmpty) {
+          return nestedCamel;
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _extractApiKey(List<int>? body) {
+    if (body == null || body.isEmpty) return null;
+    try {
+      final bodyString = utf8.decode(body);
+      final json = jsonDecode(bodyString) as Map<String, dynamic>;
+      final directSnake = json['api_key'];
+      if (directSnake is String && directSnake.isNotEmpty) {
+        return directSnake;
+      }
+      final directCamel = json['apiKey'];
+      if (directCamel is String && directCamel.isNotEmpty) {
+        return directCamel;
+      }
+      final nested = json['llmConfig'];
+      if (nested is Map<String, dynamic>) {
+        final nestedSnake = nested['api_key'];
+        if (nestedSnake is String && nestedSnake.isNotEmpty) {
+          return nestedSnake;
+        }
+        final nestedCamel = nested['apiKey'];
+        if (nestedCamel is String && nestedCamel.isNotEmpty) {
+          return nestedCamel;
+        }
+      }
+      return null;
     } catch (_) {
       return null;
     }
