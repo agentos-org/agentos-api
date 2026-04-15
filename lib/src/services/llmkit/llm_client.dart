@@ -109,7 +109,6 @@ class LLMClient {
   }) async {
     final requestId = uniqueId();
     final stopwatch = Stopwatch()..start();
-    final requestStartTime = DateTime.now();
 
     var modelIdentifier = _extractModelName(body);
     var baseUrl = _extractBaseUrl(body);
@@ -212,12 +211,10 @@ class LLMClient {
       }
 
       if (streamResponse) {
-        // Wrap the stream to monitor tokens
         final monitoredStream = _createMonitoredStream(
           metrics: metrics,
           stream: response,
           startStopwatch: stopwatch,
-          requestStartTime: requestStartTime,
         );
 
         return LLMClientResponse(
@@ -294,7 +291,6 @@ class LLMClient {
     required LlmMetrics? metrics,
     required Stream<List<int>> stream,
     required Stopwatch startStopwatch,
-    required DateTime requestStartTime,
   }) {
     bool firstTokenReceived = false;
     int totalTokenCount = 0;
@@ -311,6 +307,8 @@ class LLMClient {
     return stream.transform(
       StreamTransformer<List<int>, List<int>>.fromHandlers(
         handleData: (data, sink) {
+          final now = DateTime.now();
+
           // Parse SSE events to count tokens
           final parseResult = _parseSSETokens(data, buffer);
           var tokens = parseResult.incrementalTokens;
@@ -324,8 +322,6 @@ class LLMClient {
             totalTokenCount += tokens;
           }
           tokensSinceLastReport += tokens;
-
-          final now = DateTime.now();
 
           // First token notification - triggered when we receive any content
           if (!firstTokenReceived && (tokens > 0 || parseResult.hasContent)) {
@@ -629,19 +625,19 @@ class LLMClient {
     }
   }
 
-  String _decodeResponseBody(List<int> bytes) {
-    if (bytes.isEmpty) {
-      return '';
-    }
-    return utf8.decode(bytes, allowMalformed: true);
-  }
-
   String _truncateForLog(String value) {
     final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (normalized.length <= _errorBodyPreviewLimit) {
       return normalized;
     }
     return '${normalized.substring(0, _errorBodyPreviewLimit)}...';
+  }
+
+  String _decodeResponseBody(List<int> bytes) {
+    if (bytes.isEmpty) {
+      return '';
+    }
+    return utf8.decode(bytes, allowMalformed: true);
   }
 }
 

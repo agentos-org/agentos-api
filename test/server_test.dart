@@ -261,24 +261,26 @@ void main() {
         expect(response.statusCode, 200);
 
         final payload = jsonDecode(response.body) as List<dynamic>;
-        expect(payload, hasLength(2));
+        final byId = {
+          for (final e in payload.cast<Map<String, dynamic>>())
+            e['id'] as String: e,
+        };
 
-        final first = payload.first as Map<String, dynamic>;
-        expect(first['id'], 'qwen3-8b');
-        expect(first['name'], 'qwen3-8b');
-        expect(first['alias'], 'qwen3-8b');
-        expect(first['description'], 'text model');
-        expect(first['type'], 'textGeneration');
-        expect(first['contextWindowSize'], 8192);
-        expect(first['isRemote'], isFalse);
-        expect(first['isCustom'], isFalse);
+        final qwen = byId['qwen3-8b']!;
+        expect(qwen['name'], 'qwen3-8b');
+        expect(qwen['alias'], 'qwen3-8b');
+        expect(qwen['description'], 'text model');
+        expect(qwen['type'], 'textGeneration');
+        expect(qwen['contextWindowSize'], 8192);
+        expect(qwen['isRemote'], isFalse);
+        expect(qwen['isCustom'], isFalse);
 
-        final second = payload[1] as Map<String, dynamic>;
-        expect(second['id'], 'remote-gpt');
-        expect(second['name'], 'gpt-4.1');
-        expect(second['alias'], 'gpt-4.1');
-        expect(second['isRemote'], isTrue);
-        expect(second['isCustom'], isTrue);
+        final remote = byId['remote-gpt']!;
+        expect(remote['name'], 'gpt-4.1');
+        expect(remote['alias'], 'gpt-4.1');
+        expect(remote['isRemote'], isTrue);
+        expect(remote['isCustom'], isTrue);
+        expect(remote['baseUrl'], 'https://example.test/v1');
       } finally {
         await localServer.close(force: true);
       }

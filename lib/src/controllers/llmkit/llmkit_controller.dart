@@ -76,6 +76,10 @@ class LLMKitController {
           'contextWindowSize': model.contextWindowSize,
           'isRemote': model.isRemote,
           'isCustom': model.isCustom,
+          if (model.isRemote &&
+              model.baseUrl != null &&
+              model.baseUrl!.trim().isNotEmpty)
+            'baseUrl': model.baseUrl,
         });
       }
 
