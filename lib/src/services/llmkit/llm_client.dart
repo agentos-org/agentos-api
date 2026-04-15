@@ -215,8 +215,9 @@ class LLMClient {
     final shouldUseConfiguredRemote =
         configuredBaseUrl != null && configuredBaseUrl.isNotEmpty;
 
-    if (shouldUseConfiguredRemote ||
-        (resolvedModel != null && resolvedModel.isRemote)) {
+    final usesRemoteRoute = shouldUseConfiguredRemote ||
+        (resolvedModel != null && resolvedModel.isRemote);
+    if (usesRemoteRoute) {
       final selectedBaseUrl = shouldUseConfiguredRemote
           ? configuredBaseUrl
           : resolvedModel!.baseUrl;
@@ -250,6 +251,22 @@ class LLMClient {
       final baseUri = Uri.parse(ApiConfig.getInternalUrl(port));
       uri = _buildUri(baseUri, path, queryParameters);
     }
+
+    requestLogger.info(
+      'LLM proxy route: '
+      'service=${serviceType.serviceKey} '
+      'requestId=$requestId '
+      'modelIdentifier=${modelIdentifier ?? '-'} '
+      'resolvedModelId=${resolvedModel?.id ?? '-'} '
+      'resolvedModelName=${resolvedModel?.name ?? '-'} '
+      'resolvedModelRemote=${resolvedModel?.isRemote ?? false} '
+      'route=${usesRemoteRoute ? 'remote' : 'local'} '
+      'explicitBaseUrl=${baseUrl != null && baseUrl.isNotEmpty} '
+      'configuredBaseUrl=${configuredBaseUrl != null && configuredBaseUrl.isNotEmpty} '
+      'explicitApiKey=${apiKey != null && apiKey.isNotEmpty} '
+      'configuredApiKey=${configuredApiKey != null && configuredApiKey.isNotEmpty} '
+      'targetUri=$uri',
+    );
 
     try {
       final request = await _httpClient.openUrl(method, uri);
