@@ -280,7 +280,7 @@ void main() {
         expect(remote['alias'], 'gpt-4.1');
         expect(remote['isRemote'], isTrue);
         expect(remote['isCustom'], isTrue);
-        expect(remote['baseUrl'], 'https://example.test/v1');
+        expect(remote.containsKey('baseUrl'), isFalse);
       } finally {
         await localServer.close(force: true);
       }
@@ -438,6 +438,7 @@ void main() {
       await upstream.close(force: true);
     }
   });
+
 }
 
 String _readPubspecVersion() {
