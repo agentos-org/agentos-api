@@ -439,6 +439,148 @@ void main() {
     }
   });
 
+  test('LLM request deduplicates /v1 when upstream baseUrl already includes it', () async {
+    final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+
+    upstream.listen((request) async {
+      expect(request.uri.path, '/v1/chat/completions');
+
+      request.response.statusCode = 200;
+      request.response.headers.set(
+        HttpHeaders.contentTypeHeader,
+        'application/json',
+      );
+      request.response.write(
+        jsonEncode(<String, dynamic>{
+          'id': 'chatcmpl-deduped',
+          'object': 'chat.completion',
+          'choices': <Map<String, dynamic>>[],
+        }),
+      );
+      await request.response.close();
+    });
+
+    final serviceLocator = _FakeServiceLocator(
+      runningModelIds: const {},
+      models: <LlmModelInfo>[
+        LlmModelInfo(
+          id: 'remote-gpt',
+          name: 'gpt-4.1',
+          alias: 'gpt-4.1',
+          description: 'remote custom model',
+          parameters: 'remote',
+          paramsB: 0,
+          quantization: 'none',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: const ['chat'],
+          repoId: 'remote',
+          type: 'text',
+          contextWindowSize: 128000,
+          baseUrl: 'http://${upstream.address.host}:${upstream.port}/v1',
+          isCustom: true,
+        ),
+      ],
+    );
+    final client = LLMClient(
+      serviceLocator: serviceLocator,
+      kernelFuture: Future<KernelService?>.value(null),
+    );
+
+    try {
+      final response = await client.send(
+        serviceType: LLMServiceType.text,
+        method: 'POST',
+        path: '/v1/chat/completions',
+        body: utf8.encode(
+          jsonEncode(<String, dynamic>{
+            'model': 'remote-gpt',
+            'messages': <Map<String, String>>[
+              <String, String>{'role': 'user', 'content': 'hello'},
+            ],
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      expect(utf8.decode(response.bodyBytes!), contains('chatcmpl-deduped'));
+    } finally {
+      await upstream.close(force: true);
+    }
+  });
+
+  test('LLM request keeps non-/v1 upstream prefixes intact', () async {
+    final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+
+    upstream.listen((request) async {
+      expect(request.uri.path, '/openai/v1/chat/completions');
+
+      request.response.statusCode = 200;
+      request.response.headers.set(
+        HttpHeaders.contentTypeHeader,
+        'application/json',
+      );
+      request.response.write(
+        jsonEncode(<String, dynamic>{
+          'id': 'chatcmpl-prefix',
+          'object': 'chat.completion',
+          'choices': <Map<String, dynamic>>[],
+        }),
+      );
+      await request.response.close();
+    });
+
+    final serviceLocator = _FakeServiceLocator(
+      runningModelIds: const {},
+      models: <LlmModelInfo>[
+        LlmModelInfo(
+          id: 'remote-gpt',
+          name: 'gpt-4.1',
+          alias: 'gpt-4.1',
+          description: 'remote custom model',
+          parameters: 'remote',
+          paramsB: 0,
+          quantization: 'none',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: const ['chat'],
+          repoId: 'remote',
+          type: 'text',
+          contextWindowSize: 128000,
+          baseUrl: 'http://${upstream.address.host}:${upstream.port}/openai',
+          isCustom: true,
+        ),
+      ],
+    );
+    final client = LLMClient(
+      serviceLocator: serviceLocator,
+      kernelFuture: Future<KernelService?>.value(null),
+    );
+
+    try {
+      final response = await client.send(
+        serviceType: LLMServiceType.text,
+        method: 'POST',
+        path: '/v1/chat/completions',
+        body: utf8.encode(
+          jsonEncode(<String, dynamic>{
+            'model': 'remote-gpt',
+            'messages': <Map<String, String>>[
+              <String, String>{'role': 'user', 'content': 'hello'},
+            ],
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 200);
+      expect(utf8.decode(response.bodyBytes!), contains('chatcmpl-prefix'));
+    } finally {
+      await upstream.close(force: true);
+    }
+  });
+
 }
 
 String _readPubspecVersion() {
