@@ -109,6 +109,7 @@ class LLMClient {
   }) async {
     final requestId = uniqueId();
     final stopwatch = Stopwatch()..start();
+    final requestStartTime = DateTime.now();
 
     var modelIdentifier = _extractModelName(body);
     var baseUrl = _extractBaseUrl(body);
@@ -208,13 +209,39 @@ class LLMClient {
           'status=${response.statusCode} '
           'stream=true',
         );
+
+        // For error responses on stream requests, read the full body and check
+        // for context size errors (llama server returns JSON, not SSE, on error)
+        final errorBytes = await response.fold<List<int>>(<int>[], (buf, data) {
+          buf.addAll(data);
+          return buf;
+        });
+        final normalized = _normalizeContextSizeError(errorBytes, response.statusCode);
+        if (normalized != null) {
+          stopwatch.stop();
+          metrics?.failed('context_length_exceeded');
+          return LLMClientResponse(
+            statusCode: normalized.statusCode,
+            headers: {'content-type': 'application/json'},
+            bodyBytes: normalized.bodyBytes,
+          );
+        }
+
+        // Not a context size error, return original error as non-stream
+        return LLMClientResponse(
+          statusCode: response.statusCode,
+          headers: responseHeaders,
+          bodyBytes: errorBytes,
+        );
       }
 
       if (streamResponse) {
+        // Wrap the stream to monitor tokens
         final monitoredStream = _createMonitoredStream(
           metrics: metrics,
           stream: response,
           startStopwatch: stopwatch,
+          requestStartTime: requestStartTime,
         );
 
         return LLMClientResponse(
@@ -240,6 +267,17 @@ class LLMClient {
           'status=${response.statusCode} '
           'bodyPreview="${_truncateForLog(_decodeResponseBody(bytes))}"',
         );
+
+        final normalized = _normalizeContextSizeError(bytes, response.statusCode);
+        if (normalized != null) {
+          stopwatch.stop();
+          metrics?.failed('context_length_exceeded');
+          return LLMClientResponse(
+            statusCode: normalized.statusCode,
+            headers: {'content-type': 'application/json'},
+            bodyBytes: normalized.bodyBytes,
+          );
+        }
       }
 
       // Complete tracking
@@ -291,6 +329,7 @@ class LLMClient {
     required LlmMetrics? metrics,
     required Stream<List<int>> stream,
     required Stopwatch startStopwatch,
+    required DateTime requestStartTime,
   }) {
     bool firstTokenReceived = false;
     int totalTokenCount = 0;
@@ -307,8 +346,6 @@ class LLMClient {
     return stream.transform(
       StreamTransformer<List<int>, List<int>>.fromHandlers(
         handleData: (data, sink) {
-          final now = DateTime.now();
-
           // Parse SSE events to count tokens
           final parseResult = _parseSSETokens(data, buffer);
           var tokens = parseResult.incrementalTokens;
@@ -322,6 +359,8 @@ class LLMClient {
             totalTokenCount += tokens;
           }
           tokensSinceLastReport += tokens;
+
+          final now = DateTime.now();
 
           // First token notification - triggered when we receive any content
           if (!firstTokenReceived && (tokens > 0 || parseResult.hasContent)) {
@@ -588,26 +627,11 @@ class LLMClient {
   String _joinPaths(String basePath, String path) {
     final normalizedBase = basePath.isEmpty || basePath == '/' ? '' : basePath;
     final normalizedNext = path.startsWith('/') ? path : '/$path';
-    if (_hasDuplicateV1Prefix(normalizedBase, normalizedNext)) {
-      final dedupedNext = normalizedNext.substring('/v1'.length);
-      if (normalizedBase.endsWith('/')) {
-        return '${normalizedBase.substring(0, normalizedBase.length - 1)}'
-            '$dedupedNext';
-      }
-      return '$normalizedBase$dedupedNext';
-    }
     if (normalizedBase.endsWith('/')) {
       return '${normalizedBase.substring(0, normalizedBase.length - 1)}'
           '$normalizedNext';
     }
     return '$normalizedBase$normalizedNext';
-  }
-
-  bool _hasDuplicateV1Prefix(String basePath, String nextPath) {
-    if (!basePath.endsWith('/v1')) {
-      return false;
-    }
-    return nextPath == '/v1' || nextPath.startsWith('/v1/');
   }
 
   List<int>? _rewriteRequestBodyModel(
@@ -640,12 +664,180 @@ class LLMClient {
     }
   }
 
-  String _truncateForLog(String value) {
-    final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (normalized.length <= _errorBodyPreviewLimit) {
-      return normalized;
+  /// Detects context-size-exceeded errors from any LLM provider and normalizes
+  /// them to a unified OpenAI-compatible `context_length_exceeded` format.
+  ///
+  /// Supported providers:
+  ///   - llama.cpp: type "exceed_context_size_error", fields n_prompt_tokens/n_ctx
+  ///   - OpenAI: code "context_length_exceeded"
+  ///   - Anthropic: type "invalid_request_error" + context message
+  ///   - Gemini: status "INVALID_ARGUMENT" + token count message
+  ///   - LM Studio: plain string error with "keep the first X tokens when context the overflows"
+  ///   - Generic OpenAI-compatible: fallback message pattern matching
+  ///
+  /// Returns null if the error is not a context size error.
+  _NormalizedError? _normalizeContextSizeError(List<int> bytes, int statusCode) {
+    if (bytes.isEmpty) return null;
+    try {
+      final body = jsonDecode(utf8.decode(bytes, allowMalformed: true));
+      if (body is! Map<String, dynamic>) return null;
+
+      final error = body['error'];
+      String? message;
+      int? nPromptTokens;
+      int? nCtx;
+      bool matched = false;
+
+      if (error is Map<String, dynamic>) {
+        final type = error['type'] as String?;
+        final code = error['code'];
+        final codeStr = code is String ? code : (code is int ? '$code' : null);
+        message = error['message'] as String?;
+        final status = error['status'] as String?;
+
+        // llama.cpp structured fields
+        nPromptTokens = error['n_prompt_tokens'] as int?;
+        nCtx = error['n_ctx'] as int?;
+
+        // 1. llama.cpp: type == "exceed_context_size_error"
+        if (type == 'exceed_context_size_error') {
+          matched = true;
+        }
+        // 2. OpenAI: code == "context_length_exceeded"
+        else if (codeStr == 'context_length_exceeded') {
+          matched = true;
+        }
+        // 3. Gemini: status == "INVALID_ARGUMENT" + token count message
+        else if (status == 'INVALID_ARGUMENT' && message != null && _isContextSizeMessage(message)) {
+          matched = true;
+        }
+        // 4. Anthropic / generic: type == "invalid_request_error" + context-related message
+        else if (type == 'invalid_request_error' && message != null && _isContextSizeMessage(message)) {
+          matched = true;
+        }
+        // 5. Fallback: any message that matches context size patterns
+        else if (message != null && _isContextSizeMessage(message)) {
+          matched = true;
+        }
+      } else if (error is String && _isContextSizeMessage(error)) {
+        message = error;
+        matched = true;
+      }
+
+      if (!matched) return null;
+
+      // Extract token counts from the message if not already provided by structured fields
+      if (nPromptTokens == null || nCtx == null) {
+        final extracted = _extractTokenCounts(message, nPromptTokens, nCtx);
+        nPromptTokens ??= extracted.requested;
+        nCtx ??= extracted.limit;
+      }
+
+      // Build unified OpenAI-compatible error response
+      final userMessage = (nPromptTokens != null && nCtx != null)
+          ? "This model's maximum context length is $nCtx tokens. "
+            "However, your messages resulted in $nPromptTokens tokens. "
+            "Please reduce the length of the messages."
+          : message ?? 'The request exceeds the available context size.';
+
+      final normalized = {
+        'error': {
+          'message': userMessage,
+          'type': 'context_length_exceeded',
+          'code': 'context_length_exceeded',
+          if (nPromptTokens != null) 'n_prompt_tokens': nPromptTokens,
+          if (nCtx != null) 'n_ctx': nCtx,
+        },
+      };
+      return _NormalizedError(
+        statusCode: 400,
+        bodyBytes: utf8.encode(jsonEncode(normalized)),
+      );
+    } catch (_) {
+      return null;
     }
-    return '${normalized.substring(0, _errorBodyPreviewLimit)}...';
+  }
+
+  /// Patterns that identify context-size-exceeded errors across providers.
+  static final _contextSizePatterns = [
+    // llama.cpp
+    RegExp(r'exceeds?\s+the\s+available\s+context\s+size', caseSensitive: false),
+    RegExp(r'input\s+is\s+larger\s+than\s+the\s+max\s+context\s+size', caseSensitive: false),
+    RegExp(r'context\s+size\s+has\s+been\s+exceeded', caseSensitive: false),
+    // OpenAI / OpenAI-compatible
+    RegExp(r"maximum\s+context\s+length\s+is\s+\d+\s+tokens", caseSensitive: false),
+    RegExp(r'exceeds?\s+the\s+context\s+window', caseSensitive: false),
+    RegExp(r'exceed\s+context\s+window', caseSensitive: false),
+    RegExp(r'requested\s+tokens.*exceed\s+context\s+window', caseSensitive: false),
+    // Anthropic
+    RegExp(r'prompt\s+is\s+too\s+long', caseSensitive: false),
+    RegExp(r'exceed\s+context\s+limit', caseSensitive: false),
+    // Gemini
+    RegExp(r'input\s+token\s+count\s*\(\d+\)\s*exceeds\s+the\s+maximum\s+number\s+of\s+tokens\s+allowed', caseSensitive: false),
+    // LM Studio
+    RegExp(r'keep\s+the\s+first\s+\d+\s+tokens\s+when\s+context\s+the\s+overflows', caseSensitive: false),
+    RegExp(r'tokens\s+to\s+keep\s+from\s+the\s+initial\s+prompt\s+is\s+greater\s+than\s+the\s+context\s+length', caseSensitive: false),
+    // Generic
+    RegExp(r'token.{0,20}limit.{0,20}exceed', caseSensitive: false),
+  ];
+
+  bool _isContextSizeMessage(String message) {
+    return _contextSizePatterns.any((p) => p.hasMatch(message));
+  }
+
+  /// Extracts (requested_tokens, limit_tokens) from various error message formats.
+  ///
+  /// Supports:
+  ///   - "maximum context length is 8192 tokens, but you requested 9000 tokens"
+  ///   - "request (4390 tokens) exceeds the available context size (4096 tokens)"
+  ///   - "prompt is too long: 201543 tokens > 200000 maximum"
+  ///   - "input token count (1067544) exceeds the maximum number of tokens allowed (1048576)"
+  ///   - "input length and max_tokens exceed context limit: 184915 + 20000 > 200000"
+  ///   - "keep the first 15857 tokens when context the overflows...context length of only 4096 tokens"
+  static final _tokenCountPatterns = [
+    // OpenAI: "maximum context length is X tokens...requested Y tokens"
+    RegExp(r'maximum\s+context\s+length\s+is\s+(\d+)\s+tokens.*?(\d+)\s+tokens', caseSensitive: false),
+    // llama.cpp: "request (X tokens) exceeds...context size (Y tokens)"
+    RegExp(r'request\s*\((\d+)\s*tokens?\).*?context\s+size\s*\((\d+)\s*tokens?\)', caseSensitive: false),
+    // Anthropic: "prompt is too long: X tokens > Y maximum"
+    RegExp(r'prompt\s+is\s+too\s+long:\s*(\d+)\s*tokens?\s*>\s*(\d+)', caseSensitive: false),
+    // Anthropic: "input length and max_tokens exceed context limit: X + Y > Z"
+    RegExp(r'exceed\s+context\s+limit:\s*(\d+)\s*\+\s*\d+\s*>\s*(\d+)', caseSensitive: false),
+    // Gemini: "input token count (X) exceeds...tokens allowed (Y)"
+    RegExp(r'input\s+token\s+count\s*\((\d+)\).*?tokens\s+allowed\s*\((\d+)\)', caseSensitive: false),
+    // LM Studio: "keep the first X tokens when context the overflows...context length of only Y tokens"
+    RegExp(r'keep\s+the\s+first\s+(\d+)\s+tokens.*?context\s+length\s+of\s+(?:only\s+)?(\d+)\s+tokens', caseSensitive: false),
+  ];
+
+  _TokenCountResult _extractTokenCounts(String? message, int? existingRequested, int? existingLimit) {
+    if (existingRequested != null && existingLimit != null) {
+      return _TokenCountResult(requested: existingRequested, limit: existingLimit);
+    }
+    if (message == null || message.isEmpty) {
+      return _TokenCountResult(requested: existingRequested, limit: existingLimit);
+    }
+    for (final pattern in _tokenCountPatterns) {
+      final match = pattern.firstMatch(message);
+      if (match != null && match.groupCount >= 2) {
+        final g1 = int.tryParse(match.group(1) ?? '');
+        final g2 = int.tryParse(match.group(2) ?? '');
+        if (g1 != null && g2 != null) {
+          // For OpenAI pattern, group 1 is limit, group 2 is requested
+          if (pattern == _tokenCountPatterns[0]) {
+            return _TokenCountResult(
+              requested: existingRequested ?? g2,
+              limit: existingLimit ?? g1,
+            );
+          }
+          // For all other patterns, group 1 is requested, group 2 is limit
+          return _TokenCountResult(
+            requested: existingRequested ?? g1,
+            limit: existingLimit ?? g2,
+          );
+        }
+      }
+    }
+    return _TokenCountResult(requested: existingRequested, limit: existingLimit);
   }
 
   String _decodeResponseBody(List<int> bytes) {
@@ -654,6 +846,30 @@ class LLMClient {
     }
     return utf8.decode(bytes, allowMalformed: true);
   }
+
+  String _truncateForLog(String value) {
+    final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length <= _errorBodyPreviewLimit) {
+      return normalized;
+    }
+    return '${normalized.substring(0, _errorBodyPreviewLimit)}...';
+  }
+}
+
+/// Normalized error response
+class _NormalizedError {
+  final int statusCode;
+  final List<int> bodyBytes;
+
+  const _NormalizedError({required this.statusCode, required this.bodyBytes});
+}
+
+/// Result of extracting token counts from error messages
+class _TokenCountResult {
+  final int? requested;
+  final int? limit;
+
+  const _TokenCountResult({this.requested, this.limit});
 }
 
 /// Result of parsing SSE data for tokens
