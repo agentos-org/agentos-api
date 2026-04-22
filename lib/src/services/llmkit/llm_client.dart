@@ -441,9 +441,9 @@ class LLMClient {
 
             try {
               final json = jsonDecode(jsonStr) as Map<String, dynamic>;
+              final usage = json['usage'] as Map<String, dynamic>?;
 
               // Check for usage field (most accurate token count)
-              final usage = json['usage'] as Map<String, dynamic>?;
               if (usage != null) {
                 final completionTokens = usage['completion_tokens'];
                 if (completionTokens is int && completionTokens > 0) {
@@ -627,11 +627,26 @@ class LLMClient {
   String _joinPaths(String basePath, String path) {
     final normalizedBase = basePath.isEmpty || basePath == '/' ? '' : basePath;
     final normalizedNext = path.startsWith('/') ? path : '/$path';
+    if (_hasDuplicateV1Prefix(normalizedBase, normalizedNext)) {
+      final dedupedNext = normalizedNext.substring('/v1'.length);
+      if (normalizedBase.endsWith('/')) {
+        return '${normalizedBase.substring(0, normalizedBase.length - 1)}'
+            '$dedupedNext';
+      }
+      return '$normalizedBase$dedupedNext';
+    }
     if (normalizedBase.endsWith('/')) {
       return '${normalizedBase.substring(0, normalizedBase.length - 1)}'
           '$normalizedNext';
     }
     return '$normalizedBase$normalizedNext';
+  }
+
+  bool _hasDuplicateV1Prefix(String basePath, String nextPath) {
+    if (!basePath.endsWith('/v1')) {
+      return false;
+    }
+    return nextPath == '/v1' || nextPath.startsWith('/v1/');
   }
 
   List<int>? _rewriteRequestBodyModel(
