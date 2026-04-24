@@ -146,6 +146,84 @@ void main() {
     expect(response.statusCode, isNot(401));
   });
 
+  test(
+    'LLMKit bare text route defaults to chat completions for versioned baseUrl',
+    () async {
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      late HttpServer gateway;
+
+      upstream.listen((request) async {
+        expect(request.uri.path, '/v7/chat/completions');
+
+        request.response.statusCode = 200;
+        request.response.headers.set(
+          HttpHeaders.contentTypeHeader,
+          'application/json',
+        );
+        request.response.write(
+          jsonEncode(<String, dynamic>{
+            'id': 'chatcmpl-route-default',
+            'object': 'chat.completion',
+            'choices': <Map<String, dynamic>>[],
+          }),
+        );
+        await request.response.close();
+      });
+
+      final serviceLocator = _FakeServiceLocator(
+        runningModelIds: const {},
+        models: <LlmModelInfo>[
+          LlmModelInfo(
+            id: 'remote-gpt',
+            name: 'gpt-4.1',
+            alias: 'gpt-4.1',
+            description: 'remote custom model',
+            parameters: 'remote',
+            paramsB: 0,
+            quantization: 'none',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: const ['chat'],
+            repoId: 'remote',
+            type: 'text',
+            contextWindowSize: 128000,
+            baseUrl: 'http://${upstream.address.host}:${upstream.port}/v7',
+            isCustom: true,
+          ),
+        ],
+      );
+      final handler = createGatewayHandler(
+        serviceLocator: serviceLocator,
+        kernelFuture: Future<KernelService?>.value(null),
+        liteAgentSdk: LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1'),
+        enableLogging: false,
+      );
+      gateway = await shelf_io.serve(handler, InternetAddress.loopbackIPv4, 0);
+
+      try {
+        final response = await post(
+          Uri.parse(
+            'http://${gateway.address.host}:${gateway.port}/llmkit/text',
+          ),
+          headers: {'content-type': 'application/json'},
+          body: jsonEncode(<String, dynamic>{
+            'model': 'remote-gpt',
+            'messages': <Map<String, String>>[
+              <String, String>{'role': 'user', 'content': 'hello'},
+            ],
+          }),
+        );
+
+        expect(response.statusCode, 200);
+        expect(response.body, contains('chatcmpl-route-default'));
+      } finally {
+        await gateway.close(force: true);
+        await upstream.close(force: true);
+      }
+    },
+  );
+
   test('AppKit register bundle', () async {
     final registerRes = await post(
       Uri.parse('$host/appkit/register'),
@@ -507,6 +585,238 @@ void main() {
 
         expect(response.statusCode, 200);
         expect(utf8.decode(response.bodyBytes!), contains('chatcmpl-deduped'));
+      } finally {
+        await upstream.close(force: true);
+      }
+    },
+  );
+
+  test(
+    'LLM request reuses any upstream version prefix for default text endpoint',
+    () async {
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+
+      upstream.listen((request) async {
+        expect(request.uri.path, '/v42/chat/completions');
+
+        request.response.statusCode = 200;
+        request.response.headers.set(
+          HttpHeaders.contentTypeHeader,
+          'application/json',
+        );
+        request.response.write(
+          jsonEncode(<String, dynamic>{
+            'id': 'chatcmpl-v42-default',
+            'object': 'chat.completion',
+            'choices': <Map<String, dynamic>>[],
+          }),
+        );
+        await request.response.close();
+      });
+
+      final serviceLocator = _FakeServiceLocator(
+        runningModelIds: const {},
+        models: <LlmModelInfo>[
+          LlmModelInfo(
+            id: 'remote-gpt',
+            name: 'gpt-4.1',
+            alias: 'gpt-4.1',
+            description: 'remote custom model',
+            parameters: 'remote',
+            paramsB: 0,
+            quantization: 'none',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: const ['chat'],
+            repoId: 'remote',
+            type: 'text',
+            contextWindowSize: 128000,
+            baseUrl: 'http://${upstream.address.host}:${upstream.port}/v42',
+            isCustom: true,
+          ),
+        ],
+      );
+      final client = LLMClient(
+        serviceLocator: serviceLocator,
+        kernelFuture: Future<KernelService?>.value(null),
+      );
+
+      try {
+        final response = await client.send(
+          serviceType: LLMServiceType.text,
+          method: 'POST',
+          path: '/',
+          body: utf8.encode(
+            jsonEncode(<String, dynamic>{
+              'model': 'remote-gpt',
+              'messages': <Map<String, String>>[
+                <String, String>{'role': 'user', 'content': 'hello'},
+              ],
+            }),
+          ),
+        );
+
+        expect(response.statusCode, 200);
+        expect(
+          utf8.decode(response.bodyBytes!),
+          contains('chatcmpl-v42-default'),
+        );
+      } finally {
+        await upstream.close(force: true);
+      }
+    },
+  );
+
+  test(
+    'LLM request replaces incoming version prefix with upstream version prefix',
+    () async {
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+
+      upstream.listen((request) async {
+        expect(request.uri.path, '/v42/chat/completions');
+
+        request.response.statusCode = 200;
+        request.response.headers.set(
+          HttpHeaders.contentTypeHeader,
+          'application/json',
+        );
+        request.response.write(
+          jsonEncode(<String, dynamic>{
+            'id': 'chatcmpl-v42-rewrite',
+            'object': 'chat.completion',
+            'choices': <Map<String, dynamic>>[],
+          }),
+        );
+        await request.response.close();
+      });
+
+      final serviceLocator = _FakeServiceLocator(
+        runningModelIds: const {},
+        models: <LlmModelInfo>[
+          LlmModelInfo(
+            id: 'remote-gpt',
+            name: 'gpt-4.1',
+            alias: 'gpt-4.1',
+            description: 'remote custom model',
+            parameters: 'remote',
+            paramsB: 0,
+            quantization: 'none',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: const ['chat'],
+            repoId: 'remote',
+            type: 'text',
+            contextWindowSize: 128000,
+            baseUrl: 'http://${upstream.address.host}:${upstream.port}/v42',
+            isCustom: true,
+          ),
+        ],
+      );
+      final client = LLMClient(
+        serviceLocator: serviceLocator,
+        kernelFuture: Future<KernelService?>.value(null),
+      );
+
+      try {
+        final response = await client.send(
+          serviceType: LLMServiceType.text,
+          method: 'POST',
+          path: '/v1/chat/completions',
+          body: utf8.encode(
+            jsonEncode(<String, dynamic>{
+              'model': 'remote-gpt',
+              'messages': <Map<String, String>>[
+                <String, String>{'role': 'user', 'content': 'hello'},
+              ],
+            }),
+          ),
+        );
+
+        expect(response.statusCode, 200);
+        expect(
+          utf8.decode(response.bodyBytes!),
+          contains('chatcmpl-v42-rewrite'),
+        );
+      } finally {
+        await upstream.close(force: true);
+      }
+    },
+  );
+
+  test(
+    'LLM request keeps complete upstream endpoint without auto-filling path',
+    () async {
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+
+      upstream.listen((request) async {
+        expect(request.uri.path, '/v42/chat/completions');
+
+        request.response.statusCode = 200;
+        request.response.headers.set(
+          HttpHeaders.contentTypeHeader,
+          'application/json',
+        );
+        request.response.write(
+          jsonEncode(<String, dynamic>{
+            'id': 'chatcmpl-complete-endpoint',
+            'object': 'chat.completion',
+            'choices': <Map<String, dynamic>>[],
+          }),
+        );
+        await request.response.close();
+      });
+
+      final serviceLocator = _FakeServiceLocator(
+        runningModelIds: const {},
+        models: <LlmModelInfo>[
+          LlmModelInfo(
+            id: 'remote-gpt',
+            name: 'gpt-4.1',
+            alias: 'gpt-4.1',
+            description: 'remote custom model',
+            parameters: 'remote',
+            paramsB: 0,
+            quantization: 'none',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: const ['chat'],
+            repoId: 'remote',
+            type: 'text',
+            contextWindowSize: 128000,
+            baseUrl:
+                'http://${upstream.address.host}:${upstream.port}/v42/chat/completions',
+            isCustom: true,
+          ),
+        ],
+      );
+      final client = LLMClient(
+        serviceLocator: serviceLocator,
+        kernelFuture: Future<KernelService?>.value(null),
+      );
+
+      try {
+        final response = await client.send(
+          serviceType: LLMServiceType.text,
+          method: 'POST',
+          path: '/',
+          body: utf8.encode(
+            jsonEncode(<String, dynamic>{
+              'model': 'remote-gpt',
+              'messages': <Map<String, String>>[
+                <String, String>{'role': 'user', 'content': 'hello'},
+              ],
+            }),
+          ),
+        );
+
+        expect(response.statusCode, 200);
+        expect(
+          utf8.decode(response.bodyBytes!),
+          contains('chatcmpl-complete-endpoint'),
+        );
       } finally {
         await upstream.close(force: true);
       }

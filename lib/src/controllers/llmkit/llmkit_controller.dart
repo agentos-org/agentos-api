@@ -30,24 +30,36 @@ class LLMKitController {
     router.get('/models', _listModels);
 
     // Text generation
-    router.all('/text/<path|.*>', _createForward(LLMServiceType.text));
+    _registerForwardRoutes(router, 'text', LLMServiceType.text);
 
     // Image-text understanding
-    router.all('/vision/<path|.*>', _createForward(LLMServiceType.vision));
+    _registerForwardRoutes(router, 'vision', LLMServiceType.vision);
 
     // Text embedding
-    router.all(
-      '/embedding/<path|.*>',
-      _createForward(LLMServiceType.embedding),
-    );
+    _registerForwardRoutes(router, 'embedding', LLMServiceType.embedding);
 
     // Text-to-speech
-    router.all('/tts/<path|.*>', _createForward(LLMServiceType.tts));
+    _registerForwardRoutes(router, 'tts', LLMServiceType.tts);
 
     // Speech-to-text
-    router.all('/asr/<path|.*>', _createForward(LLMServiceType.asr));
+    _registerForwardRoutes(router, 'asr', LLMServiceType.asr);
 
     return router;
+  }
+
+  void _registerForwardRoutes(
+    Router router,
+    String prefix,
+    LLMServiceType serviceType,
+  ) {
+    router.all('/$prefix', _createDefaultForward(serviceType));
+    router.all('/$prefix/', _createDefaultForward(serviceType));
+    router.all('/$prefix/<path|.*>', _createForward(serviceType));
+  }
+
+  Handler _createDefaultForward(LLMServiceType serviceType) {
+    return (Request request) =>
+        _proxy(request, serviceType: serviceType, path: '/');
   }
 
   /// Creates forward handler

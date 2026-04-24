@@ -157,7 +157,12 @@ class LLMClient {
     Map<String, String>? remoteAuthHeaders;
 
     if (resolvedModel != null && resolvedModel.isRemote) {
-      uri = _buildUri(Uri.parse(resolvedModel.baseUrl!), path, queryParameters);
+      uri = _buildUri(
+        Uri.parse(resolvedModel.baseUrl!),
+        path,
+        queryParameters,
+        serviceType: serviceType,
+      );
       final apiKey = resolvedModel.apiKey;
       if (apiKey != null && apiKey.isNotEmpty) {
         remoteAuthHeaders = {'authorization': 'Bearer $apiKey'};
@@ -182,7 +187,7 @@ class LLMClient {
         );
       }
       final baseUri = Uri.parse(ApiConfig.getInternalUrl(port));
-      uri = _buildUri(baseUri, path, queryParameters);
+      uri = _buildUri(baseUri, path, queryParameters, serviceType: serviceType);
     }
 
     try {
@@ -216,7 +221,10 @@ class LLMClient {
           buf.addAll(data);
           return buf;
         });
-        final normalized = _normalizeContextSizeError(errorBytes, response.statusCode);
+        final normalized = _normalizeContextSizeError(
+          errorBytes,
+          response.statusCode,
+        );
         if (normalized != null) {
           stopwatch.stop();
           metrics?.failed('context_length_exceeded');
@@ -268,7 +276,10 @@ class LLMClient {
           'bodyPreview="${_truncateForLog(_decodeResponseBody(bytes))}"',
         );
 
-        final normalized = _normalizeContextSizeError(bytes, response.statusCode);
+        final normalized = _normalizeContextSizeError(
+          bytes,
+          response.statusCode,
+        );
         if (normalized != null) {
           stopwatch.stop();
           metrics?.failed('context_length_exceeded');
@@ -566,9 +577,10 @@ class LLMClient {
   Uri _buildUri(
     Uri baseUri,
     String path,
-    Map<String, String>? queryParameters,
-  ) {
-    final joinedPath = _joinPaths(baseUri.path, path);
+    Map<String, String>? queryParameters, {
+    required LLMServiceType serviceType,
+  }) {
+    final joinedPath = _resolveUpstreamPath(baseUri.path, path, serviceType);
     return baseUri.replace(
       path: joinedPath,
       queryParameters: (queryParameters == null || queryParameters.isEmpty)
@@ -624,29 +636,133 @@ class LLMClient {
     return false;
   }
 
-  String _joinPaths(String basePath, String path) {
-    final normalizedBase = basePath.isEmpty || basePath == '/' ? '' : basePath;
-    final normalizedNext = path.startsWith('/') ? path : '/$path';
-    if (_hasDuplicateV1Prefix(normalizedBase, normalizedNext)) {
-      final dedupedNext = normalizedNext.substring('/v1'.length);
-      if (normalizedBase.endsWith('/')) {
-        return '${normalizedBase.substring(0, normalizedBase.length - 1)}'
-            '$dedupedNext';
+  String _resolveUpstreamPath(
+    String basePath,
+    String requestPath,
+    LLMServiceType serviceType,
+  ) {
+    final normalizedBase = _normalizeBasePath(basePath);
+    final normalizedRequest = _normalizeRequestPath(requestPath);
+    final defaultEndpoint = _defaultEndpointFor(serviceType);
+
+    if (defaultEndpoint != null &&
+        _isCompleteEndpointPath(normalizedBase, defaultEndpoint)) {
+      return normalizedBase;
+    }
+
+    if (_extractTrailingVersionSegment(normalizedBase) != null) {
+      final requestSuffix = _stripLeadingVersionSegment(normalizedRequest);
+      if (_isEmptyRequestPath(normalizedRequest) ||
+          requestSuffix != normalizedRequest) {
+        final normalizedSuffix = _normalizeEndpointSuffix(
+          requestSuffix,
+          defaultEndpoint,
+        );
+        if (normalizedSuffix != null) {
+          return '$normalizedBase$normalizedSuffix';
+        }
       }
-      return '$normalizedBase$dedupedNext';
+    } else if (normalizedBase.isEmpty) {
+      final normalizedSuffix = _normalizeEndpointSuffix(
+        normalizedRequest,
+        defaultEndpoint,
+      );
+      final requestVersion = _extractLeadingVersionSegment(normalizedRequest);
+      if (normalizedSuffix != null) {
+        final versionPrefix = requestVersion ?? '/v1';
+        return '$versionPrefix$normalizedSuffix';
+      }
     }
-    if (normalizedBase.endsWith('/')) {
-      return '${normalizedBase.substring(0, normalizedBase.length - 1)}'
-          '$normalizedNext';
-    }
-    return '$normalizedBase$normalizedNext';
+
+    return _joinPaths(normalizedBase, normalizedRequest);
   }
 
-  bool _hasDuplicateV1Prefix(String basePath, String nextPath) {
-    if (!basePath.endsWith('/v1')) {
-      return false;
+  String _joinPaths(String basePath, String path) {
+    if (basePath.endsWith('/')) {
+      return '${basePath.substring(0, basePath.length - 1)}$path';
     }
-    return nextPath == '/v1' || nextPath.startsWith('/v1/');
+    return '$basePath$path';
+  }
+
+  String _normalizeBasePath(String path) {
+    if (path.isEmpty || path == '/') {
+      return '';
+    }
+    return path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+  }
+
+  String _normalizeRequestPath(String path) {
+    if (path.isEmpty || path == '/') {
+      return '/';
+    }
+    return path.startsWith('/') ? path : '/$path';
+  }
+
+  bool _isEmptyRequestPath(String path) => path == '/';
+
+  String? _defaultEndpointFor(LLMServiceType serviceType) {
+    switch (serviceType) {
+      case LLMServiceType.text:
+      case LLMServiceType.vision:
+        return '/chat/completions';
+      case LLMServiceType.embedding:
+        return '/embeddings';
+      case LLMServiceType.tts:
+        return '/audio/speech';
+      case LLMServiceType.asr:
+        return '/audio/transcriptions';
+    }
+  }
+
+  bool _isCompleteEndpointPath(String basePath, String endpoint) {
+    return basePath == endpoint || basePath.endsWith(endpoint);
+  }
+
+  String? _extractTrailingVersionSegment(String path) {
+    if (path.isEmpty) {
+      return null;
+    }
+    final segments = Uri(path: path).pathSegments;
+    if (segments.isEmpty) {
+      return null;
+    }
+    final lastSegment = segments.last;
+    return _isVersionSegment(lastSegment) ? '/$lastSegment' : null;
+  }
+
+  String? _extractLeadingVersionSegment(String path) {
+    final segments = Uri(path: path).pathSegments;
+    if (segments.isEmpty) {
+      return null;
+    }
+    final firstSegment = segments.first;
+    return _isVersionSegment(firstSegment) ? '/$firstSegment' : null;
+  }
+
+  String _stripLeadingVersionSegment(String path) {
+    final segments = Uri(path: path).pathSegments;
+    if (segments.isEmpty || !_isVersionSegment(segments.first)) {
+      return path;
+    }
+    if (segments.length == 1) {
+      return '/';
+    }
+    return '/${segments.skip(1).join('/')}';
+  }
+
+  bool _isVersionSegment(String segment) {
+    return RegExp(r'^v\d+$').hasMatch(segment);
+  }
+
+  String? _normalizeEndpointSuffix(String path, String? defaultEndpoint) {
+    if (_isEmptyRequestPath(path)) {
+      return defaultEndpoint;
+    }
+    final pathWithoutVersion = _stripLeadingVersionSegment(path);
+    if (_isEmptyRequestPath(pathWithoutVersion)) {
+      return defaultEndpoint;
+    }
+    return pathWithoutVersion;
   }
 
   List<int>? _rewriteRequestBodyModel(
@@ -691,7 +807,10 @@ class LLMClient {
   ///   - Generic OpenAI-compatible: fallback message pattern matching
   ///
   /// Returns null if the error is not a context size error.
-  _NormalizedError? _normalizeContextSizeError(List<int> bytes, int statusCode) {
+  _NormalizedError? _normalizeContextSizeError(
+    List<int> bytes,
+    int statusCode,
+  ) {
     if (bytes.isEmpty) return null;
     try {
       final body = jsonDecode(utf8.decode(bytes, allowMalformed: true));
@@ -723,11 +842,15 @@ class LLMClient {
           matched = true;
         }
         // 3. Gemini: status == "INVALID_ARGUMENT" + token count message
-        else if (status == 'INVALID_ARGUMENT' && message != null && _isContextSizeMessage(message)) {
+        else if (status == 'INVALID_ARGUMENT' &&
+            message != null &&
+            _isContextSizeMessage(message)) {
           matched = true;
         }
         // 4. Anthropic / generic: type == "invalid_request_error" + context-related message
-        else if (type == 'invalid_request_error' && message != null && _isContextSizeMessage(message)) {
+        else if (type == 'invalid_request_error' &&
+            message != null &&
+            _isContextSizeMessage(message)) {
           matched = true;
         }
         // 5. Fallback: any message that matches context size patterns
@@ -751,8 +874,8 @@ class LLMClient {
       // Build unified OpenAI-compatible error response
       final userMessage = (nPromptTokens != null && nCtx != null)
           ? "This model's maximum context length is $nCtx tokens. "
-            "However, your messages resulted in $nPromptTokens tokens. "
-            "Please reduce the length of the messages."
+                "However, your messages resulted in $nPromptTokens tokens. "
+                "Please reduce the length of the messages."
           : message ?? 'The request exceeds the available context size.';
 
       final normalized = {
@@ -776,22 +899,43 @@ class LLMClient {
   /// Patterns that identify context-size-exceeded errors across providers.
   static final _contextSizePatterns = [
     // llama.cpp
-    RegExp(r'exceeds?\s+the\s+available\s+context\s+size', caseSensitive: false),
-    RegExp(r'input\s+is\s+larger\s+than\s+the\s+max\s+context\s+size', caseSensitive: false),
+    RegExp(
+      r'exceeds?\s+the\s+available\s+context\s+size',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'input\s+is\s+larger\s+than\s+the\s+max\s+context\s+size',
+      caseSensitive: false,
+    ),
     RegExp(r'context\s+size\s+has\s+been\s+exceeded', caseSensitive: false),
     // OpenAI / OpenAI-compatible
-    RegExp(r"maximum\s+context\s+length\s+is\s+\d+\s+tokens", caseSensitive: false),
+    RegExp(
+      r"maximum\s+context\s+length\s+is\s+\d+\s+tokens",
+      caseSensitive: false,
+    ),
     RegExp(r'exceeds?\s+the\s+context\s+window', caseSensitive: false),
     RegExp(r'exceed\s+context\s+window', caseSensitive: false),
-    RegExp(r'requested\s+tokens.*exceed\s+context\s+window', caseSensitive: false),
+    RegExp(
+      r'requested\s+tokens.*exceed\s+context\s+window',
+      caseSensitive: false,
+    ),
     // Anthropic
     RegExp(r'prompt\s+is\s+too\s+long', caseSensitive: false),
     RegExp(r'exceed\s+context\s+limit', caseSensitive: false),
     // Gemini
-    RegExp(r'input\s+token\s+count\s*\(\d+\)\s*exceeds\s+the\s+maximum\s+number\s+of\s+tokens\s+allowed', caseSensitive: false),
+    RegExp(
+      r'input\s+token\s+count\s*\(\d+\)\s*exceeds\s+the\s+maximum\s+number\s+of\s+tokens\s+allowed',
+      caseSensitive: false,
+    ),
     // LM Studio
-    RegExp(r'keep\s+the\s+first\s+\d+\s+tokens\s+when\s+context\s+the\s+overflows', caseSensitive: false),
-    RegExp(r'tokens\s+to\s+keep\s+from\s+the\s+initial\s+prompt\s+is\s+greater\s+than\s+the\s+context\s+length', caseSensitive: false),
+    RegExp(
+      r'keep\s+the\s+first\s+\d+\s+tokens\s+when\s+context\s+the\s+overflows',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'tokens\s+to\s+keep\s+from\s+the\s+initial\s+prompt\s+is\s+greater\s+than\s+the\s+context\s+length',
+      caseSensitive: false,
+    ),
     // Generic
     RegExp(r'token.{0,20}limit.{0,20}exceed', caseSensitive: false),
   ];
@@ -811,25 +955,53 @@ class LLMClient {
   ///   - "keep the first 15857 tokens when context the overflows...context length of only 4096 tokens"
   static final _tokenCountPatterns = [
     // OpenAI: "maximum context length is X tokens...requested Y tokens"
-    RegExp(r'maximum\s+context\s+length\s+is\s+(\d+)\s+tokens.*?(\d+)\s+tokens', caseSensitive: false),
+    RegExp(
+      r'maximum\s+context\s+length\s+is\s+(\d+)\s+tokens.*?(\d+)\s+tokens',
+      caseSensitive: false,
+    ),
     // llama.cpp: "request (X tokens) exceeds...context size (Y tokens)"
-    RegExp(r'request\s*\((\d+)\s*tokens?\).*?context\s+size\s*\((\d+)\s*tokens?\)', caseSensitive: false),
+    RegExp(
+      r'request\s*\((\d+)\s*tokens?\).*?context\s+size\s*\((\d+)\s*tokens?\)',
+      caseSensitive: false,
+    ),
     // Anthropic: "prompt is too long: X tokens > Y maximum"
-    RegExp(r'prompt\s+is\s+too\s+long:\s*(\d+)\s*tokens?\s*>\s*(\d+)', caseSensitive: false),
+    RegExp(
+      r'prompt\s+is\s+too\s+long:\s*(\d+)\s*tokens?\s*>\s*(\d+)',
+      caseSensitive: false,
+    ),
     // Anthropic: "input length and max_tokens exceed context limit: X + Y > Z"
-    RegExp(r'exceed\s+context\s+limit:\s*(\d+)\s*\+\s*\d+\s*>\s*(\d+)', caseSensitive: false),
+    RegExp(
+      r'exceed\s+context\s+limit:\s*(\d+)\s*\+\s*\d+\s*>\s*(\d+)',
+      caseSensitive: false,
+    ),
     // Gemini: "input token count (X) exceeds...tokens allowed (Y)"
-    RegExp(r'input\s+token\s+count\s*\((\d+)\).*?tokens\s+allowed\s*\((\d+)\)', caseSensitive: false),
+    RegExp(
+      r'input\s+token\s+count\s*\((\d+)\).*?tokens\s+allowed\s*\((\d+)\)',
+      caseSensitive: false,
+    ),
     // LM Studio: "keep the first X tokens when context the overflows...context length of only Y tokens"
-    RegExp(r'keep\s+the\s+first\s+(\d+)\s+tokens.*?context\s+length\s+of\s+(?:only\s+)?(\d+)\s+tokens', caseSensitive: false),
+    RegExp(
+      r'keep\s+the\s+first\s+(\d+)\s+tokens.*?context\s+length\s+of\s+(?:only\s+)?(\d+)\s+tokens',
+      caseSensitive: false,
+    ),
   ];
 
-  _TokenCountResult _extractTokenCounts(String? message, int? existingRequested, int? existingLimit) {
+  _TokenCountResult _extractTokenCounts(
+    String? message,
+    int? existingRequested,
+    int? existingLimit,
+  ) {
     if (existingRequested != null && existingLimit != null) {
-      return _TokenCountResult(requested: existingRequested, limit: existingLimit);
+      return _TokenCountResult(
+        requested: existingRequested,
+        limit: existingLimit,
+      );
     }
     if (message == null || message.isEmpty) {
-      return _TokenCountResult(requested: existingRequested, limit: existingLimit);
+      return _TokenCountResult(
+        requested: existingRequested,
+        limit: existingLimit,
+      );
     }
     for (final pattern in _tokenCountPatterns) {
       final match = pattern.firstMatch(message);
@@ -852,7 +1024,10 @@ class LLMClient {
         }
       }
     }
-    return _TokenCountResult(requested: existingRequested, limit: existingLimit);
+    return _TokenCountResult(
+      requested: existingRequested,
+      limit: existingLimit,
+    );
   }
 
   String _decodeResponseBody(List<int> bytes) {
