@@ -6,7 +6,6 @@ import 'package:shelf_router/shelf_router.dart';
 
 import '../../config.dart';
 import '../../locator.dart';
-import '../../services/kernel/kernel_model_support.dart';
 import '../../services/llmkit/llm_client.dart';
 
 /// LLMKit Controller
@@ -20,7 +19,7 @@ class LLMKitController {
   LLMKitController({
     required Future<KernelService?> kernelFuture,
     LLMClient? client,
-  }) : _client = client ?? LLMClient(kernelFuture: kernelFuture);
+    }) : _client = client ?? LLMClient(kernelFuture: kernelFuture);
 
   final LLMClient _client;
 
@@ -75,7 +74,7 @@ class LLMKitController {
       final models = await _client.serviceLocator.getLlmModelList();
       final availableModels = <Map<String, dynamic>>[];
 
-      for (final model in models.where(supportsTextInference)) {
+      for (final model in models) {
         if (!await _isModelAvailable(model)) {
           continue;
         }
@@ -104,16 +103,35 @@ class LLMKitController {
     if (model.isRemote) {
       return true;
     }
-    final textPort = await _client.serviceLocator.getServicePort(
-      ApiConfig.serviceLlmText,
+    final serviceKey = _serviceKeyForModelType(model.type);
+    if (serviceKey == null) {
+      return false;
+    }
+    final port = await _client.serviceLocator.getServicePort(
+      serviceKey,
       modelId: model.id,
     );
-    if (textPort != null) return true;
-    final visionPort = await _client.serviceLocator.getServicePort(
-      ApiConfig.serviceLlmVision,
-      modelId: model.id,
-    );
-    return visionPort != null;
+    return port != null;
+  }
+
+  static String? _serviceKeyForModelType(String modelType) {
+    final normalized = modelType.trim().toLowerCase();
+    if (normalized.contains('embedding')) {
+      return ApiConfig.serviceLlmEmbedding;
+    }
+    if (normalized.contains('speech') || normalized == 'tts' ||
+        normalized == 'texttospeech') {
+      return ApiConfig.serviceLlmTts;
+    }
+    if (normalized.contains('audio') || normalized == 'asr' ||
+        normalized == 'audiotexttotext') {
+      return ApiConfig.serviceLlmAsr;
+    }
+    if (normalized.contains('vision') || normalized == 'imagetexttotext' ||
+        normalized.contains('image')) {
+      return ApiConfig.serviceLlmVision;
+    }
+    return ApiConfig.serviceLlmText;
   }
 
   Future<Response> _proxy(
