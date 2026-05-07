@@ -72,6 +72,9 @@ class ApiConfig {
   /// OpenTool default port
   static const int defaultOpentoolPort = 19627;
 
+  /// Internal OpenTool tool-service path prefix hidden behind ToolKit.
+  static const String defaultOpentoolPrefix = '/opentool-daemon/tools';
+
   /// Embeddings server default port
   static const int defaultEmbeddingsPort = 9537;
 
@@ -89,6 +92,10 @@ class ApiConfig {
 
   /// Gets internal service address (for proxy forwarding)
   static String getInternalUrl(int port) => 'http://$internalHost:$port';
+
+  /// Gets internal OpenTool service address (for ToolKit forwarding)
+  static String getInternalOpenToolUrl(int port) =>
+      '${getInternalUrl(port)}$defaultOpentoolPrefix';
 
   /// Gets Kit path by service identifier
   static String? getKitPath(String serviceKey) {

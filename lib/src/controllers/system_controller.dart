@@ -42,7 +42,7 @@ class SystemController {
       '${ApiConfig.ragkitPath}/*':
           'RagKit API (RAG knowledge/query, requires Token)',
       '${ApiConfig.appkitPath}/*': 'AppKit API (App registration/subscription)',
-      '${ApiConfig.toolkitPath}/*': 'ToolKit API (${ApiConfig.opentoolName})',
+      '${ApiConfig.toolkitPath}/*': 'ToolKit API (requires Token)',
       '${ApiConfig.llmTextPath}/*': ApiConfig.llmTextName,
       '${ApiConfig.llmVisionPath}/*': ApiConfig.llmVisionName,
       '${ApiConfig.llmEmbeddingPath}/*': ApiConfig.llmEmbeddingName,

@@ -1,30 +1,82 @@
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
+import '../../middleware.dart';
+import '../../services/appkit/appkit_service.dart';
 import '../../services/toolkit/opentool_client.dart';
 
 /// ToolKit Controller
 ///
 /// Proxies requests to OpenTool service
 class ToolKitController {
-  ToolKitController({OpenToolClient? client})
-    : _client = client ?? OpenToolClient();
+  ToolKitController({OpenToolClient? client, AppKitService? appKitService})
+    : _client = client ?? OpenToolClient(),
+      _appKitService = appKitService ?? AppKitService();
 
   final OpenToolClient _client;
+  final AppKitService _appKitService;
 
   Router get router {
     final router = Router();
+    final guard = requireBearer();
 
-    // Transparently proxy all requests to OpenTool
-    router.all('/<path|.*>', _forwardAll);
+    router.get('/list', guard(_forwardList));
+    router.get('/<toolId>/load', guard(_forwardToolLoad));
+    router.post('/<toolId>/call', guard(_forwardToolCall));
+    router.post('/<toolId>/streamCall', guard(_forwardToolStreamCall));
 
     return router;
   }
 
-  /// Forwards all requests
-  Future<Response> _forwardAll(Request request) async {
-    final path = request.params['path'] ?? '';
-    return _proxy(request, path: '/$path');
+  Future<Response> _forwardList(Request request) async {
+    if (!_isAuthorized(request)) {
+      requestLogger.warning('ToolKit: invalid bearer token.');
+      return unauthorizedResponse();
+    }
+    return _proxy(request, path: '/list');
+  }
+
+  Future<Response> _forwardToolLoad(Request request) async {
+    final toolId = request.params['toolId'];
+    if (toolId == null || toolId.isEmpty) {
+      return Response.notFound('Tool not found');
+    }
+    if (!_isAuthorized(request)) {
+      requestLogger.warning('ToolKit: invalid bearer token.');
+      return unauthorizedResponse();
+    }
+    return _proxy(request, path: '/$toolId/load');
+  }
+
+  Future<Response> _forwardToolCall(Request request) async {
+    final toolId = request.params['toolId'];
+    if (toolId == null || toolId.isEmpty) {
+      return Response.notFound('Tool not found');
+    }
+    if (!_isAuthorized(request)) {
+      requestLogger.warning('ToolKit: invalid bearer token.');
+      return unauthorizedResponse();
+    }
+    return _proxy(request, path: '/$toolId/call');
+  }
+
+  Future<Response> _forwardToolStreamCall(Request request) async {
+    final toolId = request.params['toolId'];
+    if (toolId == null || toolId.isEmpty) {
+      return Response.notFound('Tool not found');
+    }
+    if (!_isAuthorized(request)) {
+      requestLogger.warning('ToolKit: invalid bearer token.');
+      return unauthorizedResponse();
+    }
+    return _proxy(request, path: '/$toolId/streamCall', stream: true);
+  }
+
+  bool _isAuthorized(Request request) {
+    final token = bearerTokenFrom(request);
+    return token != null &&
+        token.isNotEmpty &&
+        _appKitService.isTokenValid(token);
   }
 
   Future<Response> _proxy(

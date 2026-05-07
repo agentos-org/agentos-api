@@ -124,7 +124,10 @@ Router createGatewayRouter({
 
   // ToolKit API (proxy to OpenTool, requires Token)
   final openToolClient = OpenToolClient(serviceLocator: serviceLocator);
-  final toolKitController = ToolKitController(client: openToolClient);
+  final toolKitController = ToolKitController(
+    client: openToolClient,
+    appKitService: appKitService,
+  );
   router.mount('${ApiConfig.toolkitPath}/', toolKitController.router.call);
 
   // LLMKit API (proxy to LLM services, requires Token)

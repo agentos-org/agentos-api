@@ -11,10 +11,15 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:test/test.dart';
 
 class _FakeServiceLocator implements AgentOSServiceLocator {
-  _FakeServiceLocator({required this.models, required this.runningModelIds});
+  _FakeServiceLocator({
+    required this.models,
+    required this.runningModelIds,
+    this.openToolPort = 19627,
+  });
 
   final List<LlmModelInfo> models;
   final Set<String> runningModelIds;
+  final int openToolPort;
 
   @override
   String get liteagentBaseUrl => 'http://127.0.0.1:9527/api/v1';
@@ -32,7 +37,7 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
     }
     return switch (serviceKey) {
       ApiConfig.serviceLiteagent => 9527,
-      ApiConfig.serviceOpentool => 19627,
+      ApiConfig.serviceOpentool => openToolPort,
       ApiConfig.serviceEmbeddings => 9537,
       ApiConfig.serviceLlmText => 52010,
       ApiConfig.serviceLlmVision => 52020,
@@ -126,13 +131,131 @@ void main() {
     expect(response.statusCode, 401);
   });
 
-  test('Toolkit no auth required', () async {
-    // ToolKit no longer requires authentication, direct access allowed
-    final response = await get(Uri.parse('$host/toolkit/tools'));
-    // Should not return 401 (would return 401 when auth was required)
-    // May return 404 (path not found), 502 (proxy error), 503 (service unavailable) or 200 (ok)
-    expect(response.statusCode, isNot(401));
+  test('Toolkit endpoints require registered app bearer token', () async {
+    final missingToken = await get(Uri.parse('$host/toolkit/list'));
+    expect(missingToken.statusCode, 401);
+
+    final invalidToken = await get(
+      Uri.parse('$host/toolkit/list'),
+      headers: {'authorization': 'Bearer sk-invalid'},
+    );
+    expect(invalidToken.statusCode, 401);
+
+    final registerRes = await post(
+      Uri.parse('$host/appkit/register'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode(<String, String>{'bundleId': 'com.demo.toolkit'}),
+    );
+    expect(registerRes.statusCode, 200);
+    final registerPayload =
+        jsonDecode(registerRes.body) as Map<String, dynamic>;
+    final token = registerPayload['token'] as String;
+
+    final authorized = await get(
+      Uri.parse('$host/toolkit/list'),
+      headers: {'authorization': 'Bearer $token'},
+    );
+    // The OpenTool service may be unavailable in tests, but auth should pass.
+    expect(authorized.statusCode, isNot(401));
   });
+
+  test(
+    'Toolkit forwards public tool paths to internal OpenTool prefix',
+    () async {
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      late HttpServer gateway;
+      final requestedPaths = <String>[];
+
+      upstream.listen((request) async {
+        requestedPaths.add(request.uri.path);
+        request.response.statusCode = 200;
+        request.response.headers.set(
+          HttpHeaders.contentTypeHeader,
+          'application/json',
+        );
+        if (request.uri.path == '/opentool-daemon/tools/list') {
+          expect(request.method, 'GET');
+          expect(request.uri.queryParameters['all'], '1');
+          request.response.write(jsonEncode(<Map<String, dynamic>>[]));
+        } else if (request.uri.path == '/opentool-daemon/tools/tool-1/load') {
+          expect(request.method, 'GET');
+          request.response.write(
+            jsonEncode(<String, dynamic>{
+              'info': <String, dynamic>{
+                'title': 'Demo Tool',
+                'version': '1.0.0',
+              },
+              'functions': <Map<String, dynamic>>[],
+            }),
+          );
+        } else {
+          request.response.statusCode = 404;
+          request.response.write('unexpected path');
+        }
+        await request.response.close();
+      });
+
+      final serviceLocator = _FakeServiceLocator(
+        runningModelIds: const {},
+        models: const [],
+        openToolPort: upstream.port,
+      );
+      final handler = createGatewayHandler(
+        serviceLocator: serviceLocator,
+        kernelFuture: Future<KernelService?>.value(null),
+        liteAgentSdk: LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1'),
+        enableLogging: false,
+      );
+      gateway = await shelf_io.serve(handler, InternetAddress.loopbackIPv4, 0);
+
+      try {
+        final registerRes = await post(
+          Uri.parse(
+            'http://${gateway.address.host}:${gateway.port}/appkit/register',
+          ),
+          headers: {'content-type': 'application/json'},
+          body: jsonEncode(<String, String>{'bundleId': 'com.demo.toolkit'}),
+        );
+        final token =
+            (jsonDecode(registerRes.body) as Map<String, dynamic>)['token']
+                as String;
+
+        final response = await get(
+          Uri.parse(
+            'http://${gateway.address.host}:${gateway.port}/toolkit/list?all=1',
+          ),
+          headers: {'authorization': 'Bearer $token'},
+        );
+
+        expect(response.statusCode, 200);
+        expect(jsonDecode(response.body), isEmpty);
+
+        final loadResponse = await get(
+          Uri.parse(
+            'http://${gateway.address.host}:${gateway.port}/toolkit/tool-1/load',
+          ),
+          headers: {'authorization': 'Bearer $token'},
+        );
+        expect(loadResponse.statusCode, 200);
+        expect(loadResponse.body, contains('Demo Tool'));
+
+        final managementResponse = await post(
+          Uri.parse(
+            'http://${gateway.address.host}:${gateway.port}/toolkit/tool-1/stop',
+          ),
+          headers: {'authorization': 'Bearer $token'},
+        );
+        expect(managementResponse.statusCode, 404);
+        expect(
+          requestedPaths,
+          isNot(contains('/opentool-daemon/tools/tool-1/stop')),
+        );
+      } finally {
+        await gateway.close(force: true);
+        await upstream.close(force: true);
+      }
+    },
+  );
 
   test('LLMKit no auth required', () async {
     // LLMKit no longer requires authentication, direct access allowed

@@ -6,7 +6,7 @@ This gateway provides a single entry point for all local AI services:
 - **CronKit**: Cron task management (powered by agentos_kernel)
 - **RagKit**: RAG knowledge base management and query (powered by agentos_kernel)
 - **AppKit**: Application registration and subscription
-- **ToolKit**: Tool execution (proxies to OpenTool)
+- **ToolKit**: Tool execution through the gateway
 - **LLMKit**: LLM services (text generation, vision, embedding, TTS, ASR)
 
 Detailed HTTP API reference:
@@ -196,8 +196,33 @@ Supported routes:
 
 ## ToolKit API
 
+ToolKit is exposed through the AgentOS API Gateway. External clients should
+call the gateway's `/toolkit/*` routes and do not need to connect to, configure,
+or understand the internal tool runtime. ToolKit requests require the Bearer
+token returned by `POST /appkit/register`.
 
-- `ALL /toolkit/*` - Transparently proxies all requests to OpenTool backend.
+Example:
+
+```
+$ TOKEN=$(curl -s http://127.0.0.1:8888/appkit/register \
+    -H 'content-type: application/json' \
+    -d '{"bundleId":"com.demo.app"}' | jq -r .token)
+$ curl http://127.0.0.1:8888/toolkit/list \
+    -H "authorization: Bearer $TOKEN"
+```
+
+Common endpoints:
+
+- `GET /toolkit/list?all=0` - list running tools. Use `all=1` to include
+  stopped tools. Returns `[{ "id", "alias", "host", "port", "status",
+  "serverId" }]`.
+- `GET /toolkit/{toolId}/load` - return the tool's OpenTool JSON
+  description, including available functions and parameter schemas.
+- `POST /toolkit/{toolId}/call` - call one function:
+  `{"id":"call-001","name":"status","arguments":{"depth":1}}` ->
+  `{"id":"call-001","result":{...}}`.
+- `POST /toolkit/{toolId}/streamCall` - call one function and receive an
+  SSE stream for long-running or incremental results.
 
 ## LLMKit API
 

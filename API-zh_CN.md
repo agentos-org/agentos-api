@@ -1253,7 +1253,7 @@ data: {"bundleId":"com.demo.app","contentList":[{"type":"text","message":"..."}]
     "/cronkit/*": "CronKit API（定时任务管理，需要 Token）",
     "/ragkit/*": "RagKit API（RAG 知识库/检索，需要 Token）",
     "/appkit/*": "AppKit API（应用注册/订阅）",
-    "/toolkit/*": "ToolKit API（OpenTool）",
+    "/toolkit/*": "ToolKit API",
     "/llmkit/text/*": "文本生成",
     "/llmkit/vision/*": "图文理解",
     "/llmkit/embedding/*": "文本嵌入",
@@ -1287,21 +1287,195 @@ data: {"bundleId":"com.demo.app","contentList":[{"type":"text","message":"..."}]
 }
 ```
 
-## ToolKit（代理 OpenTool 服务）
+## ToolKit API
 
-ToolKit 会透明代理所有请求到运行在端口 `19627` 的 OpenTool 服务
-（可通过 ServiceLocator 配置）。
+ToolKit 是工具运行时 API 的网关入口。外部客户端访问 AgentOS API Gateway 的
+`/toolkit/*` 路由即可，不需要连接、配置或理解内部工具运行时路径。Server
+构建/导入、进程生命周期等管理接口由平台侧处理，不作为公开 ToolKit API 暴露。
+
+ToolKit 请求需要携带 `POST /appkit/register` 返回的 Bearer token。
+
+网关使用默认端口运行时，可这样调用：
+
+```bash
+TOKEN=$(curl -s http://127.0.0.1:8888/appkit/register \
+  -H 'content-type: application/json' \
+  -d '{"bundleId":"com.demo.app"}' | jq -r .token)
+curl http://127.0.0.1:8888/toolkit/list \
+  -H "authorization: Bearer $TOKEN"
+```
+
+### 鉴权
+
+所有 ToolKit 端点都需要：
+
+```http
+Authorization: Bearer <POST /appkit/register 返回的 token>
+```
+
+缺少 token 或 token 无效时返回 `401`。
+
+### 端点总览
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/toolkit/list` | 列出运行中的工具，`all=1` 时列出全部工具。 |
+| POST | `/toolkit/{toolId}/call` | 调用工具函数。 |
+| POST | `/toolkit/{toolId}/streamCall` | 调用工具函数并通过 SSE 返回结果。 |
+| GET | `/toolkit/{toolId}/load` | 返回工具描述和函数 schema。 |
+
+### 常用 Schema
+
+#### Tool
+
+```json
+{
+  "id": "tool-1",
+  "alias": "alpha",
+  "host": "127.0.0.1",
+  "port": 9001,
+  "status": "running",
+  "serverId": "srv-1"
+}
+```
+
+`status` 通常为 `running` 或 `notRunning`。`serverId` 可能不存在，也可能指向
+平台侧预置的 server。
+
+#### FunctionCall
+
+```json
+{
+  "id": "call-001",
+  "name": "status",
+  "arguments": {
+    "depth": 1
+  }
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `string` | 是 | 客户端生成的调用 id；`ToolReturn` 会返回同一个 id。 |
+| `name` | `string` | 是 | 函数名，来自 `GET /toolkit/{toolId}/load`。 |
+| `arguments` | `object` | 是 | 函数参数，需要匹配函数参数 schema。 |
+
+#### ToolReturn
+
+```json
+{
+  "id": "call-001",
+  "result": {
+    "ok": true
+  }
+}
+```
+
+#### SSE 结果
+
+`POST /toolkit/{toolId}/streamCall` 返回 `text/event-stream`：
+
+```text
+event:DATA
+data:{"json":"payload"}
+```
+
+通用事件名包括 `START`、`DATA`、`DONE`、`ERROR`。
 
 ### 端点
 
-#### ALL /toolkit/*
+#### GET /toolkit/list
 
-所有 `/toolkit/*` 请求会转发到 OpenTool 后端服务。
-请求/响应体、状态码、请求头和查询参数会原样透传。
-后端不可用时返回 `503`：
+查询参数：
+
+| 名称 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `all` | `0` 或 `1` | 否 | 省略或 `0` 只返回运行中的工具；`1` 返回包含已停止工具在内的全部工具。 |
+
+响应：
 
 ```json
-{"error": "OpenTool 服务不可用"}
+[
+  {
+    "id": "tool-1",
+    "alias": "alpha",
+    "host": "127.0.0.1",
+    "port": 9001,
+    "status": "running",
+    "serverId": "srv-1"
+  }
+]
+```
+
+#### GET /toolkit/{toolId}/load
+
+返回工具的 OpenTool JSON 描述。调用函数前可用该端点发现函数、参数和返回 schema。
+
+响应形状：
+
+```json
+{
+  "info": {
+    "title": "Demo Tool",
+    "version": "1.0.0"
+  },
+  "functions": [
+    {
+      "name": "status",
+      "description": "Return current status.",
+      "parameters": [
+        {
+          "name": "depth",
+          "description": "Detail depth.",
+          "schema": {"type": "integer"}
+        }
+      ],
+      "return": {
+        "name": "result",
+        "schema": {"type": "object"}
+      }
+    }
+  ]
+}
+```
+
+#### POST /toolkit/{toolId}/call
+
+请求体：
+
+```json
+{
+  "id": "call-001",
+  "name": "status",
+  "arguments": {
+    "depth": 1
+  }
+}
+```
+
+响应：
+
+```json
+{
+  "id": "call-001",
+  "result": {
+    "ok": true
+  }
+}
+```
+
+#### POST /toolkit/{toolId}/streamCall
+
+请求体：同 `/toolkit/{toolId}/call`。
+
+响应：`text/event-stream`，适合长耗时函数或增量结果。
+
+### 错误
+
+工具服务不可用时返回 `503`：
+
+```json
+{"error": "OpenTool service unavailable"}
 ```
 
 ## LLMKit（代理 LLM 服务）

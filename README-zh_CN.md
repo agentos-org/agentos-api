@@ -6,7 +6,7 @@
 - **CronKit**：定时任务管理（基于 agentos_kernel）
 - **RagKit**：RAG 知识库管理与检索（基于 agentos_kernel）
 - **AppKit**：应用注册与订阅
-- **ToolKit**：工具执行（代理 OpenTool）
+- **ToolKit**：通过网关访问工具执行能力
 - **LLMKit**：LLM 服务（文本生成、图文理解、文本嵌入、TTS、ASR）
 
 详细 HTTP API 文档：
@@ -189,8 +189,31 @@ RagKit 的权限边界分成两层：
 
 ## ToolKit API
 
+ToolKit 通过 AgentOS API Gateway 对外提供统一工具入口。外部客户端只需要访问
+网关的 `/toolkit/*` 路由，不需要连接、配置或理解内部工具运行时。ToolKit
+请求需要携带 `POST /appkit/register` 返回的 Bearer token。
 
-- `ALL /toolkit/*` - 透明代理所有请求到 OpenTool 后端。
+示例：
+
+```
+$ TOKEN=$(curl -s http://127.0.0.1:8888/appkit/register \
+    -H 'content-type: application/json' \
+    -d '{"bundleId":"com.demo.app"}' | jq -r .token)
+$ curl http://127.0.0.1:8888/toolkit/list \
+    -H "authorization: Bearer $TOKEN"
+```
+
+常用端点：
+
+- `GET /toolkit/list?all=0` - 列出运行中的工具。`all=1` 会包含已停止工具。
+  返回 `[{ "id", "alias", "host", "port", "status", "serverId" }]`。
+- `GET /toolkit/{toolId}/load` - 返回工具的 OpenTool JSON 描述，包含可用函数
+  和参数 schema。
+- `POST /toolkit/{toolId}/call` - 调用一个函数：
+  `{"id":"call-001","name":"status","arguments":{"depth":1}}` ->
+  `{"id":"call-001","result":{...}}`。
+- `POST /toolkit/{toolId}/streamCall` - 调用一个函数，并通过 SSE 接收长耗时或
+  增量结果。
 
 ## LLMKit API
 

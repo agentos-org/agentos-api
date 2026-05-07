@@ -1257,7 +1257,7 @@ Response: `200 OK`
     "/cronkit/*": "CronKit API (cron task management, requires Token)",
     "/ragkit/*": "RagKit API (RAG knowledge/query, requires Token)",
     "/appkit/*": "AppKit API (app registration/subscription)",
-    "/toolkit/*": "ToolKit API (OpenTool)",
+    "/toolkit/*": "ToolKit API",
     "/llmkit/text/*": "Text generation",
     "/llmkit/vision/*": "Image-text-to-text",
     "/llmkit/embedding/*": "Text embedding",
@@ -1291,18 +1291,195 @@ Response: `200 OK` or `503 Service Unavailable`
 }
 ```
 
-## ToolKit (Proxy to OpenTool Service)
+## ToolKit API
 
-ToolKit transparently proxies all requests to the OpenTool service running on
-port `19627` (configurable via ServiceLocator).
+ToolKit is the gateway entry point for tool runtime APIs. External clients call
+`/toolkit/*` on the AgentOS API Gateway; they do not need to know or call the
+internal tool runtime path. Server build/import APIs are managed by the platform
+and process lifecycle APIs are not exposed as public ToolKit APIs.
+
+ToolKit requests require the Bearer token returned by `POST /appkit/register`.
+
+For a gateway running on the default port:
+
+```bash
+TOKEN=$(curl -s http://127.0.0.1:8888/appkit/register \
+  -H 'content-type: application/json' \
+  -d '{"bundleId":"com.demo.app"}' | jq -r .token)
+curl http://127.0.0.1:8888/toolkit/list \
+  -H "authorization: Bearer $TOKEN"
+```
+
+### Authentication
+
+All ToolKit endpoints require:
+
+```http
+Authorization: Bearer <token returned by POST /appkit/register>
+```
+
+Missing or invalid tokens return `401`.
+
+### Endpoint Summary
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/toolkit/list` | List running tools, or all tools with `all=1`. |
+| POST | `/toolkit/{toolId}/call` | Call a tool function. |
+| POST | `/toolkit/{toolId}/streamCall` | Call a tool function with SSE results. |
+| GET | `/toolkit/{toolId}/load` | Return the tool description and function schemas. |
+
+### Common Schemas
+
+#### Tool
+
+```json
+{
+  "id": "tool-1",
+  "alias": "alpha",
+  "host": "127.0.0.1",
+  "port": 9001,
+  "status": "running",
+  "serverId": "srv-1"
+}
+```
+
+`status` is usually `running` or `notRunning`. `serverId` may be omitted or may
+refer to a server that was provisioned by the platform.
+
+#### FunctionCall
+
+```json
+{
+  "id": "call-001",
+  "name": "status",
+  "arguments": {
+    "depth": 1
+  }
+}
+```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Client-generated call id. The same id is returned in `ToolReturn`. |
+| `name` | `string` | Yes | Function name from `GET /toolkit/{toolId}/load`. |
+| `arguments` | `object` | Yes | Function arguments matching the function parameter schema. |
+
+#### ToolReturn
+
+```json
+{
+  "id": "call-001",
+  "result": {
+    "ok": true
+  }
+}
+```
+
+#### SSE Results
+
+`POST /toolkit/{toolId}/streamCall` returns `text/event-stream`:
+
+```text
+event:DATA
+data:{"json":"payload"}
+```
+
+Possible generic event names are `START`, `DATA`, `DONE`, and `ERROR`.
 
 ### Endpoints
 
-#### ALL /toolkit/*
+#### GET /toolkit/list
 
-All requests to `/toolkit/*` are forwarded to the OpenTool backend service.
-Request/response bodies, status codes, headers, and query parameters are
-proxied as-is. If the backend is unavailable, returns `503`:
+Query parameters:
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `all` | `0` or `1` | No | Omit or use `0` for running tools only. Use `1` to include stopped tools. |
+
+Response:
+
+```json
+[
+  {
+    "id": "tool-1",
+    "alias": "alpha",
+    "host": "127.0.0.1",
+    "port": 9001,
+    "status": "running",
+    "serverId": "srv-1"
+  }
+]
+```
+
+#### GET /toolkit/{toolId}/load
+
+Returns the tool OpenTool JSON description. Use this endpoint to discover the
+functions, parameters, and return schemas before calling a function.
+
+Response shape:
+
+```json
+{
+  "info": {
+    "title": "Demo Tool",
+    "version": "1.0.0"
+  },
+  "functions": [
+    {
+      "name": "status",
+      "description": "Return current status.",
+      "parameters": [
+        {
+          "name": "depth",
+          "description": "Detail depth.",
+          "schema": {"type": "integer"}
+        }
+      ],
+      "return": {
+        "name": "result",
+        "schema": {"type": "object"}
+      }
+    }
+  ]
+}
+```
+
+#### POST /toolkit/{toolId}/call
+
+Request body:
+
+```json
+{
+  "id": "call-001",
+  "name": "status",
+  "arguments": {
+    "depth": 1
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "id": "call-001",
+  "result": {
+    "ok": true
+  }
+}
+```
+
+#### POST /toolkit/{toolId}/streamCall
+
+Request body: same as `/toolkit/{toolId}/call`.
+
+Response: `text/event-stream`, suitable for long-running functions or
+incremental results.
+
+### Errors
+
+If the tool service is unavailable, returns `503`:
 
 ```json
 {"error": "OpenTool service unavailable"}

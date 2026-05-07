@@ -98,7 +98,7 @@ class OpenToolClient {
     if (port == null) {
       return null;
     }
-    return Uri.parse(ApiConfig.getInternalUrl(port));
+    return Uri.parse(ApiConfig.getInternalOpenToolUrl(port));
   }
 
   Uri _buildUri(
