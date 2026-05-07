@@ -154,20 +154,27 @@ class LLMClient {
 
     // Route decision: remote model endpoint vs local service port.
     final Uri uri;
-    Map<String, String>? remoteAuthHeaders;
+    final bool isRemoteRoute;
+    String? remoteApiKey;
 
     if (resolvedModel != null && resolvedModel.isRemote) {
+      isRemoteRoute = true;
       uri = _buildUri(
         Uri.parse(resolvedModel.baseUrl!),
         path,
         queryParameters,
         serviceType: serviceType,
       );
-      final apiKey = resolvedModel.apiKey;
-      if (apiKey != null && apiKey.isNotEmpty) {
-        remoteAuthHeaders = {'authorization': 'Bearer $apiKey'};
+      remoteApiKey = resolvedModel.apiKey;
+      // Fall back to kernel config when resolved model has no apiKey.
+      if ((remoteApiKey == null || remoteApiKey.isEmpty) && kernel != null) {
+        final availableConfig = kernel.getAvailableLlmConfig();
+        if (availableConfig != null) {
+          remoteApiKey = availableConfig.apiKey;
+        }
       }
     } else {
+      isRemoteRoute = false;
       final port = await _serviceLocator.getServicePort(
         serviceType.serviceKey,
         modelId: resolvedModel?.id ?? modelIdentifier,
@@ -192,11 +199,13 @@ class LLMClient {
 
     try {
       final request = await _httpClient.openUrl(method, uri);
-      _applyRequestHeaders(request, headers);
-      if (remoteAuthHeaders != null) {
-        remoteAuthHeaders.forEach((name, value) {
-          request.headers.set(name, value);
-        });
+      _applyRequestHeaders(request, headers, stripAuth: isRemoteRoute);
+      if (isRemoteRoute && remoteApiKey != null && remoteApiKey.isNotEmpty) {
+        request.headers.set(
+          'Authorization',
+          'Bearer $remoteApiKey',
+          preserveHeaderCase: true,
+        );
       }
       if (requestBody != null && requestBody.isNotEmpty) {
         request.add(requestBody);
@@ -591,8 +600,9 @@ class LLMClient {
 
   void _applyRequestHeaders(
     HttpClientRequest request,
-    Map<String, String>? headers,
-  ) {
+    Map<String, String>? headers, {
+    bool stripAuth = false,
+  }) {
     if (headers == null) {
       return;
     }
@@ -600,10 +610,11 @@ class LLMClient {
       final lowerName = name.toLowerCase();
       if (_isHopByHopHeader(lowerName) ||
           lowerName == 'host' ||
-          lowerName == 'content-length') {
+          lowerName == 'content-length' ||
+          (stripAuth && lowerName == 'authorization')) {
         return;
       }
-      request.headers.set(name, value);
+      request.headers.set(name, value, preserveHeaderCase: true);
     });
   }
 
@@ -671,6 +682,23 @@ class LLMClient {
       if (normalizedSuffix != null) {
         final versionPrefix = requestVersion ?? '/v1';
         return '$versionPrefix$normalizedSuffix';
+      }
+    } else if (normalizedBase.isNotEmpty) {
+      // basePath is a custom prefix (e.g. "/liteAgent") without a trailing
+      // version segment.  Preserve request version if present; otherwise
+      // insert the default "/v1" between base and endpoint suffix so the
+      // final path becomes e.g. "/liteAgent/v1/chat/completions".
+      final requestVersion = _extractLeadingVersionSegment(normalizedRequest);
+      final requestSuffix = requestVersion != null
+          ? _stripLeadingVersionSegment(normalizedRequest)
+          : normalizedRequest;
+      final normalizedSuffix = _normalizeEndpointSuffix(
+        requestSuffix,
+        defaultEndpoint,
+      );
+      if (normalizedSuffix != null) {
+        final versionPrefix = requestVersion ?? '/v1';
+        return '$normalizedBase$versionPrefix$normalizedSuffix';
       }
     }
 
