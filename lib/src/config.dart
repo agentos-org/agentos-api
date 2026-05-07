@@ -49,9 +49,6 @@ class ApiConfig {
   /// LLM text-to-speech path
   static const String llmTtsPath = '$llmkitPath/tts';
 
-  /// LLM TTS voices query path
-  static const String llmTtsVoicesPath = '$llmkitPath/tts/voices';
-
   /// LLM speech-to-text path
   static const String llmAsrPath = '$llmkitPath/asr';
 
