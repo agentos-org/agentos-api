@@ -40,6 +40,9 @@ class LLMKitController {
     // Text-to-speech
     _registerForwardRoutes(router, 'tts', LLMServiceType.tts);
 
+    // TTS voices query
+    router.get('/tts/voices', _listVoices);
+
     // Speech-to-text
     _registerForwardRoutes(router, 'asr', LLMServiceType.asr);
 
@@ -132,6 +135,26 @@ class LLMKitController {
       return ApiConfig.serviceLlmVision;
     }
     return ApiConfig.serviceLlmText;
+  }
+
+  Future<Response> _listVoices(Request request) async {
+    try {
+      final response = await _client.send(
+        serviceType: LLMServiceType.tts,
+        method: 'GET',
+        path: '/v1/audio/voices',
+        queryParameters: request.url.queryParameters,
+        headers: request.headers,
+      );
+
+      return Response(
+        response.statusCode,
+        body: response.bodyBytes,
+        headers: response.headers,
+      );
+    } on Exception catch (error) {
+      return Response(502, body: 'TTS voices query error: $error');
+    }
   }
 
   Future<Response> _proxy(
