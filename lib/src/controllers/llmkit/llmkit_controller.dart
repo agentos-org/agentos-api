@@ -164,9 +164,12 @@ class LLMKitController {
           context: const {'shelf.io.buffer_output': false},
         );
       }
+      final responseBody = _postProcessResponse(
+        serviceType, path, response.bodyBytes,
+      );
       return Response(
         response.statusCode,
-        body: response.bodyBytes,
+        body: responseBody,
         headers: response.headers,
       );
     } on Exception catch (error) {
@@ -196,6 +199,41 @@ class LLMKitController {
     }
 
     return false;
+  }
+
+  /// TTS voices response post-processing
+  ///
+  /// The upstream qwen3-tts-server returns the full filesystem path as the
+  /// model key (e.g. "C:\Users\...\models\qwen3-tts-0.6b-q8_0").
+  /// This normalizes keys to just the basename (e.g. "qwen3-tts-0.6b-q8_0").
+  List<int>? _postProcessResponse(
+    LLMServiceType serviceType,
+    String path,
+    List<int>? bodyBytes,
+  ) {
+    if (serviceType != LLMServiceType.tts ||
+        !path.contains('audio/voices') ||
+        bodyBytes == null ||
+        bodyBytes.isEmpty) {
+      return bodyBytes;
+    }
+    try {
+      final text = utf8.decode(bodyBytes);
+      final json = jsonDecode(text);
+      if (json is! Map<String, dynamic>) return bodyBytes;
+      final normalized = <String, dynamic>{};
+      for (final entry in json.entries) {
+        final key = entry.key;
+        final sep = key.lastIndexOf('/');
+        final backslash = key.lastIndexOf('\\');
+        final lastSep = sep > backslash ? sep : backslash;
+        final basename = lastSep >= 0 ? key.substring(lastSep + 1) : key;
+        normalized[basename] = entry.value;
+      }
+      return utf8.encode(jsonEncode(normalized));
+    } catch (_) {
+      return bodyBytes;
+    }
   }
 
   Future<List<int>?> _readBodyBytes(Request request) async {
