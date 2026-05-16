@@ -1,0 +1,29 @@
+{
+  "opentool": "1.0.0",
+  "info": {
+    "title": "CRUD API for mock",
+    "version": "1.0.0"
+  },
+  "functions": [
+    {
+      "name": "sequentiallyRead",
+      "description": "Read text from storage one by one",
+      "parameters": [],
+      "return": null,
+      "stream": {
+        "data": {
+          "name": "text",
+          "schema": {
+            "$ref": "#/schemas/Text"
+          },
+          "description": "Text in storage"
+        }
+      }
+    }
+  ],
+  "schemas": {
+    "Text": {
+      "type": "string"
+    }
+  }
+}

@@ -98,6 +98,49 @@ class _FunctionCallLiteAgentSDK extends LiteAgentSDK {
   }
 }
 
+class _StreamFunctionCallLiteAgentSDK extends LiteAgentSDK {
+  _StreamFunctionCallLiteAgentSDK()
+    : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
+
+  EventToolReturn? terminalStreamReturn;
+  final List<EventToolReturn> forwardedStreamCallbacks = [];
+  final Completer<EventToolReturn> streamReturnCompleter =
+      Completer<EventToolReturn>();
+
+  @override
+  Future<void> chat(
+    Session session,
+    UserTask userTask,
+    AgentMessageHandler agentMessageHandler,
+  ) async {
+    unawaited(() async {
+      await agentMessageHandler.onStreamFunctionCall(
+        session.sessionId,
+        FunctionCall(
+          id: 'stream-fn-1',
+          name: 'sequentiallyRead',
+          arguments: const {},
+        ),
+        (eventToolReturn) {
+          terminalStreamReturn = eventToolReturn;
+          if (!streamReturnCompleter.isCompleted) {
+            streamReturnCompleter.complete(eventToolReturn);
+          }
+        },
+      );
+      await agentMessageHandler.onDone();
+    }());
+  }
+
+  @override
+  Future<void> streamCallback(
+    Session session,
+    EventToolReturn streamToolReturn,
+  ) async {
+    forwardedStreamCallbacks.add(streamToolReturn);
+  }
+}
+
 class _ReasoningLiteAgentSDK extends LiteAgentSDK {
   _ReasoningLiteAgentSDK() : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
 
@@ -1389,6 +1432,104 @@ Always produce a short plan before tool use.
       expect(fakeSdk.forwardedCallback, isNotNull);
       expect(fakeSdk.forwardedCallback!.id, 'standalone-fn');
       expect(fakeSdk.forwardedCallback!.result['value'], 1);
+    },
+  );
+
+  test(
+    'forwards stream functionCall by SSE and resolves terminal /streamCallback',
+    () async {
+      final fakeSdk = _StreamFunctionCallLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+
+      final chatResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/chat?sessionId=s1'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'content': <Map<String, dynamic>>[
+              <String, dynamic>{'type': 'text', 'message': 'hi'},
+            ],
+          }),
+        ),
+      );
+
+      expect(chatResponse.statusCode, 200);
+      final firstChunkCompleter = Completer<String>();
+      late final StreamSubscription<List<int>> subscription;
+      subscription = chatResponse.read().listen(
+        (bytes) {
+          if (!firstChunkCompleter.isCompleted) {
+            firstChunkCompleter.complete(utf8.decode(bytes));
+          }
+        },
+        onError: (Object e, StackTrace s) {
+          if (!firstChunkCompleter.isCompleted) {
+            firstChunkCompleter.completeError(e, s);
+          }
+        },
+      );
+      final sseChunk = await firstChunkCompleter.future.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(sseChunk, contains('event:functionCall'));
+      expect(sseChunk, contains('"id":"stream-fn-1"'));
+      expect(sseChunk, contains('"name":"sequentiallyRead"'));
+      expect(sseChunk, contains('"stream":true'));
+
+      final dataResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/streamCallback?sessionId=s1'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'event': EventType.DATA,
+            'toolReturn': <String, dynamic>{
+              'id': 'stream-fn-1',
+              'result': <String, dynamic>{'data': 'Hello'},
+            },
+          }),
+        ),
+      );
+      expect(dataResponse.statusCode, 200);
+      expect(fakeSdk.forwardedStreamCallbacks, hasLength(1));
+      expect(fakeSdk.forwardedStreamCallbacks.single.eventType, EventType.DATA);
+
+      final doneResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/streamCallback?sessionId=s1'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'event': EventType.DONE,
+            'toolReturn': <String, dynamic>{
+              'id': 'stream-fn-1',
+              'result': <String, dynamic>{},
+            },
+          }),
+        ),
+      );
+      expect(doneResponse.statusCode, 200);
+
+      final terminal = await fakeSdk.streamReturnCompleter.future.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(terminal.eventType, EventType.DONE);
+      expect(terminal.toolReturn.id, 'stream-fn-1');
+      expect(fakeSdk.forwardedStreamCallbacks, hasLength(1));
+      await subscription.cancel();
     },
   );
 

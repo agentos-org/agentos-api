@@ -96,6 +96,57 @@ AgentKit 在 `/agentkit/` 下提供 LiteAgent 兼容接口，并通过 LiteAgent
 `POST /agentkit/chat` 的 SSE 会输出 `message`、`chunk`、`functionCall`。
 外部收到 `functionCall` 后，可调用
 `POST /agentkit/callback?sessionId=...` 并提交 `ToolReturn` 完成该回调。
+如需验证 `streamCallback` 是否会从 AgentKit 正确转发到 LiteAgent SDK，可运行：
+
+```
+$ dart run example/agentkit_stream_callback_example.dart
+streamCallback forwarded successfully.
+```
+
+如需参照 `liteagent_server_dart` 的 `stream_call_example.dart` 运行一次真实 LLM
+触发的完整 `streamCallback` 流程：
+
+```
+$ cd ../liteagent_server_dart
+$ dart run bin/server.dart
+```
+
+然后回到本仓库，配置模型并运行：
+
+```
+$ cp example/.env.example example/.env
+$ # 编辑 example/.env，填入 baseUrl / apiKey / model
+$ dart run example/agentkit_stream_callback_llm_example.dart
+```
+
+这个示例会启动一个临时 AgentKit 网关，连接 `.env` 中的
+`liteAgentBaseUrl`，通过 `initSession` 注册 `callbackOpenTool`，再调用
+`/agentkit/chat`。当 LiteAgent 的 SSE 返回 stream functionCall 时，示例会
+执行本地 `sequentiallyRead` mock 工具，并通过
+`/agentkit/streamCallback` 依次回传 `data`、`done`。
+
+大模型配置由 AgentKit 请求体中的 `llmConfig` 传给 LiteAgent：
+
+```json
+{
+  "llmConfig": {
+    "baseUrl": "https://api.openai.com/v1",
+    "apiKey": "sk-...",
+    "model": "gpt-4o-mini"
+  }
+}
+```
+
+本仓库也提供了示例环境变量模板：
+
+```
+$ cp example/.env.example example/.env
+```
+
+其中 `baseUrl`、`apiKey`、`model` 的命名与 `liteagent_server_dart` 的 example
+保持一致。注意：单独调用 `streamCallback` 本身只是工具流式回调转发，不会调用
+大模型；完整示例中的大模型调用发生在 `chat` 阶段，`streamCallback` 负责把工具
+流式结果送回 LiteAgent。
 
 `POST /agentkit/initSession` 与 `POST /agentkit/initSimple` 也支持在
 `Capability` / `SimpleCapability` 中传入 `skills`。AgentKit 会原样转发给

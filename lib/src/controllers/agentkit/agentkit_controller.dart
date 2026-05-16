@@ -38,6 +38,8 @@ class AgentKitController {
   final AgentRequestContextService _requestContextService;
   static const Duration _functionCallTimeout = Duration(minutes: 5);
   final Map<String, Completer<ToolReturn>> _pendingToolReturns = {};
+  final Map<String, Completer<EventToolReturn>> _pendingStreamToolReturns = {};
+  final Map<String, Set<String>> _streamFunctionNamesBySession = {};
 
   Router get router {
     final router = Router();
@@ -139,19 +141,21 @@ class AgentKitController {
   // POST /initSession
   Future<Response> _handleInitSession(Request request) async {
     Capability? capability;
+    Map<String, dynamic>? liteAgentBody;
     try {
       final agentId = request.url.queryParameters['agentId'];
       if (agentId == null || agentId.isEmpty) {
         final body = await _readJsonBody(request);
-        final liteAgentBody = await _buildLiteAgentCapabilityFromAgentKitBody(
-          body,
-        );
+        liteAgentBody = await _buildLiteAgentCapabilityFromAgentKitBody(body);
         capability = Capability.fromJson(liteAgentBody);
       }
       final session = await _sdk.initSession(
         capability: capability,
         agentId: agentId,
       );
+      if (liteAgentBody != null) {
+        _rememberSessionStreamFunctions(session.sessionId, liteAgentBody);
+      }
       return _jsonResponse(session.toJson());
     } catch (e) {
       return _errorResponse(e, 'initSession', llmConfig: capability?.llmConfig);
@@ -237,16 +241,63 @@ class AgentKitController {
           );
           return _waitExternalToolReturn(sessionId, functionCall);
         },
+        onStreamFunctionCall: (functionCall, onToolReturn) async {
+          final terminal = _registerPendingStreamToolReturn(
+            sessionId,
+            functionCall,
+          );
+          final eventPayload = jsonEncode({
+            'sessionId': sessionId,
+            'functionCall': functionCall.toJson(),
+            'stream': true,
+          });
+          controller.add(
+            utf8.encode('event:functionCall\ndata:$eventPayload\n\n'),
+          );
+
+          try {
+            onToolReturn(await terminal.future.timeout(_functionCallTimeout));
+          } on TimeoutException {
+            onToolReturn(
+              EventToolReturn(
+                eventType: EventType.ERROR,
+                toolReturn: ToolReturn(
+                  id: functionCall.id,
+                  result: _toolErrorResult(
+                    code: 'stream_callback_timeout',
+                    message:
+                        'External streamCallback timed out after '
+                        '${_functionCallTimeout.inSeconds}s.',
+                  ),
+                ),
+              ),
+            );
+          } finally {
+            _pendingStreamToolReturns.remove(
+              _toolReturnKey(sessionId, functionCall.id),
+            );
+          }
+        },
         onDone: () {
           _failPendingToolReturnsForSession(
             sessionId,
             code: 'stream_closed',
             message: 'Chat stream closed before external callback.',
           );
+          _failPendingStreamToolReturnsForSession(
+            sessionId,
+            code: 'stream_closed',
+            message: 'Chat stream closed before external streamCallback.',
+          );
           controller.close();
         },
         onError: (e) {
           _failPendingToolReturnsForSession(
+            sessionId,
+            code: 'stream_error',
+            message: e.toString(),
+          );
+          _failPendingStreamToolReturnsForSession(
             sessionId,
             code: 'stream_error',
             message: e.toString(),
@@ -257,20 +308,230 @@ class AgentKitController {
       );
 
       // Don't await — sdk.chat completes when SSE stream ends
-      _sdk.chat(session, userTask, handler);
+      if (_hasKnownStreamFunctions(sessionId)) {
+        _chatWithRawSse(
+          session: session,
+          userTask: userTask,
+          controller: controller,
+          requestContext: requestContext,
+        );
+      } else {
+        _sdk.chat(session, userTask, handler);
+      }
 
       return Response.ok(
         controller.stream,
         headers: {
           'content-type': 'text/event-stream',
-          'cache-control': 'no-cache',
+          'cache-control': 'no-cache, no-store, no-transform',
           'connection': 'keep-alive',
+          'x-accel-buffering': 'no',
         },
         context: const {'shelf.io.buffer_output': false},
       );
     } catch (e) {
       return _errorResponse(e, 'chat');
     }
+  }
+
+  void _chatWithRawSse({
+    required Session session,
+    required UserTask userTask,
+    required StreamController<List<int>> controller,
+    required AgentRequestContext? requestContext,
+  }) {
+    unawaited(() async {
+      try {
+        final stream = await _sdk.sseService.chat(session.sessionId, userTask);
+        stream
+            .asyncMap((event) async {
+              final data = event.data;
+              if (data == null) return;
+              final eventName = event.event ?? SSEEventType.MESSAGE;
+              if (eventName == SSEEventType.MESSAGE) {
+                final agentMessage = AgentMessage.fromJson(jsonDecode(data));
+                final json = jsonEncode(agentMessage.toJson());
+                controller.add(utf8.encode('event:message\ndata:$json\n\n'));
+                if (requestContext != null) {
+                  unawaited(
+                    _agentKitService.archiveAgentMessage(
+                      sessionId: session.sessionId,
+                      username: requestContext.username,
+                      bundleId: requestContext.bundleId,
+                      agentMessage: agentMessage,
+                    ),
+                  );
+                }
+                return;
+              }
+              if (eventName == SSEEventType.CHUNK) {
+                final chunk = AgentMessageChunk.fromJson(jsonDecode(data));
+                final json = jsonEncode(chunk.toJson());
+                controller.add(utf8.encode('event:chunk\ndata:$json\n\n'));
+                return;
+              }
+              if (eventName == SSEEventType.FUNCTION_CALL) {
+                await _handleRawSseFunctionCall(
+                  session: session,
+                  rawData: data,
+                  controller: controller,
+                );
+              }
+            })
+            .listen(
+              (_) {},
+              onDone: () {
+                _failPendingToolReturnsForSession(
+                  session.sessionId,
+                  code: 'stream_closed',
+                  message: 'Chat stream closed before external callback.',
+                );
+                _failPendingStreamToolReturnsForSession(
+                  session.sessionId,
+                  code: 'stream_closed',
+                  message: 'Chat stream closed before external streamCallback.',
+                );
+                controller.close();
+              },
+              onError: (Object e) {
+                final message = e.toString();
+                _failPendingToolReturnsForSession(
+                  session.sessionId,
+                  code: 'stream_error',
+                  message: message,
+                );
+                _failPendingStreamToolReturnsForSession(
+                  session.sessionId,
+                  code: 'stream_error',
+                  message: message,
+                );
+                controller.addError(e);
+                controller.close();
+              },
+            );
+      } catch (e) {
+        controller.addError(e);
+        controller.close();
+      }
+    }());
+  }
+
+  Future<void> _handleRawSseFunctionCall({
+    required Session session,
+    required String rawData,
+    required StreamController<List<int>> controller,
+  }) async {
+    final payload = _decodeJsonMap(rawData);
+    final functionCallJson = _extractFunctionCallJson(payload);
+    final functionCall = FunctionCall.fromJson(functionCallJson);
+    final isStream = _isKnownStreamFunction(session.sessionId, functionCall);
+    final eventPayload = jsonEncode({
+      'sessionId': session.sessionId,
+      'functionCall': functionCall.toJson(),
+      if (isStream) 'stream': true,
+    });
+    controller.add(utf8.encode('event:functionCall\ndata:$eventPayload\n\n'));
+
+    if (isStream) {
+      return;
+    }
+
+    final toolReturn = await _waitExternalToolReturn(
+      session.sessionId,
+      functionCall,
+    );
+    await _sdk.callback(session, toolReturn);
+  }
+
+  Map<String, dynamic> _decodeJsonMap(String data) {
+    final decoded = jsonDecode(data);
+    if (decoded is! Map) {
+      throw const FormatException('SSE event payload must be a JSON object.');
+    }
+    return Map<String, dynamic>.from(decoded);
+  }
+
+  Map<String, dynamic> _extractFunctionCallJson(Map<String, dynamic> payload) {
+    if (payload['functionCall'] is Map) {
+      return Map<String, dynamic>.from(payload['functionCall'] as Map);
+    }
+    final agentMessage = AgentMessage.fromJson(payload);
+    if (agentMessage.content is! Map) {
+      throw const FormatException(
+        'functionCall event payload missing function call content.',
+      );
+    }
+    return Map<String, dynamic>.from(agentMessage.content as Map);
+  }
+
+  bool _hasKnownStreamFunctions(String sessionId) {
+    return _streamFunctionNamesBySession[sessionId]?.isNotEmpty ?? false;
+  }
+
+  bool _isKnownStreamFunction(String sessionId, FunctionCall functionCall) {
+    final names = _streamFunctionNamesBySession[sessionId];
+    if (names == null || names.isEmpty) return false;
+    return names.contains(functionCall.name);
+  }
+
+  void _rememberSessionStreamFunctions(
+    String sessionId,
+    Map<String, dynamic> capabilityBody,
+  ) {
+    final names = _extractStreamFunctionNames(capabilityBody);
+    if (names.isEmpty) {
+      _streamFunctionNamesBySession.remove(sessionId);
+      return;
+    }
+    _streamFunctionNamesBySession[sessionId] = names;
+  }
+
+  Set<String> _extractStreamFunctionNames(Map<String, dynamic> capabilityBody) {
+    final names = <String>{};
+    final callbackOpenTool = capabilityBody['callbackOpenTool'];
+    if (callbackOpenTool is Map) {
+      final opentool = callbackOpenTool['opentool'];
+      if (opentool is String && opentool.trim().isNotEmpty) {
+        names.addAll(_extractStreamFunctionNamesFromOpenToolText(opentool));
+      }
+    }
+
+    final openSpecList = capabilityBody['openSpecList'];
+    if (openSpecList is List) {
+      for (final item in openSpecList) {
+        if (item is Map) {
+          names.addAll(_extractStreamFunctionNamesFromOpenToolJson(item));
+        }
+      }
+    }
+    return names;
+  }
+
+  Set<String> _extractStreamFunctionNamesFromOpenToolText(String text) {
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is Map) {
+        return _extractStreamFunctionNamesFromOpenToolJson(decoded);
+      }
+    } catch (_) {
+      return const {};
+    }
+    return const {};
+  }
+
+  Set<String> _extractStreamFunctionNamesFromOpenToolJson(Map openTool) {
+    final names = <String>{};
+    final functions = openTool['functions'];
+    if (functions is! List) return names;
+    for (final function in functions) {
+      if (function is! Map) continue;
+      if (function['stream'] == null) continue;
+      final name = function['name'];
+      if (name is String && name.trim().isNotEmpty) {
+        names.add(name.trim());
+      }
+    }
+    return names;
   }
 
   // POST /chat/simple
@@ -369,6 +630,7 @@ class AgentKitController {
       }
       final session = Session(sessionId: sessionId);
       await _sdk.clear(session);
+      _streamFunctionNamesBySession.remove(sessionId);
       return _jsonResponse({'status': 'ok'});
     } catch (e) {
       return _errorResponse(e, 'clear');
@@ -414,7 +676,13 @@ class AgentKitController {
       final body = await _readJsonBody(request);
       final streamToolReturn = EventToolReturn.fromJson(body);
       final session = Session(sessionId: sessionId);
-      await _sdk.streamCallback(session, streamToolReturn);
+      final completedPending = _completePendingStreamToolReturn(
+        sessionId,
+        streamToolReturn,
+      );
+      if (!completedPending) {
+        await _sdk.streamCallback(session, streamToolReturn);
+      }
       return _jsonResponse({'status': 'ok'});
     } catch (e) {
       return _errorResponse(e, 'streamCallback');
@@ -884,6 +1152,32 @@ class AgentKitController {
     return true;
   }
 
+  Completer<EventToolReturn> _registerPendingStreamToolReturn(
+    String sessionId,
+    FunctionCall functionCall,
+  ) {
+    final key = _toolReturnKey(sessionId, functionCall.id);
+    final completer = Completer<EventToolReturn>();
+    _pendingStreamToolReturns[key] = completer;
+    return completer;
+  }
+
+  bool _completePendingStreamToolReturn(
+    String sessionId,
+    EventToolReturn streamToolReturn,
+  ) {
+    if (!_isTerminalStreamEvent(streamToolReturn.eventType)) {
+      return false;
+    }
+    final key = _toolReturnKey(sessionId, streamToolReturn.toolReturn.id);
+    final completer = _pendingStreamToolReturns[key];
+    if (completer == null || completer.isCompleted) {
+      return false;
+    }
+    completer.complete(streamToolReturn);
+    return true;
+  }
+
   void _failPendingToolReturnsForSession(
     String sessionId, {
     required String code,
@@ -907,6 +1201,37 @@ class AgentKitController {
     }
   }
 
+  void _failPendingStreamToolReturnsForSession(
+    String sessionId, {
+    required String code,
+    required String message,
+  }) {
+    final prefix = '$sessionId:';
+    final targets = _pendingStreamToolReturns.entries
+        .where((entry) => entry.key.startsWith(prefix))
+        .toList();
+    for (final entry in targets) {
+      final id = entry.key.substring(prefix.length);
+      final completer = entry.value;
+      if (!completer.isCompleted) {
+        completer.complete(
+          EventToolReturn(
+            eventType: EventType.ERROR,
+            toolReturn: ToolReturn(
+              id: id,
+              result: _toolErrorResult(code: code, message: message),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  bool _isTerminalStreamEvent(String eventType) {
+    final normalized = eventType.trim().toLowerCase();
+    return normalized == EventType.DONE || normalized == EventType.ERROR;
+  }
+
   String _toolReturnKey(String sessionId, String id) => '$sessionId:$id';
 
   Map<String, dynamic> _toolErrorResult({
@@ -924,6 +1249,8 @@ class _GatewayAgentMessageHandler extends AgentMessageHandler {
   final void Function(AgentMessage) _onMessage;
   final void Function(AgentMessageChunk) _onChunk;
   final Future<ToolReturn> Function(FunctionCall) _onFunctionCall;
+  final Future<void> Function(FunctionCall, void Function(EventToolReturn))
+  _onStreamFunctionCall;
   final void Function() _onDone;
   final void Function(Exception) _onError;
 
@@ -931,11 +1258,14 @@ class _GatewayAgentMessageHandler extends AgentMessageHandler {
     required void Function(AgentMessage) onMessage,
     required void Function(AgentMessageChunk) onChunk,
     required Future<ToolReturn> Function(FunctionCall) onFunctionCall,
+    required Future<void> Function(FunctionCall, void Function(EventToolReturn))
+    onStreamFunctionCall,
     required void Function() onDone,
     required void Function(Exception) onError,
   }) : _onMessage = onMessage,
        _onChunk = onChunk,
        _onFunctionCall = onFunctionCall,
+       _onStreamFunctionCall = onStreamFunctionCall,
        _onDone = onDone,
        _onError = onError;
 
@@ -958,6 +1288,15 @@ class _GatewayAgentMessageHandler extends AgentMessageHandler {
     FunctionCall functionCall,
   ) async {
     return _onFunctionCall(functionCall);
+  }
+
+  @override
+  Future<void> onStreamFunctionCall(
+    String sessionId,
+    FunctionCall functionCall,
+    void Function(EventToolReturn) onToolReturn,
+  ) async {
+    await _onStreamFunctionCall(functionCall, onToolReturn);
   }
 
   @override

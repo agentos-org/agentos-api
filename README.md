@@ -104,6 +104,61 @@ Supported routes:
 When receiving `functionCall`, external callers can post a `ToolReturn` to
 `POST /agentkit/callback?sessionId=...` to complete the pending callback.
 
+To verify that `streamCallback` is forwarded from AgentKit to LiteAgent SDK,
+run:
+
+```
+$ dart run example/agentkit_stream_callback_example.dart
+streamCallback forwarded successfully.
+```
+
+To run a full LLM-triggered `streamCallback` flow, similar to
+`liteagent_server_dart/example/stream_call_example.dart`, start LiteAgent first:
+
+```
+$ cd ../liteagent_server_dart
+$ dart run bin/server.dart
+```
+
+Then return to this repository, configure the model, and run:
+
+```
+$ cp example/.env.example example/.env
+$ # Edit example/.env and fill baseUrl / apiKey / model.
+$ dart run example/agentkit_stream_callback_llm_example.dart
+```
+
+The example starts a temporary AgentKit gateway, connects to
+`liteAgentBaseUrl` from `.env`, registers `callbackOpenTool` via `initSession`,
+and calls `/agentkit/chat`. When LiteAgent emits a stream functionCall over SSE,
+the example runs the local `sequentiallyRead` mock tool and posts `data` and
+`done` events back through `/agentkit/streamCallback`.
+
+LLM settings are passed to LiteAgent through the AgentKit request body's
+`llmConfig`:
+
+```json
+{
+  "llmConfig": {
+    "baseUrl": "https://api.openai.com/v1",
+    "apiKey": "sk-...",
+    "model": "gpt-4o-mini"
+  }
+}
+```
+
+This repository includes an example env template:
+
+```
+$ cp example/.env.example example/.env
+```
+
+The `baseUrl`, `apiKey`, and `model` names match the `liteagent_server_dart`
+examples. Note that calling `streamCallback` by itself only forwards streamed
+tool returns and does not call the LLM. In the full example, the LLM call
+happens during `chat`; `streamCallback` carries streamed tool results back to
+LiteAgent.
+
 `POST /agentkit/initSession` and `POST /agentkit/initSimple` also support a
 `skills` field on `Capability` / `SimpleCapability`. AgentKit forwards it
 as-is to LiteAgent SDK. Each entry should be a complete Agent Skills markdown

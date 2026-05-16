@@ -52,3 +52,6 @@ AGENTS.md
 GEMINI.md
 
 .fenn/
+
+# Local example secrets
+example/.env
