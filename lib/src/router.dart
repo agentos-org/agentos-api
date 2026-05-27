@@ -7,6 +7,7 @@ import 'controllers/agentkit/agentkit_controller.dart';
 import 'controllers/appkit/appkit_controller.dart';
 import 'controllers/cronkit/cronkit_controller.dart';
 import 'controllers/llmkit/llmkit_controller.dart';
+import 'controllers/modelkit/modelkit_controller.dart';
 import 'controllers/ragkit/ragkit_controller.dart';
 import 'controllers/system_controller.dart';
 import 'controllers/toolkit/toolkit_controller.dart';
@@ -14,7 +15,7 @@ import 'config.dart';
 import 'middleware.dart';
 import 'services/appkit/appkit_service.dart';
 import 'services/cronkit/cronkit_model_ref_store.dart';
-import 'services/llmkit/llm_client.dart';
+import 'services/modelkit/model_client.dart';
 import 'services/toolkit/opentool_client.dart';
 
 String _createGatewayInstanceId() {
@@ -130,15 +131,29 @@ Router createGatewayRouter({
   );
   router.mount('${ApiConfig.toolkitPath}/', toolKitController.router.call);
 
-  // LLMKit API (proxy to LLM services, requires Token)
-  final llmClient = LLMClient(
+  // ModelKit API (task-oriented model proxy: chat / embedding / asr / tts).
+  // The legacy LLMKit mount is preserved for backward compatibility and
+  // shares the same ModelClient instance so they target the same upstream
+  // services.
+  final modelClient = ModelClient(
     serviceLocator: serviceLocator,
     kernelFuture: kernelFuture,
   );
+  final modelKitController = ModelKitController(
+    kernelFuture: kernelFuture,
+    client: modelClient,
+  );
+  router.mount(
+    '${ApiConfig.modelkitPath}/',
+    modelKitController.router.call,
+  );
+
+  // ignore: deprecated_member_use
   final llmKitController = LLMKitController(
     kernelFuture: kernelFuture,
-    client: llmClient,
+    modelClient: modelClient,
   );
+  // ignore: deprecated_member_use_from_same_package
   router.mount('${ApiConfig.llmkitPath}/', llmKitController.router.call);
 
   return router;

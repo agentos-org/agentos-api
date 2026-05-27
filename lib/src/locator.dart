@@ -76,6 +76,13 @@ class LlmModelInfo {
   final String downloadUrl;
   final List<String> tags;
   final String repoId;
+
+  /// Legacy IO-oriented type identifier preserved for the LLMKit wire schema
+  /// (`textGeneration` / `imageTextToText` / `embedding` / `audioTextToText` /
+  /// `textToSpeech`).
+  ///
+  /// Locators populate this verbatim from upstream metadata; controllers should
+  /// not assume it carries the new task name. New code should consume [task].
   final String type;
   final int? contextWindowSize;
 
@@ -87,6 +94,33 @@ class LlmModelInfo {
 
   /// Whether this model is a user-defined custom remote model.
   final bool isCustom;
+
+  /// Task-oriented identifier (`chat` / `embedding` / `asr` / `tts`).
+  ///
+  /// Optional to preserve binary compatibility with locators that still emit
+  /// the legacy [type] only. ModelKit consumers prefer [task]; LLMKit consumers
+  /// fall back to [type].
+  final String? task;
+
+  /// Input modality wire names (`text` / `image` / `audio` / `video`).
+  ///
+  /// Empty list means "unknown – locator did not populate". ModelKit echoes
+  /// this directly to clients so they can self-describe multimodal inputs.
+  final List<String> inputModalities;
+
+  /// Output modality wire names; same conventions as [inputModalities].
+  final List<String> outputModalities;
+
+  /// Vision capability flag. Used by LLMKit to map a `chat` task back to the
+  /// legacy `imageTextToText` wire string. Derived from `inputModalities`
+  /// containing `image` (or `video`).
+  final bool vision;
+
+  /// Tool-calling capability flag.
+  final bool toolCall;
+
+  /// Streaming-output capability flag.
+  final bool stream;
 
   const LlmModelInfo({
     required this.id,
@@ -106,6 +140,12 @@ class LlmModelInfo {
     this.baseUrl,
     this.apiKey,
     this.isCustom = false,
+    this.task,
+    this.inputModalities = const [],
+    this.outputModalities = const [],
+    this.vision = false,
+    this.toolCall = false,
+    this.stream = true,
   });
 
   /// Whether this model is a remote model with its own endpoint.
@@ -129,6 +169,14 @@ class LlmModelInfo {
     if (baseUrl != null) 'baseUrl': baseUrl,
     if (apiKey != null) 'apiKey': apiKey,
     if (isCustom) 'isCustom': true,
+    if (task != null) 'task': task,
+    if (inputModalities.isNotEmpty) 'input': inputModalities,
+    if (outputModalities.isNotEmpty) 'output': outputModalities,
+    'capabilities': {
+      'vision': vision,
+      'tool_call': toolCall,
+      'stream': stream,
+    },
   };
 }
 
