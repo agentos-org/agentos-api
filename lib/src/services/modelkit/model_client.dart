@@ -175,10 +175,15 @@ class ModelClient {
         : null;
 
     final modelName = resolvedModel?.name ?? modelIdentifier;
-    final requestBody = _rewriteRequestBodyModel(
+    var requestBody = _rewriteRequestBodyModel(
       body,
       resolvedModel: resolvedModel,
       upstreamModel: modelName,
+    );
+    requestBody = _injectReasoningContentPlaceholder(
+      requestBody,
+      task: task,
+      modelName: modelName,
     );
 
     if (kernel != null && modelName != null) {
@@ -779,6 +784,102 @@ class ModelClient {
     }
   }
 
+  /// Compatibility shim for "thinking-mode" models that require
+  /// `reasoning_content` to be replayed on assistant messages carrying
+  /// `tool_calls`.
+  ///
+  /// Some providers (currently DeepSeek V4+, Xiaomi MiMo V2.5+) reject
+  /// multi-turn requests with `400 The reasoning_content in the thinking
+  /// mode must be passed back to the API.` whenever an assistant message
+  /// containing `tool_calls` is missing the `reasoning_content` from the
+  /// turn that produced those tool calls. Most OpenAI-compatible clients
+  /// (e.g. `@ai-sdk/openai`) silently drop the field on the way in and
+  /// never replay it. This gateway-level shim injects an empty
+  /// `reasoning_content` so the upstream validator passes; the previous
+  /// turn's chain-of-thought context is lost but multi-turn tool calling
+  /// keeps working.
+  ///
+  /// Family matching is governed by [_reasoningContentFamilies] — version
+  /// numbers compare numerically, so any future same-family release
+  /// (e.g. `deepseek-v5`, `MiMo-V3`) inherits the rule automatically.
+  /// Scoped to [ModelTask.chat].
+  List<int>? _injectReasoningContentPlaceholder(
+    List<int>? body, {
+    required ModelTask task,
+    required String? modelName,
+  }) {
+    if (body == null || body.isEmpty) return body;
+    if (task != ModelTask.chat) return body;
+    if (modelName == null || !_requiresReasoningContentReplay(modelName)) {
+      return body;
+    }
+    try {
+      final decoded = jsonDecode(utf8.decode(body));
+      if (decoded is! Map<String, dynamic>) return body;
+      final messages = decoded['messages'];
+      if (messages is! List) return body;
+
+      var mutated = false;
+      for (final message in messages) {
+        if (message is! Map) continue;
+        if (message['role'] != 'assistant') continue;
+        final toolCalls = message['tool_calls'];
+        if (toolCalls is! List || toolCalls.isEmpty) continue;
+        final existing = message['reasoning_content'];
+        if (existing is String && existing.isNotEmpty) continue;
+        message['reasoning_content'] = '';
+        mutated = true;
+      }
+
+      if (!mutated) return body;
+      return utf8.encode(jsonEncode(decoded));
+    } catch (_) {
+      return body;
+    }
+  }
+
+  /// Model families that enforce the thinking-mode `reasoning_content`
+  /// replay contract. To extend coverage, add another entry here.
+  static final List<_ReasoningContentFamily> _reasoningContentFamilies = [
+    // DeepSeek V4 and above: deepseek-v4, deepseek-v4-pro, deepseek-v4-flash,
+    // and any future v5 / v6 / v4.x release.
+    _ReasoningContentFamily(
+      pattern: RegExp(r'deepseek-v(\d+)(?:\.(\d+))?', caseSensitive: false),
+      minVersion: const [4],
+    ),
+    // Xiaomi MiMo V2.5 and above: MiMo-V2.5, MiMo-V2.6, MiMo-V3, MiMo-V4, ...
+    _ReasoningContentFamily(
+      pattern: RegExp(r'mimo-v(\d+)(?:\.(\d+))?', caseSensitive: false),
+      minVersion: const [2, 5],
+    ),
+  ];
+
+  static bool _requiresReasoningContentReplay(String modelName) {
+    for (final family in _reasoningContentFamilies) {
+      final match = family.pattern.firstMatch(modelName);
+      if (match == null) continue;
+      final major = int.tryParse(match.group(1) ?? '');
+      if (major == null) continue;
+      final minor = int.tryParse(match.group(2) ?? '0') ?? 0;
+      if (_compareVersionParts([major, minor], family.minVersion) >= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Element-wise numeric comparison padding the shorter list with zeros
+  /// (so `[3]` reads as `[3, 0]` and `[2, 5]` outranks `[2]`).
+  static int _compareVersionParts(List<int> a, List<int> b) {
+    final length = a.length > b.length ? a.length : b.length;
+    for (var i = 0; i < length; i++) {
+      final av = i < a.length ? a[i] : 0;
+      final bv = i < b.length ? b[i] : 0;
+      if (av != bv) return av.compareTo(bv);
+    }
+    return 0;
+  }
+
   _NormalizedError? _normalizeContextSizeError(
     List<int> bytes,
     int statusCode,
@@ -1000,4 +1101,21 @@ class _SSEParseResult {
     this.absoluteCompletionTokens,
     required this.hasContent,
   });
+}
+
+/// Descriptor for a model family that requires `reasoning_content` to be
+/// present on assistant messages with `tool_calls`.
+///
+/// [pattern] must capture the model's numeric version as groups 1 (major)
+/// and optionally 2 (minor). [minVersion] is `[major, minor]` (or `[major]`
+/// when only the major matters) and is compared numerically; the shim is
+/// applied when the parsed version is `>= minVersion`.
+class _ReasoningContentFamily {
+  const _ReasoningContentFamily({
+    required this.pattern,
+    required this.minVersion,
+  });
+
+  final RegExp pattern;
+  final List<int> minVersion;
 }
