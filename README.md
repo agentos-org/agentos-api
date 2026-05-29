@@ -7,7 +7,8 @@ This gateway provides a single entry point for all local AI services:
 - **RagKit**: RAG knowledge base management and query (powered by agentos_kernel)
 - **AppKit**: Application registration and subscription
 - **ToolKit**: Tool execution through the gateway
-- **LLMKit**: LLM services (text generation, vision, embedding, TTS, ASR)
+- **ModelKit**: Task-oriented model services (chat, embedding, ASR, TTS)
+- **LLMKit** *(deprecated)*: legacy LLM services, superseded by ModelKit
 
 Detailed HTTP API reference:
 - [API.md](API.md)
@@ -279,8 +280,21 @@ Common endpoints:
 - `POST /toolkit/{toolId}/streamCall` - call one function and receive an
   SSE stream for long-running or incremental results.
 
-## LLMKit API
+## ModelKit API
 
+Task-oriented model proxy. Vision models live behind `/modelkit/chat` and are
+identified by `capabilities.vision` on the resolved model.
+
+- `ALL /modelkit/chat/*` - Text/vision generation (chat completions)
+- `ALL /modelkit/embedding/*` - Text embeddings
+- `ALL /modelkit/asr/*` - Speech-to-text
+- `ALL /modelkit/tts/*` - Text-to-speech
+- `GET /modelkit/models` - Task-oriented model listing
+
+## LLMKit API (Deprecated)
+
+> Deprecated. Use the ModelKit endpoints above. The `/llmkit/*` mount is kept
+> for backward compatibility and internally delegates to the same pipeline.
 
 - `ALL /llmkit/text/*` - Text generation (chat completions)
 - `ALL /llmkit/vision/*` - Image-text-to-text

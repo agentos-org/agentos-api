@@ -1254,11 +1254,15 @@ data: {"bundleId":"com.demo.app","contentList":[{"type":"text","message":"..."}]
     "/ragkit/*": "RagKit API（RAG 知识库/检索，需要 Token）",
     "/appkit/*": "AppKit API（应用注册/订阅）",
     "/toolkit/*": "ToolKit API",
-    "/llmkit/text/*": "文本生成",
-    "/llmkit/vision/*": "图文理解",
-    "/llmkit/embedding/*": "文本嵌入",
-    "/llmkit/tts/*": "文本转语音",
-    "/llmkit/asr/*": "语音转文本"
+    "/modelkit/chat/*": "文本/视觉生成",
+    "/modelkit/embedding/*": "文本嵌入",
+    "/modelkit/asr/*": "语音转文本",
+    "/modelkit/tts/*": "文本转语音",
+    "/llmkit/text/*": "文本生成（已弃用）",
+    "/llmkit/vision/*": "图文理解（已弃用）",
+    "/llmkit/embedding/*": "文本嵌入（已弃用）",
+    "/llmkit/tts/*": "文本转语音（已弃用）",
+    "/llmkit/asr/*": "语音转文本（已弃用）"
   }
 }
 ```
@@ -1478,7 +1482,30 @@ data:{"json":"payload"}
 {"error": "OpenTool service unavailable"}
 ```
 
-## LLMKit（代理 LLM 服务）
+## ModelKit（代理模型服务）
+
+ModelKit 是基于任务的模型代理，也是 LLMKit 的推荐替代。每个任务对应一个路由。
+视觉模型归于 `/modelkit/chat`，通过模型的 `capabilities.vision` 标识。
+
+### 任务路由
+
+| 路径前缀 | 任务 | 说明 |
+| --- | --- | --- |
+| `/modelkit/chat` | chat | 文本/视觉生成（chat completions） |
+| `/modelkit/embedding` | embedding | 文本嵌入 |
+| `/modelkit/asr` | asr | 语音转文本 |
+| `/modelkit/tts` | tts | 文本转语音 |
+
+#### GET /modelkit/models
+
+以基于任务的 wire schema 列出可用模型。每个条目包含 `task`
+（`chat` / `embedding` / `asr` / `tts`）、`input` / `output` 模态，以及
+`capabilities` 块（`vision`、`tool_call`、`stream`、`reasoning`）。
+
+## LLMKit（代理 LLM 服务）——已弃用
+
+> 已弃用，请使用上方的 ModelKit 端点。`/llmkit/*` 挂载点仅为向后兼容保留，
+> 内部委托至同一套 ModelKit 处理流程。
 
 LLMKit 代理请求到各种 LLM 服务。每种服务类型有独立的端点前缀。
 

@@ -1258,11 +1258,15 @@ Response: `200 OK`
     "/ragkit/*": "RagKit API (RAG knowledge/query, requires Token)",
     "/appkit/*": "AppKit API (app registration/subscription)",
     "/toolkit/*": "ToolKit API",
-    "/llmkit/text/*": "Text generation",
-    "/llmkit/vision/*": "Image-text-to-text",
-    "/llmkit/embedding/*": "Text embedding",
-    "/llmkit/tts/*": "Text-to-speech",
-    "/llmkit/asr/*": "Speech-to-text"
+    "/modelkit/chat/*": "Chat/vision generation",
+    "/modelkit/embedding/*": "Text embedding",
+    "/modelkit/asr/*": "Speech-to-text",
+    "/modelkit/tts/*": "Text-to-speech",
+    "/llmkit/text/*": "Text generation (deprecated)",
+    "/llmkit/vision/*": "Image-text-to-text (deprecated)",
+    "/llmkit/embedding/*": "Text embedding (deprecated)",
+    "/llmkit/tts/*": "Text-to-speech (deprecated)",
+    "/llmkit/asr/*": "Speech-to-text (deprecated)"
   }
 }
 ```
@@ -1485,7 +1489,32 @@ If the tool service is unavailable, returns `503`:
 {"error": "OpenTool service unavailable"}
 ```
 
-## LLMKit (Proxy to LLM Services)
+## ModelKit (Proxy to Model Services)
+
+ModelKit is the task-oriented model proxy and the recommended replacement for
+LLMKit. It exposes one route per task. Vision-language models live behind
+`/modelkit/chat` and are identified by `capabilities.vision` on the resolved
+model.
+
+### Task Routes
+
+| Path Prefix | Task | Description |
+| --- | --- | --- |
+| `/modelkit/chat` | chat | Text/vision generation (chat completions) |
+| `/modelkit/embedding` | embedding | Text embeddings |
+| `/modelkit/asr` | asr | Speech-to-text |
+| `/modelkit/tts` | tts | Text-to-speech |
+
+#### GET /modelkit/models
+
+Lists available models in the task-oriented wire schema. Each entry carries
+`task` (`chat` / `embedding` / `asr` / `tts`), `input` / `output` modalities,
+and a `capabilities` block (`vision`, `tool_call`, `stream`, `reasoning`).
+
+## LLMKit (Proxy to LLM Services) — Deprecated
+
+> Deprecated. Use the ModelKit endpoints above. The `/llmkit/*` mount is kept
+> for backward compatibility and delegates to the same ModelKit pipeline.
 
 LLMKit proxies requests to various LLM services. Each service type has its own
 endpoint prefix.

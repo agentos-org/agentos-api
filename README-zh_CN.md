@@ -7,7 +7,8 @@
 - **RagKit**：RAG 知识库管理与检索（基于 agentos_kernel）
 - **AppKit**：应用注册与订阅
 - **ToolKit**：通过网关访问工具执行能力
-- **LLMKit**：LLM 服务（文本生成、图文理解、文本嵌入、TTS、ASR）
+- **ModelKit**：基于任务的模型服务（chat、embedding、ASR、TTS）
+- **LLMKit** *（已弃用）*：旧版 LLM 服务，已由 ModelKit 取代
 
 详细 HTTP API 文档：
 - [API.md](API.md)
@@ -266,8 +267,21 @@ $ curl http://127.0.0.1:8888/toolkit/list \
 - `POST /toolkit/{toolId}/streamCall` - 调用一个函数，并通过 SSE 接收长耗时或
   增量结果。
 
-## LLMKit API
+## ModelKit API
 
+基于任务的模型代理。视觉模型归于 `/modelkit/chat`，通过模型的
+`capabilities.vision` 标识。
+
+- `ALL /modelkit/chat/*` - 文本/视觉生成（chat completions）
+- `ALL /modelkit/embedding/*` - 文本嵌入
+- `ALL /modelkit/asr/*` - 语音转文本
+- `ALL /modelkit/tts/*` - 文本转语音
+- `GET /modelkit/models` - 基于任务的模型列表
+
+## LLMKit API（已弃用）
+
+> 已弃用，请使用上方的 ModelKit 端点。`/llmkit/*` 挂载点仅为向后兼容保留，
+> 内部委托至同一套处理流程。
 
 - `ALL /llmkit/text/*` - 文本生成（chat completions）
 - `ALL /llmkit/vision/*` - 图文理解
