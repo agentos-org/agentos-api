@@ -95,6 +95,7 @@ class ModelKitController {
             'vision': model.vision,
             'tool_call': model.toolCall,
             'stream': model.stream,
+            'reasoning': model.reasoning,
           },
           if (model.contextWindowSize != null)
             'contextWindowSize': model.contextWindowSize,

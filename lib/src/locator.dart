@@ -122,6 +122,12 @@ class LlmModelInfo {
   /// Streaming-output capability flag.
   final bool stream;
 
+  /// Reasoning / deep-think capability flag. Mirrors the upstream
+  /// `deepThink` field for remote models or `capabilities.reasoning` for
+  /// local models. Defaults to `true` so callers that omit the flag keep
+  /// reasoning enabled.
+  final bool reasoning;
+
   const LlmModelInfo({
     required this.id,
     required this.name,
@@ -146,6 +152,7 @@ class LlmModelInfo {
     this.vision = false,
     this.toolCall = false,
     this.stream = true,
+    this.reasoning = true,
   });
 
   /// Whether this model is a remote model with its own endpoint.
@@ -176,6 +183,7 @@ class LlmModelInfo {
       'vision': vision,
       'tool_call': toolCall,
       'stream': stream,
+      'reasoning': reasoning,
     },
   };
 }
