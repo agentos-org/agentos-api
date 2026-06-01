@@ -702,6 +702,12 @@ class AgentKitController {
     if (config == null) return null;
 
     final result = <String, dynamic>{
+      // liteagent using `lite_oneapi`，real upstream provider is differentiated by `adapter`.
+      // kernel build LLMConfig `provider=lite_oneapi` `adapter=model.provider`,
+      'provider': 'lite_oneapi',
+      'adapter': (config.adapter == null || config.adapter!.trim().isEmpty)
+          ? 'openai'
+          : config.adapter,
       'baseUrl': config.baseUrl,
       'apiKey': config.apiKey,
       'model': config.model,
@@ -1007,7 +1013,12 @@ class AgentKitController {
       return null;
     }
 
+    final adapter = matched.provider.trim().isEmpty ? 'openai' : matched.provider;
     final result = <String, dynamic>{
+      // liteagent using `lite_oneapi`，real upstream provider is differentiated by `adapter`.
+      // kernel build LLMConfig `provider=lite_oneapi` `adapter=model.provider`,
+      'provider': 'lite_oneapi',
+      'adapter': adapter,
       'baseUrl': baseUrl,
       'apiKey': matched.apiKey ?? '',
       'model': matched.name,

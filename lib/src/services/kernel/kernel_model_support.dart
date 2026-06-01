@@ -37,6 +37,7 @@ List<kernel.KernelLlmModel> buildKernelLlmModels(
           quantization: model.quantization,
           sizeGB: model.sizeGB,
           contextWindowSize: model.contextWindowSize,
+          provider: model.provider,
         ),
       )
       .toList();

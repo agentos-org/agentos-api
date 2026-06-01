@@ -128,6 +128,15 @@ class LlmModelInfo {
   /// reasoning enabled.
   final bool reasoning;
 
+  /// Canonical LLM provider name as defined by the desktop model registry,
+  /// constrained to `[openai, deepseek, glm, kimi, mimo, minimax, qwen]`.
+  ///
+  /// When agentos-api / agentos-kernel build a liteagent `LLMConfig`, this
+  /// value is forwarded verbatim as the liteagent `adapter`, while the
+  /// liteagent `provider` is always `lite_oneapi`. Defaults to `openai` for
+  /// locators that don't populate it.
+  final String provider;
+
   const LlmModelInfo({
     required this.id,
     required this.name,
@@ -153,6 +162,7 @@ class LlmModelInfo {
     this.toolCall = false,
     this.stream = true,
     this.reasoning = true,
+    this.provider = 'openai',
   });
 
   /// Whether this model is a remote model with its own endpoint.
@@ -177,6 +187,7 @@ class LlmModelInfo {
     if (apiKey != null) 'apiKey': apiKey,
     if (isCustom) 'isCustom': true,
     if (task != null) 'task': task,
+    'provider': provider,
     if (inputModalities.isNotEmpty) 'input': inputModalities,
     if (outputModalities.isNotEmpty) 'output': outputModalities,
     'capabilities': {
