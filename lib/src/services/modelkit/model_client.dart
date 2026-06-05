@@ -9,6 +9,7 @@ import 'package:unique_id_dart/unique_id_dart.dart';
 import '../../config.dart';
 import '../../locator.dart';
 import '../../middleware.dart';
+import 'sse_normalizer.dart';
 
 /// Response returned by [ModelClient.send].
 class ModelClientResponse {
@@ -294,9 +295,15 @@ class ModelClient {
       }
 
       if (streamResponse) {
+        // Re-frame quirky upstream chat SSE into canonical OpenAI before it
+        // reaches the client, so third-party apps only need vanilla OpenAI
+        // compatibility (see [_normalizeChatSseStream]).
+        final Stream<List<int>> upstream = task == ModelTask.chat
+            ? normalizeChatSseStream(response)
+            : response;
         final monitoredStream = _createMonitoredStream(
           metrics: metrics,
-          stream: response,
+          stream: upstream,
           startStopwatch: stopwatch,
           requestStartTime: requestStartTime,
         );
@@ -343,10 +350,17 @@ class ModelClient {
       final totalTokens = _extractTokenCountFromResponse(bytes);
       metrics?.completed(totalTokens ?? 0);
 
+      // Normalize a non-streaming chat completion body to OpenAI-canonical
+      // shape (reasoning field name, tool-call deltas) for the same reason
+      // the streaming path is normalized.
+      final responseBytes = task == ModelTask.chat && response.statusCode < 400
+          ? normalizeChatJsonBody(bytes)
+          : bytes;
+
       return ModelClientResponse(
         statusCode: response.statusCode,
         headers: responseHeaders,
-        bodyBytes: bytes,
+        bodyBytes: responseBytes,
       );
     } catch (e, stackTrace) {
       stopwatch.stop();
