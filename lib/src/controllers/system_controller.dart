@@ -43,11 +43,10 @@ class SystemController {
           'RagKit API (RAG knowledge/query, requires Token)',
       '${ApiConfig.appkitPath}/*': 'AppKit API (App registration/subscription)',
       '${ApiConfig.toolkitPath}/*': 'ToolKit API (requires Token)',
-      '${ApiConfig.llmTextPath}/*': ApiConfig.llmTextName,
-      '${ApiConfig.llmVisionPath}/*': ApiConfig.llmVisionName,
-      '${ApiConfig.llmEmbeddingPath}/*': ApiConfig.llmEmbeddingName,
-      '${ApiConfig.llmTtsPath}/*': ApiConfig.llmTtsName,
-      '${ApiConfig.llmAsrPath}/*': ApiConfig.llmAsrName,
+      '${ApiConfig.modelChatPath}/*': 'Chat/vision generation',
+      '${ApiConfig.modelEmbeddingPath}/*': 'Text embedding',
+      '${ApiConfig.modelAsrPath}/*': 'Speech-to-text',
+      '${ApiConfig.modelTtsPath}/*': 'Text-to-speech',
     };
     final info = {
       'name': 'AgentOS API Gateway',

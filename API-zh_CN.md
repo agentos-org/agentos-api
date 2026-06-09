@@ -1253,16 +1253,11 @@ data: {"bundleId":"com.demo.app","contentList":[{"type":"text","message":"..."}]
     "/cronkit/*": "CronKit API（定时任务管理，需要 Token）",
     "/ragkit/*": "RagKit API（RAG 知识库/检索，需要 Token）",
     "/appkit/*": "AppKit API（应用注册/订阅）",
-    "/toolkit/*": "ToolKit API",
+    "/toolkit/*": "ToolKit API（需要 Token）",
     "/modelkit/chat/*": "文本/视觉生成",
     "/modelkit/embedding/*": "文本嵌入",
     "/modelkit/asr/*": "语音转文本",
-    "/modelkit/tts/*": "文本转语音",
-    "/llmkit/text/*": "文本生成（已弃用）",
-    "/llmkit/vision/*": "图文理解（已弃用）",
-    "/llmkit/embedding/*": "文本嵌入（已弃用）",
-    "/llmkit/tts/*": "文本转语音（已弃用）",
-    "/llmkit/asr/*": "语音转文本（已弃用）"
+    "/modelkit/tts/*": "文本转语音"
   }
 }
 ```
@@ -1484,8 +1479,8 @@ data:{"json":"payload"}
 
 ## ModelKit（代理模型服务）
 
-ModelKit 是基于任务的模型代理，也是 LLMKit 的推荐替代。每个任务对应一个路由。
-视觉模型归于 `/modelkit/chat`，通过模型的 `capabilities.vision` 标识。
+ModelKit 是基于任务的模型代理。每个任务对应一个路由。视觉模型归于
+`/modelkit/chat`，通过模型的 `capabilities.vision` 标识。
 
 ### 任务路由
 
@@ -1502,116 +1497,19 @@ ModelKit 是基于任务的模型代理，也是 LLMKit 的推荐替代。每个
 （`chat` / `embedding` / `asr` / `tts`）、`input` / `output` 模态，以及
 `capabilities` 块（`vision`、`tool_call`、`stream`、`reasoning`）。
 
-## LLMKit（代理 LLM 服务）——已弃用
-
-> 已弃用，请使用上方的 ModelKit 端点。`/llmkit/*` 挂载点仅为向后兼容保留，
-> 内部委托至同一套 ModelKit 处理流程。
-
-LLMKit 代理请求到各种 LLM 服务。每种服务类型有独立的端点前缀。
-
-### 服务类型
-
-| 路径前缀 | 服务标识 | 默认端口 | 说明 |
-| --- | --- | --- | --- |
-| `/llmkit/text` | llm_text | 52010 | 文本生成（chat completions） |
-| `/llmkit/vision` | llm_vision | 52020 | 图文理解 |
-| `/llmkit/embedding` | llm_embedding | 52030 | 文本嵌入 |
-| `/llmkit/tts` | llm_tts | 52040 | 文本转语音 |
-| `/llmkit/asr` | llm_asr | 52050 | 语音转文本 |
-
-### 端点
-
-#### ALL /llmkit/text/*
-
-代理到文本生成服务。当请求头包含 `Accept: text/event-stream` 或
-请求体包含 `"stream": true` 时支持流式响应。
-
-示例请求：
-
-```json
-{
-  "model": "qwen3-8b",
-  "messages": [
-    {"role": "user", "content": "Hello"}
-  ]
-}
-```
-
-示例响应：
-
-```json
-{
-  "id": "chatcmpl-1",
-  "object": "chat.completion",
-  "model": "qwen3-8b",
-  "choices": [
-    {
-      "index": 0,
-      "message": {"role": "assistant", "content": "Hello!"},
-      "finish_reason": "stop"
-    }
-  ]
-}
-```
-
-#### ALL /llmkit/vision/*
-
-代理到图文理解服务。
-
-#### ALL /llmkit/embedding/*
-
-代理到文本嵌入服务。
-
-示例请求：
-
-```json
-{
-  "model": "bge-large-zh-v1.5-q8_0",
-  "input": ["hello world"]
-}
-```
-
-示例响应：
-
-```json
-{
-  "object": "list",
-  "data": [
-    {
-      "object": "embedding",
-      "index": 0,
-      "embedding": [0.1, 0.2, 0.3]
-    }
-  ],
-  "model": "bge-large-zh-v1.5-q8_0"
-}
-```
-
-#### ALL /llmkit/tts/*
-
-代理到文本转语音服务。
-
-#### ALL /llmkit/asr/*
-
-代理到语音转文本服务。
-
-#### GET /llmkit/models
-
-列出当前通过 service locator 可见的文本能力模型。返回运行中的本地模型，
-以及远程模型。
-
 响应：`200 OK`
 
 ```json
 [
   {
     "id": "qwen3-8b",
-    "name": "qwen3-8b",
-    "alias": "qwen3-8b",
-    "description": "text model",
-    "type": "textGeneration",
-    "contextWindowSize": 8192,
-    "isRemote": false,
+    "task": "chat",
+    "capabilities": {
+      "vision": false,
+      "tool_call": true,
+      "stream": true,
+      "reasoning": true
+    },
     "isCustom": false
   }
 ]

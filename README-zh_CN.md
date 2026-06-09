@@ -8,7 +8,6 @@
 - **AppKit**：应用注册与订阅
 - **ToolKit**：通过网关访问工具执行能力
 - **ModelKit**：基于任务的模型服务（chat、embedding、ASR、TTS）
-- **LLMKit** *（已弃用）*：旧版 LLM 服务，已由 ModelKit 取代
 
 详细 HTTP API 文档：
 - [API.md](API.md)
@@ -119,6 +118,9 @@ $ cp example/.env.example example/.env
 $ # 编辑 example/.env，填入 baseUrl / apiKey / model
 $ dart run example/agentkit_stream_callback_llm_example.dart
 ```
+
+`example/.env.example` 是隐藏 dotfile。如果你在 Finder 或普通文件列表里看不到，
+可以运行 `ls -la example`。
 
 这个示例会启动一个临时 AgentKit 网关，连接 `.env` 中的
 `liteAgentBaseUrl`，通过 `initSession` 注册 `callbackOpenTool`，再调用
@@ -277,17 +279,6 @@ $ curl http://127.0.0.1:8888/toolkit/list \
 - `ALL /modelkit/asr/*` - 语音转文本
 - `ALL /modelkit/tts/*` - 文本转语音
 - `GET /modelkit/models` - 基于任务的模型列表
-
-## LLMKit API（已弃用）
-
-> 已弃用，请使用上方的 ModelKit 端点。`/llmkit/*` 挂载点仅为向后兼容保留，
-> 内部委托至同一套处理流程。
-
-- `ALL /llmkit/text/*` - 文本生成（chat completions）
-- `ALL /llmkit/vision/*` - 图文理解
-- `ALL /llmkit/embedding/*` - 文本嵌入
-- `ALL /llmkit/tts/*` - 文本转语音
-- `ALL /llmkit/asr/*` - 语音转文本
 
 ## AppKit API
 

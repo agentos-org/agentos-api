@@ -8,7 +8,6 @@ This gateway provides a single entry point for all local AI services:
 - **AppKit**: Application registration and subscription
 - **ToolKit**: Tool execution through the gateway
 - **ModelKit**: Task-oriented model services (chat, embedding, ASR, TTS)
-- **LLMKit** *(deprecated)*: legacy LLM services, superseded by ModelKit
 
 Detailed HTTP API reference:
 - [API.md](API.md)
@@ -128,6 +127,9 @@ $ cp example/.env.example example/.env
 $ # Edit example/.env and fill baseUrl / apiKey / model.
 $ dart run example/agentkit_stream_callback_llm_example.dart
 ```
+
+`example/.env.example` is a hidden dotfile. If you do not see it in Finder or a
+basic file listing, run `ls -la example`.
 
 The example starts a temporary AgentKit gateway, connects to
 `liteAgentBaseUrl` from `.env`, registers `callbackOpenTool` via `initSession`,
@@ -290,17 +292,6 @@ identified by `capabilities.vision` on the resolved model.
 - `ALL /modelkit/asr/*` - Speech-to-text
 - `ALL /modelkit/tts/*` - Text-to-speech
 - `GET /modelkit/models` - Task-oriented model listing
-
-## LLMKit API (Deprecated)
-
-> Deprecated. Use the ModelKit endpoints above. The `/llmkit/*` mount is kept
-> for backward compatibility and internally delegates to the same pipeline.
-
-- `ALL /llmkit/text/*` - Text generation (chat completions)
-- `ALL /llmkit/vision/*` - Image-text-to-text
-- `ALL /llmkit/embedding/*` - Text embeddings
-- `ALL /llmkit/tts/*` - Text-to-speech
-- `ALL /llmkit/asr/*` - Speech-to-text
 
 ## AppKit API
 

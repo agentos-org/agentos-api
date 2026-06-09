@@ -1257,16 +1257,11 @@ Response: `200 OK`
     "/cronkit/*": "CronKit API (cron task management, requires Token)",
     "/ragkit/*": "RagKit API (RAG knowledge/query, requires Token)",
     "/appkit/*": "AppKit API (app registration/subscription)",
-    "/toolkit/*": "ToolKit API",
+    "/toolkit/*": "ToolKit API (requires Token)",
     "/modelkit/chat/*": "Chat/vision generation",
     "/modelkit/embedding/*": "Text embedding",
     "/modelkit/asr/*": "Speech-to-text",
-    "/modelkit/tts/*": "Text-to-speech",
-    "/llmkit/text/*": "Text generation (deprecated)",
-    "/llmkit/vision/*": "Image-text-to-text (deprecated)",
-    "/llmkit/embedding/*": "Text embedding (deprecated)",
-    "/llmkit/tts/*": "Text-to-speech (deprecated)",
-    "/llmkit/asr/*": "Speech-to-text (deprecated)"
+    "/modelkit/tts/*": "Text-to-speech"
   }
 }
 ```
@@ -1491,10 +1486,9 @@ If the tool service is unavailable, returns `503`:
 
 ## ModelKit (Proxy to Model Services)
 
-ModelKit is the task-oriented model proxy and the recommended replacement for
-LLMKit. It exposes one route per task. Vision-language models live behind
-`/modelkit/chat` and are identified by `capabilities.vision` on the resolved
-model.
+ModelKit is the task-oriented model proxy. It exposes one route per task.
+Vision-language models live behind `/modelkit/chat` and are identified by
+`capabilities.vision` on the resolved model.
 
 ### Task Routes
 
@@ -1511,118 +1505,19 @@ Lists available models in the task-oriented wire schema. Each entry carries
 `task` (`chat` / `embedding` / `asr` / `tts`), `input` / `output` modalities,
 and a `capabilities` block (`vision`, `tool_call`, `stream`, `reasoning`).
 
-## LLMKit (Proxy to LLM Services) — Deprecated
-
-> Deprecated. Use the ModelKit endpoints above. The `/llmkit/*` mount is kept
-> for backward compatibility and delegates to the same ModelKit pipeline.
-
-LLMKit proxies requests to various LLM services. Each service type has its own
-endpoint prefix.
-
-### Service Types
-
-| Path Prefix | Service | Default Port | Description |
-| --- | --- | --- | --- |
-| `/llmkit/text` | llm_text | 52010 | Text generation (chat completions) |
-| `/llmkit/vision` | llm_vision | 52020 | Image-text-to-text |
-| `/llmkit/embedding` | llm_embedding | 52030 | Text embeddings |
-| `/llmkit/tts` | llm_tts | 52040 | Text-to-speech |
-| `/llmkit/asr` | llm_asr | 52050 | Speech-to-text |
-
-### Endpoints
-
-#### ALL /llmkit/text/*
-
-Proxies to text generation service. Supports streaming responses when
-`Accept: text/event-stream` header is present or request body contains
-`"stream": true`.
-
-Example request:
-
-```json
-{
-  "model": "qwen3-8b",
-  "messages": [
-    {"role": "user", "content": "Hello"}
-  ]
-}
-```
-
-Example response:
-
-```json
-{
-  "id": "chatcmpl-1",
-  "object": "chat.completion",
-  "model": "qwen3-8b",
-  "choices": [
-    {
-      "index": 0,
-      "message": {"role": "assistant", "content": "Hello!"},
-      "finish_reason": "stop"
-    }
-  ]
-}
-```
-
-#### ALL /llmkit/vision/*
-
-Proxies to image-text-to-text service.
-
-#### ALL /llmkit/embedding/*
-
-Proxies to text embedding service.
-
-Example request:
-
-```json
-{
-  "model": "bge-large-zh-v1.5-q8_0",
-  "input": ["hello world"]
-}
-```
-
-Example response:
-
-```json
-{
-  "object": "list",
-  "data": [
-    {
-      "object": "embedding",
-      "index": 0,
-      "embedding": [0.1, 0.2, 0.3]
-    }
-  ],
-  "model": "bge-large-zh-v1.5-q8_0"
-}
-```
-
-#### ALL /llmkit/tts/*
-
-Proxies to text-to-speech service.
-
-#### ALL /llmkit/asr/*
-
-Proxies to speech-to-text service.
-
-#### GET /llmkit/models
-
-Lists currently available text-capable models visible through the service
-locator. Returns local running models plus remote models.
-
 Response: `200 OK`
 
 ```json
 [
   {
     "id": "qwen3-8b",
-    "name": "qwen3-8b",
-    "alias": "qwen3-8b",
-    "description": "text model",
-    "type": "textGeneration",
-    "contextWindowSize": 8192,
-    "isRemote": false,
+    "task": "chat",
+    "capabilities": {
+      "vision": false,
+      "tool_call": true,
+      "stream": true,
+      "reasoning": true
+    },
     "isCustom": false
   }
 ]
