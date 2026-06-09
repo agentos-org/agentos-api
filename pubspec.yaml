@@ -1,5 +1,5 @@
 name: agentos_api
-description: A server app using the shelf package and Docker.
+description: AgentOS API gateway for AgentKit, CronKit, RagKit, ToolKit, AppKit, and ModelKit.
 version: 0.4.0
 repository: https://github.com/agentos-org/agentos-api
 
