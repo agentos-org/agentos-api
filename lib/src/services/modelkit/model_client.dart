@@ -575,12 +575,12 @@ class ModelClient {
     }
     for (final candidate in candidates) {
       for (final m in models) {
-        if (m.name == candidate) return m;
+        if (m.alias.isNotEmpty && m.alias == candidate) return m;
       }
     }
     for (final candidate in candidates) {
       for (final m in models) {
-        if (m.alias.isNotEmpty && m.alias == candidate) return m;
+        if (m.name == candidate) return m;
       }
     }
     return null;
