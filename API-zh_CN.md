@@ -32,6 +32,7 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
+| `modelId` | `string` | 否 | AgentKit 网关扩展字段。`/agentkit/initSession`、`/agentkit/initSimple` 以及 `/agentkit/chat` 这类按任务覆盖 `llmConfig` 的接口均支持。传入后，网关会在内部模型注册表中查找并展开成一份具体的 `llmConfig`。 |
 | `baseUrl` | `string` | 是 | LLM 接口 base URL。 |
 | `apiKey` | `string` | 是 | LLM API key。 |
 | `model` | `string` | 是 | 模型名称。 |
@@ -285,10 +286,13 @@ Query（可选）：
 说明：
 - 支持 `Capability.skills`，并会原样转发给 LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown 文档。
 - 每个 skill 文档的规范来源为 [agentskills.io/specification](https://agentskills.io/specification)，重点遵循其中 `SKILL.md` 的格式要求：YAML frontmatter 加 Markdown 正文。
+- 也支持 `Capability.llmConfig.modelId`。AgentKit 会先用 `modelId` 在内部模型注册表中做反查，再展开成 LiteAgent 可用的具体 `llmConfig`。其中解析出的模型名会写入 `llmConfig.model`；同时网关还会在可用时补齐 `baseUrl`、`apiKey`、`provider`、`adapter`、`contextWindowSize` 等字段。
 
 响应：`200 OK`（`Session`）
 
 示例请求：
+
+直接传 LiteAgent 兼容字段：
 
 ```json
 {
@@ -297,6 +301,17 @@ Query（可选）：
     "baseUrl": "http://127.0.0.1:52010",
     "apiKey": "",
     "model": "qwen3-8b"
+  }
+}
+```
+
+使用 `modelId` 反查：
+
+```json
+{
+  "systemPrompt": "You are a helpful planner.",
+  "llmConfig": {
+    "modelId": "qwen3-8b"
   }
 }
 ```
@@ -314,6 +329,7 @@ Query（可选）：
 说明：
 - 支持 `SimpleCapability.skills`，并会原样转发给 LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown 文档。
 - 每个 skill 文档的规范来源为 [agentskills.io/specification](https://agentskills.io/specification)，重点遵循其中 `SKILL.md` 的格式要求：YAML frontmatter 加 Markdown 正文。
+- `SimpleCapability.llmConfig.modelId` 也受支持，解析行为与 `/agentkit/initSession` 相同。
 
 响应：`200 OK`（`Session`）
 
@@ -1496,20 +1512,30 @@ ModelKit 是基于任务的模型代理。每个任务对应一个路由。视�
 以基于任务的 wire schema 列出可用模型。每个条目包含 `task`
 （`chat` / `embedding` / `asr` / `tts`）、`input` / `output` 模态，以及
 `capabilities` 块（`vision`、`tool_call`、`stream`、`reasoning`）。
+其中 `id` 是网关用于路由和反查的稳定模型标识，可能是类似哈希的值，不应假定它
+与 `name` 或 `alias` 相同。若底层模型 metadata 提供了 `contextWindowSize`，
+响应中也会返回该字段。
 
 响应：`200 OK`
 
 ```json
 [
   {
-    "id": "qwen3-8b",
+    "id": "7f3a91c2de4b",
+    "name": "Qwen 3 8B",
+    "alias": "qwen3-8b",
+    "description": "文本生成模型",
     "task": "chat",
+    "input": ["text"],
+    "output": ["text"],
     "capabilities": {
       "vision": false,
       "tool_call": true,
       "stream": true,
       "reasoning": true
     },
+    "contextWindowSize": 8192,
+    "isRemote": false,
     "isCustom": false
   }
 ]

@@ -35,6 +35,7 @@ If backend/sdk operation fails, the gateway may return `502`.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
+| `modelId` | `string` | No | AgentKit gateway extension. Supported by `/agentkit/initSession`, `/agentkit/initSimple`, and per-task overrides such as `/agentkit/chat`. When provided, the gateway resolves it against the internal model registry and expands it into a concrete `llmConfig`. |
 | `baseUrl` | `string` | Yes | LLM endpoint base URL. |
 | `apiKey` | `string` | Yes | LLM API key. |
 | `model` | `string` | Yes | Model name. |
@@ -288,10 +289,13 @@ Request body (when `agentId` is not provided): `Capability`
 Notes:
 - `Capability.skills` is supported and forwarded as-is to LiteAgent SDK. Each item should be a complete Agent Skills markdown document.
 - The source spec for each skill document is [agentskills.io/specification](https://agentskills.io/specification), especially the `SKILL.md` format with YAML frontmatter followed by Markdown content.
+- `Capability.llmConfig.modelId` is also supported. AgentKit resolves `modelId` from the internal model registry, then expands it into a concrete LiteAgent `llmConfig`. The resolved model name is written to `llmConfig.model`; the gateway also fills fields such as `baseUrl`, `apiKey`, `provider`, `adapter`, and `contextWindowSize` when available.
 
 Response: `200 OK` (`Session`)
 
 Example request:
+
+Using direct LiteAgent-compatible fields:
 
 ```json
 {
@@ -300,6 +304,17 @@ Example request:
     "baseUrl": "http://127.0.0.1:52010",
     "apiKey": "",
     "model": "qwen3-8b"
+  }
+}
+```
+
+Using `modelId` lookup:
+
+```json
+{
+  "systemPrompt": "You are a helpful planner.",
+  "llmConfig": {
+    "modelId": "qwen3-8b"
   }
 }
 ```
@@ -317,6 +332,7 @@ Request body: `SimpleCapability`
 Notes:
 - `SimpleCapability.skills` is supported and forwarded as-is to LiteAgent SDK. Each item should be a complete Agent Skills markdown document.
 - The source spec for each skill document is [agentskills.io/specification](https://agentskills.io/specification), especially the `SKILL.md` format with YAML frontmatter followed by Markdown content.
+- `SimpleCapability.llmConfig.modelId` is also supported and follows the same resolution behavior as `/agentkit/initSession`.
 
 Response: `200 OK` (`Session`)
 
@@ -1504,20 +1520,31 @@ Vision-language models live behind `/modelkit/chat` and are identified by
 Lists available models in the task-oriented wire schema. Each entry carries
 `task` (`chat` / `embedding` / `asr` / `tts`), `input` / `output` modalities,
 and a `capabilities` block (`vision`, `tool_call`, `stream`, `reasoning`).
+`id` is the stable model identifier used by the gateway for routing and lookup;
+it may be a hash-like value and should not be assumed to equal `name` or
+`alias`. `contextWindowSize` is returned when the backing model metadata
+includes it.
 
 Response: `200 OK`
 
 ```json
 [
   {
-    "id": "qwen3-8b",
+    "id": "7f3a91c2de4b",
+    "name": "Qwen 3 8B",
+    "alias": "qwen3-8b",
+    "description": "Text generation model",
     "task": "chat",
+    "input": ["text"],
+    "output": ["text"],
     "capabilities": {
       "vision": false,
       "tool_call": true,
       "stream": true,
       "reasoning": true
     },
+    "contextWindowSize": 8192,
+    "isRemote": false,
     "isCustom": false
   }
 ]
