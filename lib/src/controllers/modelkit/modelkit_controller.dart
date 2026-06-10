@@ -36,6 +36,11 @@ class ModelKitController {
 
     router.get('/models', _listModels);
 
+    router.get('/chat/models', _listChatModels);
+    router.get('/chat/models/', _listChatModels);
+    router.get('/chat/v1/models', _listChatModels);
+    router.get('/chat/v1/models/', _listChatModels);
+
     _registerForwardRoutes(router, ModelTask.chat);
     _registerForwardRoutes(router, ModelTask.embedding);
     _registerForwardRoutes(router, ModelTask.asr);
@@ -111,6 +116,84 @@ class ModelKitController {
     } on Exception catch (error) {
       return Response(502, body: 'Model list error: $error');
     }
+  }
+
+  /// Lists models in the **llama.cpp combined wire schema** used by
+  /// `/chat/v1/models` and `/chat/models`.
+  ///
+  /// The payload mirrors what llama.cpp emits (an OpenAI-style `object`/`data` block), 
+  /// but aggregates **all** available models — remote and local, every task — just like `/models`,
+  /// instead of only the models loaded by a single llama backend.
+  Future<Response> _listChatModels(Request request) async {
+    try {
+      final models = await _client.serviceLocator.getLlmModelList();
+      final openaiData = <Map<String, dynamic>>[];
+      final created = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+      for (final model in models) {
+        if (!await _isModelAvailable(model)) continue;
+
+        final task = _resolveTask(model);
+        if (task == null || task != ModelTask.chat) continue;
+
+        openaiData.add(<String, dynamic>{
+          'id': _menuModelLabel(model) ?? model.id,
+          'aliases': _aliases(model),
+          'tags': const <String>[],
+          'object': 'model',
+          'created': created,
+          'owned_by': model.provider,
+          'meta': <String, dynamic>{
+            if (model.contextWindowSize != null)
+              'n_ctx': model.contextWindowSize,
+          },
+        });
+      }
+
+      return Response.ok(
+        jsonEncode({
+          'object': 'list',
+          'data': openaiData,
+        }),
+        headers: const {'content-type': 'application/json'},
+      );
+    } on Exception catch (error) {
+      return Response(502, body: 'Model list error: $error');
+    }
+  }
+
+  /// Builds the menu-facing model label that becomes the OpenAI-style `id`.
+  ///
+  /// Prefers the alias, appending the canonical name as `alias (name)` when the
+  /// two differ, and falls back to name then id. Mirrors the desktop client's
+  /// `_displayMenuModelLabel` so the `id` it sends back can be resolved by
+  /// [ModelClient].
+  static String? _menuModelLabel(LlmModelInfo model) {
+    final alias = model.alias.trim();
+    if (alias.isNotEmpty) {
+      final name = model.name.trim();
+      if (name.isNotEmpty && name != alias) {
+        return '$alias ($name)';
+      }
+      return alias;
+    }
+    final name = model.name.trim();
+    if (name.isNotEmpty) {
+      return name;
+    }
+    final id = model.id.trim();
+    if (id.isNotEmpty) {
+      return id;
+    }
+    return null;
+  }
+
+  static List<String> _aliases(LlmModelInfo model) {
+    final aliases = <String>[model.name];
+    if (model.alias.isNotEmpty && model.alias != model.name) {
+      aliases.add(model.alias);
+    }
+    return aliases;
   }
 
   /// Prefer [LlmModelInfo.task] (new locators emit it directly); fall back to

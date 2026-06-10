@@ -244,6 +244,15 @@ class ModelClient {
 
     try {
       final request = await _httpClient.openUrl(method, uri);
+      // Do not reuse pooled keep-alive connections for proxied (especially
+      // streaming) upstream calls. A streaming response that is torn down early
+      // (client disconnect, upstream error mid-stream) can be returned to the
+      // pool with a lingering subscription on its underlying socket. The next
+      // request reusing that connection then fails on its first
+      // `response.listen`/`fold` with "Bad state: Stream has already been
+      // listened to". Forcing a fresh connection per request eliminates that
+      // class of corruption.
+      request.persistentConnection = false;
       _applyRequestHeaders(request, headers, stripAuth: isRemoteRoute);
       if (isRemoteRoute && remoteApiKey != null && remoteApiKey.isNotEmpty) {
         request.headers.set(
@@ -553,13 +562,52 @@ class ModelClient {
 
   Future<LlmModelInfo?> _resolveModel(String identifier) async {
     final models = await _serviceLocator.getLlmModelList();
-    for (final m in models) {
-      if (m.id == identifier) return m;
+    // Build the ordered set of candidate identifiers a client may send. The
+    // chat model list exposes ids shaped like `alias (name)` (see
+    // `ModelKitController._menuModelLabel`), so we accept the raw identifier as
+    // well as the alias / name parsed out of that label.
+    final candidates = _modelIdentifierCandidates(identifier);
+
+    for (final candidate in candidates) {
+      for (final m in models) {
+        if (m.id == candidate) return m;
+      }
     }
-    for (final m in models) {
-      if (m.name == identifier) return m;
+    for (final candidate in candidates) {
+      for (final m in models) {
+        if (m.name == candidate) return m;
+      }
+    }
+    for (final candidate in candidates) {
+      for (final m in models) {
+        if (m.alias.isNotEmpty && m.alias == candidate) return m;
+      }
     }
     return null;
+  }
+
+  /// Expands a client-supplied model identifier into the candidates that may
+  /// match an [LlmModelInfo].
+  ///
+  /// Handles the menu label format `alias (name)` by also yielding the trimmed
+  /// alias (text before the final parenthesis group) and the inner name.
+  static List<String> _modelIdentifierCandidates(String identifier) {
+    final trimmed = identifier.trim();
+    if (trimmed.isEmpty) return const [];
+
+    final candidates = <String>[trimmed];
+
+    if (trimmed.endsWith(')')) {
+      final open = trimmed.lastIndexOf('(');
+      if (open > 0) {
+        final inner = trimmed.substring(open + 1, trimmed.length - 1).trim();
+        final outer = trimmed.substring(0, open).trim();
+        if (inner.isNotEmpty) candidates.add(inner);
+        if (outer.isNotEmpty) candidates.add(outer);
+      }
+    }
+
+    return candidates;
   }
 
   String? _extractModelName(List<int>? body) {
