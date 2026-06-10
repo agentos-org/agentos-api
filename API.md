@@ -1502,30 +1502,108 @@ If the tool service is unavailable, returns `503`:
 
 ## ModelKit (Proxy to Model Services)
 
-ModelKit is the task-oriented model proxy. It exposes one route per task.
-Vision-language models live behind `/modelkit/chat` and are identified by
-`capabilities.vision` on the resolved model.
+ModelKit is the task-oriented gateway for direct model access. Use AgentKit
+when you need agents, sessions, tools, or multi-step orchestration; use
+ModelKit when you need to call a model capability directly.
 
-### Task Routes
+ModelKit exposes stable task routes and forwards requests to the matching local
+or remote model backend. Request bodies, query parameters, and most headers are
+passed through to the upstream service. The gateway only adds routing,
+model-resolution, metrics, and compatibility handling.
 
-| Path Prefix | Task | Description |
-| --- | --- | --- |
-| `/modelkit/chat` | chat | Text/vision generation (chat completions) |
-| `/modelkit/embedding` | embedding | Text embeddings |
-| `/modelkit/asr` | asr | Speech-to-text |
-| `/modelkit/tts` | tts | Text-to-speech |
+ModelKit routes do not require an AgentOS bearer token. For remote models, the
+gateway resolves provider credentials from the registered model metadata or the
+kernel default LLM configuration.
+
+### Endpoint Summary
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /modelkit/models` | List available models in the task-oriented ModelKit schema |
+| `ALL /modelkit/chat` | Forward to the chat default endpoint (`/chat/completions`) |
+| `ALL /modelkit/chat/*` | Forward to a custom chat upstream path |
+| `ALL /modelkit/embedding` | Forward to the embedding default endpoint (`/embeddings`) |
+| `ALL /modelkit/embedding/*` | Forward to a custom embedding upstream path |
+| `ALL /modelkit/asr` | Forward to the ASR default endpoint (`/audio/transcriptions`) |
+| `ALL /modelkit/asr/*` | Forward to a custom ASR upstream path |
+| `ALL /modelkit/tts` | Forward to the TTS default endpoint (`/audio/speech`) |
+| `ALL /modelkit/tts/*` | Forward to a custom TTS upstream path |
+
+### Common Schemas
+
+#### ModelInfo
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Unique 12-character hash-style model ID used by the gateway for routing and lookup. |
+| `name` | `string` | Yes | Upstream model name. For remote models, the gateway may rewrite request body `model` from `id` to this value before forwarding. |
+| `alias` | `string` | Yes | Human-friendly model alias. |
+| `description` | `string` | Yes | Model description from the service locator. |
+| `task` | `string` | Yes | `chat`, `embedding`, `asr`, or `tts`. |
+| `input` | `string[]` | Yes | Input modalities, such as `text`, `image`, or `audio`. |
+| `output` | `string[]` | Yes | Output modalities, such as `text` or `audio`. |
+| `capabilities` | `ModelCapabilities` | Yes | Capability flags. |
+| `contextWindowSize` | `number` | No | Context window size when provided by the backing model metadata. |
+| `isRemote` | `boolean` | Yes | Whether the model is served by a remote provider route. |
+| `isCustom` | `boolean` | Yes | Whether the model is custom/user-defined. |
+
+#### ModelCapabilities
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `vision` | `boolean` | Yes | Whether the chat model accepts image input. Vision-language models use `/modelkit/chat`; there is no separate vision task route. |
+| `tool_call` | `boolean` | Yes | Whether tool/function calling is supported. |
+| `stream` | `boolean` | Yes | Whether streaming responses are supported. |
+| `reasoning` | `boolean` | Yes | Whether reasoning output is supported by the model metadata. |
+
+#### Common Request Fields
+
+ModelKit forwards the upstream model service protocol. For OpenAI-compatible
+backends, the following fields are commonly used:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | Usually | Model identifier. Prefer the unique `id` returned by `GET /modelkit/models`; the gateway also accepts a resolvable model `name` for compatibility. For `/modelkit/chat`, if omitted, the gateway may use the kernel default LLM configuration. |
+| `stream` | `boolean` | No | When true, chat responses are streamed as `text/event-stream`. The gateway also treats requests with `Accept: text/event-stream` as streaming requests. |
+| `base_url` | `string` | No | Optional base URL hint for metrics. Routing still resolves through the model registry and service locator. |
+
+### Routing Contract
+
+ModelKit path prefixes select a task. The task root maps to a default upstream
+endpoint. A sub-path is forwarded as the requested upstream path.
+
+| Public Path | Task | Default Upstream Path | Typical Content Type | Typical Response |
+| --- | --- | --- | --- | --- |
+| `/modelkit/chat` | `chat` | `/chat/completions` | `application/json` | JSON chat completion or SSE stream |
+| `/modelkit/embedding` | `embedding` | `/embeddings` | `application/json` | JSON embedding response |
+| `/modelkit/asr` | `asr` | `/audio/transcriptions` | `multipart/form-data` | JSON or text transcription |
+| `/modelkit/tts` | `tts` | `/audio/speech` | `application/json` | Audio bytes or provider response |
+
+Examples:
+
+| Request Path | Forwarding Behavior |
+| --- | --- |
+| `POST /modelkit/chat` | Uses the chat task default endpoint |
+| `POST /modelkit/chat/v1/chat/completions` | Forwards to the chat backend with that explicit path |
+| `GET /modelkit/tts/audio/voices` | Forwards to the TTS backend voice-list endpoint |
+
+For chat responses, ModelKit normalizes OpenAI-compatible JSON and SSE details
+where needed, including `data: ` SSE framing, `reasoning_content`, and tool-call
+delta compatibility. For TTS voice-list responses, filesystem paths in voice
+keys may be reduced to basenames.
+
+### Endpoints
 
 #### GET /modelkit/models
 
 Lists available models in the task-oriented wire schema. Each entry carries
 `task` (`chat` / `embedding` / `asr` / `tts`), `input` / `output` modalities,
 and a `capabilities` block (`vision`, `tool_call`, `stream`, `reasoning`).
-`id` is the stable model identifier used by the gateway for routing and lookup;
-it may be a hash-like value and should not be assumed to equal `name` or
-`alias`. `contextWindowSize` is returned when the backing model metadata
-includes it.
+`id` is the unique 12-character hash-style model identifier used by the gateway
+for routing and lookup. Treat `name` and `alias` as display/provider metadata,
+not as the canonical ID.
 
-Response: `200 OK`
+Response: `200 OK` (`ModelInfo[]`)
 
 ```json
 [
@@ -1550,14 +1628,201 @@ Response: `200 OK`
 ]
 ```
 
-### Error Responses
+#### ALL /modelkit/chat
 
-If a backend service is unavailable, returns `503`:
+Forwards a chat/text-generation or vision-language request to the resolved chat
+backend. The root path maps to the upstream `/chat/completions` endpoint.
+Vision-language models are selected by choosing a chat model whose
+`capabilities.vision` is `true`.
+
+Common JSON request body:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | No | Stable model `id` from `/modelkit/models`. If omitted, the gateway may use the kernel default LLM config. |
+| `messages` | `object[]` | Yes | OpenAI-compatible chat messages. For vision models, message content may include text and image parts supported by the upstream backend. |
+| `stream` | `boolean` | No | Stream the response as SSE when supported. |
+| `tools` | `object[]` | No | OpenAI-compatible tool definitions when the model supports tool calling. |
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8888/modelkit/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "7f3a91c2de4b",
+    "messages": [
+      {"role": "user", "content": "Write a one-sentence product tagline."}
+    ]
+  }'
+```
+
+Example response:
 
 ```json
 {
-  "error": "Text generation service unavailable",
-  "service": "llm_text"
+  "id": "chatcmpl-001",
+  "object": "chat.completion",
+  "model": "Qwen 3 8B",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "AgentOS turns local and remote AI capabilities into one programmable workspace."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 18,
+    "completion_tokens": 14,
+    "total_tokens": 32
+  }
+}
+```
+
+Streaming example:
+
+```bash
+curl -N -X POST http://localhost:8888/modelkit/chat \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
+  -d '{
+    "model": "7f3a91c2de4b",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "List two launch risks."}
+    ]
+  }'
+```
+
+Streaming response: `text/event-stream`
+
+```text
+data: {"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"Dependency readiness"}}]}
+
+data: [DONE]
+```
+
+#### ALL /modelkit/embedding
+
+Forwards an embedding request to the resolved embedding backend. The root path
+maps to the upstream `/embeddings` endpoint.
+
+Common JSON request body:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | Yes | Stable embedding model `id` from `/modelkit/models`. |
+| `input` | `string` or `string[]` | Yes | Text to embed. |
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8888/modelkit/embedding \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "bge-large-zh-v1.5-q8_0",
+    "input": "AgentOS model gateway"
+  }'
+```
+
+Example response:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [0.0123, -0.0456, 0.0789]
+    }
+  ],
+  "model": "bge-large-zh-v1.5-q8_0"
+}
+```
+
+#### ALL /modelkit/asr
+
+Forwards a speech-to-text request to the resolved ASR backend. The root path
+maps to the upstream `/audio/transcriptions` endpoint.
+
+Common multipart request fields:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | Yes | Stable ASR model `id` from `/modelkit/models`. |
+| `file` | `file` | Yes | Audio file to transcribe. |
+| `language` | `string` | No | Language hint, if supported by the upstream backend. |
+| `response_format` | `string` | No | Provider-specific response format, such as `json` or `text`. |
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8888/modelkit/asr \
+  -F model=whisper-local \
+  -F file=@sample.wav \
+  -F response_format=json
+```
+
+Example response:
+
+```json
+{
+  "text": "Welcome to AgentOS."
+}
+```
+
+#### ALL /modelkit/tts
+
+Forwards a text-to-speech request to the resolved TTS backend. The root path
+maps to the upstream `/audio/speech` endpoint.
+
+Common JSON request body:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | Yes | Stable TTS model `id` from `/modelkit/models`. |
+| `input` | `string` | Yes | Text to synthesize. |
+| `voice` | `string` | No | Voice name supported by the upstream backend. |
+| `response_format` | `string` | No | Audio format, if supported by the upstream backend. |
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8888/modelkit/tts \
+  -H 'Content-Type: application/json' \
+  -o speech.wav \
+  -d '{
+    "model": "qwen-tts",
+    "input": "Welcome to AgentOS.",
+    "voice": "default",
+    "response_format": "wav"
+  }'
+```
+
+Response: audio bytes with the upstream content type, or a provider-specific
+JSON response.
+
+Voice-list example:
+
+```bash
+curl http://localhost:8888/modelkit/tts/audio/voices
+```
+
+### Error Responses
+
+If no local service or remote route is available for the selected task/model,
+returns `503`:
+
+```json
+{
+  "error": "Model \"qwen3-8b\" unavailable",
+  "service": "llm_chat"
 }
 ```
 
@@ -1566,7 +1831,22 @@ If a backend connection error occurs, returns `502`:
 ```json
 {
   "error": "Backend service unavailable",
-  "service": "llm_text",
+  "service": "llm_chat",
   "message": "Connection refused"
+}
+```
+
+If the upstream reports a context-window overflow, ModelKit normalizes common
+provider-specific errors to `400`:
+
+```json
+{
+  "error": {
+    "message": "This model's maximum context length is 8192 tokens. However, your messages resulted in 12000 tokens. Please reduce the length of the messages.",
+    "type": "context_length_exceeded",
+    "code": "context_length_exceeded",
+    "n_prompt_tokens": 12000,
+    "n_ctx": 8192
+  }
 }
 ```

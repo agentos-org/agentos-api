@@ -1495,28 +1495,103 @@ data:{"json":"payload"}
 
 ## ModelKit（代理模型服务）
 
-ModelKit 是基于任务的模型代理。每个任务对应一个路由。视觉模型归于
-`/modelkit/chat`，通过模型的 `capabilities.vision` 标识。
+ModelKit 是面向任务的模型能力网关，用于直接访问模型能力。需要 agent、
+session、工具调用或多步骤编排时使用 AgentKit；只需要直接调用某类模型能力时使用
+ModelKit。
 
-### 任务路由
+ModelKit 暴露稳定的任务路由，并将请求转发到对应的本地或远程模型后端。请求体、
+query 参数和大多数 headers 会透传给上游服务。网关只负责路由、模型解析、指标记录
+和兼容性处理。
 
-| 路径前缀 | 任务 | 说明 |
-| --- | --- | --- |
-| `/modelkit/chat` | chat | 文本/视觉生成（chat completions） |
-| `/modelkit/embedding` | embedding | 文本嵌入 |
-| `/modelkit/asr` | asr | 语音转文本 |
-| `/modelkit/tts` | tts | 文本转语音 |
+ModelKit 路由当前不要求 AgentOS Bearer token。对于远程模型，网关会从注册的模型
+metadata 或 kernel 默认 LLM 配置中解析 provider 凭证。
+
+### 端点总览
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /modelkit/models` | 以 ModelKit 面向任务的 schema 列出可用模型 |
+| `ALL /modelkit/chat` | 转发到 chat 默认端点（`/chat/completions`） |
+| `ALL /modelkit/chat/*` | 转发到自定义 chat 上游路径 |
+| `ALL /modelkit/embedding` | 转发到 embedding 默认端点（`/embeddings`） |
+| `ALL /modelkit/embedding/*` | 转发到自定义 embedding 上游路径 |
+| `ALL /modelkit/asr` | 转发到 ASR 默认端点（`/audio/transcriptions`） |
+| `ALL /modelkit/asr/*` | 转发到自定义 ASR 上游路径 |
+| `ALL /modelkit/tts` | 转发到 TTS 默认端点（`/audio/speech`） |
+| `ALL /modelkit/tts/*` | 转发到自定义 TTS 上游路径 |
+
+### 常用 Schema
+
+#### ModelInfo
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `string` | 是 | 网关用于路由和反查的唯一 12 位 hash 风格模型 ID。 |
+| `name` | `string` | 是 | 上游模型名称。对于远程模型，网关可能会在转发前将请求体中的 `model` 从 `id` 改写为该值。 |
+| `alias` | `string` | 是 | 便于展示的人类可读模型别名。 |
+| `description` | `string` | 是 | 来自 service locator 的模型说明。 |
+| `task` | `string` | 是 | `chat`、`embedding`、`asr` 或 `tts`。 |
+| `input` | `string[]` | 是 | 输入模态，例如 `text`、`image` 或 `audio`。 |
+| `output` | `string[]` | 是 | 输出模态，例如 `text` 或 `audio`。 |
+| `capabilities` | `ModelCapabilities` | 是 | 能力标记。 |
+| `contextWindowSize` | `number` | 否 | 底层模型 metadata 提供时返回上下文窗口大小。 |
+| `isRemote` | `boolean` | 是 | 模型是否通过远程 provider route 提供。 |
+| `isCustom` | `boolean` | 是 | 模型是否为自定义/用户定义模型。 |
+
+#### ModelCapabilities
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `vision` | `boolean` | 是 | chat 模型是否接受图像输入。视觉语言模型使用 `/modelkit/chat`，没有单独的 vision task route。 |
+| `tool_call` | `boolean` | 是 | 是否支持工具/函数调用。 |
+| `stream` | `boolean` | 是 | 是否支持流式响应。 |
+| `reasoning` | `boolean` | 是 | 模型 metadata 是否声明支持 reasoning 输出。 |
+
+#### 通用请求字段
+
+ModelKit 转发上游模型服务协议。对于 OpenAI-compatible 后端，常用字段如下：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | 通常必填 | 模型标识。建议优先使用 `GET /modelkit/models` 返回的唯一 `id`；为兼容旧调用，网关也接受可解析的模型 `name`。对于 `/modelkit/chat`，如果省略，网关可能使用 kernel 默认 LLM 配置。 |
+| `stream` | `boolean` | 否 | 为 true 时，chat 响应以 `text/event-stream` 流式返回。带有 `Accept: text/event-stream` 的请求也会被视为流式请求。 |
+| `base_url` | `string` | 否 | 可选的 base URL 提示，用于指标记录。实际路由仍通过模型注册表和 service locator 解析。 |
+
+### 路由契约
+
+ModelKit 的路径前缀用于选择任务。任务根路径会映射到默认上游端点；子路径会作为显式
+上游路径转发。
+
+| 对外路径 | 任务 | 默认上游路径 | 典型 Content Type | 典型响应 |
+| --- | --- | --- | --- | --- |
+| `/modelkit/chat` | `chat` | `/chat/completions` | `application/json` | JSON chat completion 或 SSE stream |
+| `/modelkit/embedding` | `embedding` | `/embeddings` | `application/json` | JSON embedding response |
+| `/modelkit/asr` | `asr` | `/audio/transcriptions` | `multipart/form-data` | JSON 或 text transcription |
+| `/modelkit/tts` | `tts` | `/audio/speech` | `application/json` | 音频 bytes 或 provider 响应 |
+
+示例：
+
+| 请求路径 | 转发行为 |
+| --- | --- |
+| `POST /modelkit/chat` | 使用 chat 任务默认端点 |
+| `POST /modelkit/chat/v1/chat/completions` | 使用该显式路径转发到 chat 后端 |
+| `GET /modelkit/tts/audio/voices` | 转发到 TTS 后端的声音列表端点 |
+
+对于 chat 响应，ModelKit 会在需要时规范化 OpenAI-compatible JSON 和 SSE 细节，包括
+`data: ` SSE framing、`reasoning_content` 和 tool-call delta 兼容性。对于 TTS
+声音列表响应，voice key 中的文件系统路径可能会被简化为 basename。
+
+### 端点
 
 #### GET /modelkit/models
 
 以基于任务的 wire schema 列出可用模型。每个条目包含 `task`
 （`chat` / `embedding` / `asr` / `tts`）、`input` / `output` 模态，以及
 `capabilities` 块（`vision`、`tool_call`、`stream`、`reasoning`）。
-其中 `id` 是网关用于路由和反查的稳定模型标识，可能是类似哈希的值，不应假定它
-与 `name` 或 `alias` 相同。若底层模型 metadata 提供了 `contextWindowSize`，
-响应中也会返回该字段。
+其中 `id` 是网关用于路由和反查的唯一 12 位 hash 风格模型标识。`name` 和
+`alias` 应视为展示或 provider metadata，而不是规范 ID。
 
-响应：`200 OK`
+响应：`200 OK`（`ModelInfo[]`）
 
 ```json
 [
@@ -1541,14 +1616,198 @@ ModelKit 是基于任务的模型代理。每个任务对应一个路由。视�
 ]
 ```
 
-### 错误响应
+#### ALL /modelkit/chat
 
-后端服务不可用时返回 `503`：
+将 chat/text-generation 或视觉语言请求转发到解析出的 chat 后端。根路径映射到上游
+`/chat/completions` 端点。视觉语言模型通过选择 `capabilities.vision` 为 `true`
+的 chat 模型来使用。
+
+常见 JSON 请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | 否 | 来自 `/modelkit/models` 的稳定模型 `id`。如果省略，网关可能使用 kernel 默认 LLM 配置。 |
+| `messages` | `object[]` | 是 | OpenAI-compatible chat messages。对于视觉模型，message content 可包含上游后端支持的文本和图像 part。 |
+| `stream` | `boolean` | 否 | 在模型支持时以 SSE 流式返回。 |
+| `tools` | `object[]` | 否 | 模型支持 tool calling 时使用的 OpenAI-compatible tool definitions。 |
+
+请求示例：
+
+```bash
+curl -X POST http://localhost:8888/modelkit/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "7f3a91c2de4b",
+    "messages": [
+      {"role": "user", "content": "写一句产品标语。"}
+    ]
+  }'
+```
+
+响应示例：
 
 ```json
 {
-  "error": "文本生成 服务不可用",
-  "service": "llm_text"
+  "id": "chatcmpl-001",
+  "object": "chat.completion",
+  "model": "Qwen 3 8B",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "AgentOS 将本地与远程 AI 能力整合为一个可编程工作空间。"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 18,
+    "completion_tokens": 14,
+    "total_tokens": 32
+  }
+}
+```
+
+流式请求示例：
+
+```bash
+curl -N -X POST http://localhost:8888/modelkit/chat \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
+  -d '{
+    "model": "7f3a91c2de4b",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "列出两个上线风险。"}
+    ]
+  }'
+```
+
+流式响应：`text/event-stream`
+
+```text
+data: {"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"依赖服务就绪情况"}}]}
+
+data: [DONE]
+```
+
+#### ALL /modelkit/embedding
+
+将 embedding 请求转发到解析出的 embedding 后端。根路径映射到上游 `/embeddings`
+端点。
+
+常见 JSON 请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | 是 | 来自 `/modelkit/models` 的稳定 embedding 模型 `id`。 |
+| `input` | `string` 或 `string[]` | 是 | 需要向量化的文本。 |
+
+请求示例：
+
+```bash
+curl -X POST http://localhost:8888/modelkit/embedding \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "bge-large-zh-v1.5-q8_0",
+    "input": "AgentOS model gateway"
+  }'
+```
+
+响应示例：
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [0.0123, -0.0456, 0.0789]
+    }
+  ],
+  "model": "bge-large-zh-v1.5-q8_0"
+}
+```
+
+#### ALL /modelkit/asr
+
+将 speech-to-text 请求转发到解析出的 ASR 后端。根路径映射到上游
+`/audio/transcriptions` 端点。
+
+常见 multipart 请求字段：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | 是 | 来自 `/modelkit/models` 的稳定 ASR 模型 `id`。 |
+| `file` | `file` | 是 | 需要转写的音频文件。 |
+| `language` | `string` | 否 | 上游后端支持时使用的语言提示。 |
+| `response_format` | `string` | 否 | provider-specific 响应格式，例如 `json` 或 `text`。 |
+
+请求示例：
+
+```bash
+curl -X POST http://localhost:8888/modelkit/asr \
+  -F model=whisper-local \
+  -F file=@sample.wav \
+  -F response_format=json
+```
+
+响应示例：
+
+```json
+{
+  "text": "欢迎使用 AgentOS。"
+}
+```
+
+#### ALL /modelkit/tts
+
+将 text-to-speech 请求转发到解析出的 TTS 后端。根路径映射到上游
+`/audio/speech` 端点。
+
+常见 JSON 请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | 是 | 来自 `/modelkit/models` 的稳定 TTS 模型 `id`。 |
+| `input` | `string` | 是 | 需要合成的文本。 |
+| `voice` | `string` | 否 | 上游后端支持的声音名称。 |
+| `response_format` | `string` | 否 | 上游后端支持时指定音频格式。 |
+
+请求示例：
+
+```bash
+curl -X POST http://localhost:8888/modelkit/tts \
+  -H 'Content-Type: application/json' \
+  -o speech.wav \
+  -d '{
+    "model": "qwen-tts",
+    "input": "欢迎使用 AgentOS。",
+    "voice": "default",
+    "response_format": "wav"
+  }'
+```
+
+响应：使用上游 content type 的音频 bytes，或 provider-specific JSON 响应。
+
+声音列表示例：
+
+```bash
+curl http://localhost:8888/modelkit/tts/audio/voices
+```
+
+### 错误响应
+
+所选 task/model 没有可用本地服务或远程 route 时返回 `503`：
+
+```json
+{
+  "error": "Model \"qwen3-8b\" unavailable",
+  "service": "llm_chat"
 }
 ```
 
@@ -1556,8 +1815,23 @@ ModelKit 是基于任务的模型代理。每个任务对应一个路由。视�
 
 ```json
 {
-  "error": "后端服务不可用",
-  "service": "llm_text",
+  "error": "Backend service unavailable",
+  "service": "llm_chat",
   "message": "Connection refused"
+}
+```
+
+如果上游返回上下文窗口超限错误，ModelKit 会将常见 provider-specific 错误规范化为
+`400`：
+
+```json
+{
+  "error": {
+    "message": "This model's maximum context length is 8192 tokens. However, your messages resulted in 12000 tokens. Please reduce the length of the messages.",
+    "type": "context_length_exceeded",
+    "code": "context_length_exceeded",
+    "n_prompt_tokens": 12000,
+    "n_ctx": 8192
+  }
 }
 ```
