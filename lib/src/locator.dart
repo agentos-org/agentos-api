@@ -77,7 +77,7 @@ class LlmModelInfo {
   final List<String> tags;
   final String repoId;
 
-  /// Legacy IO-oriented type identifier preserved for the LLMKit wire schema
+  /// Legacy IO-oriented type identifier preserved for wire compatibility
   /// (`textGeneration` / `imageTextToText` / `embedding` / `audioTextToText` /
   /// `textToSpeech`).
   ///
@@ -98,8 +98,8 @@ class LlmModelInfo {
   /// Task-oriented identifier (`chat` / `embedding` / `asr` / `tts`).
   ///
   /// Optional to preserve binary compatibility with locators that still emit
-  /// the legacy [type] only. ModelKit consumers prefer [task]; LLMKit consumers
-  /// fall back to [type].
+  /// the legacy [type] only. ModelKit consumers prefer [task] and fall back
+  /// to inferring from [type].
   final String? task;
 
   /// Input modality wire names (`text` / `image` / `audio` / `video`).
@@ -111,9 +111,8 @@ class LlmModelInfo {
   /// Output modality wire names; same conventions as [inputModalities].
   final List<String> outputModalities;
 
-  /// Vision capability flag. Used by LLMKit to map a `chat` task back to the
-  /// legacy `imageTextToText` wire string. Derived from `inputModalities`
-  /// containing `image` (or `video`).
+  /// Vision capability flag. Derived from `inputModalities` containing
+  /// `image` (or `video`).
   final bool vision;
 
   /// Tool-calling capability flag.
@@ -224,8 +223,7 @@ abstract class AgentOSServiceLocator {
   /// - 'liteagent': LiteAgent agent service
   /// - 'opentool': OpenTool tool service
   /// - 'embeddings': Embeddings server
-  /// - 'llm_text': Text generation service
-  /// - 'llm_vision': Image-text understanding service
+  /// - 'llm_chat': Chat service (text + vision)
   /// - 'llm_embedding': LLM embedding model service
   /// - 'llm_tts': Text-to-speech service
   /// - 'llm_asr': Speech-to-text service
@@ -296,8 +294,7 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
     'liteagent': 9527,
     'opentool': 19627,
     'embeddings': 9537,
-    'llm_text': 52010,
-    'llm_vision': 52020,
+    'llm_chat': 52010,
     'llm_embedding': 52030,
     'llm_tts': 52040,
     'llm_asr': 52050,

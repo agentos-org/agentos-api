@@ -32,15 +32,14 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
 
   @override
   Future<int?> getServicePort(String serviceKey, {String? modelId}) async {
-    if (serviceKey == ApiConfig.serviceLlmText && modelId != null) {
+    if (serviceKey == ApiConfig.serviceLlmChat && modelId != null) {
       return runningModelIds.contains(modelId) ? 52010 : null;
     }
     return switch (serviceKey) {
       ApiConfig.serviceLiteagent => 9527,
       ApiConfig.serviceOpentool => openToolPort,
       ApiConfig.serviceEmbeddings => 9537,
-      ApiConfig.serviceLlmText => 52010,
-      ApiConfig.serviceLlmVision => 52020,
+      ApiConfig.serviceLlmChat => 52010,
       ApiConfig.serviceLlmEmbedding => 52030,
       ApiConfig.serviceLlmTts => 52040,
       ApiConfig.serviceLlmAsr => 52050,
@@ -257,10 +256,10 @@ void main() {
     },
   );
 
-  test('LLMKit no auth required', () async {
-    // LLMKit no longer requires authentication, direct access allowed
+  test('ModelKit no auth required', () async {
+    // ModelKit does not require authentication, direct access allowed
     final response = await post(
-      Uri.parse('$host/llmkit/text/v1/chat/completions'),
+      Uri.parse('$host/modelkit/chat/v1/chat/completions'),
       headers: {'content-type': 'application/json'},
       body: jsonEncode({'messages': []}),
     );
@@ -270,7 +269,7 @@ void main() {
   });
 
   test(
-    'LLMKit bare text route defaults to chat completions for versioned baseUrl',
+    'ModelKit bare chat route defaults to chat completions for versioned baseUrl',
     () async {
       final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       late HttpServer gateway;
@@ -327,7 +326,7 @@ void main() {
       try {
         final response = await post(
           Uri.parse(
-            'http://${gateway.address.host}:${gateway.port}/llmkit/text',
+            'http://${gateway.address.host}:${gateway.port}/modelkit/chat',
           ),
           headers: {'content-type': 'application/json'},
           body: jsonEncode(<String, dynamic>{
@@ -366,7 +365,7 @@ void main() {
   });
 
   test(
-    '/llmkit/models returns available text generation models only',
+    '/modelkit/models returns available models with task schema',
     () async {
       final serviceLocator = _FakeServiceLocator(
         runningModelIds: const {'qwen3-8b'},
@@ -458,7 +457,7 @@ void main() {
           'http://${localServer.address.host}:${localServer.port}';
 
       try {
-        final response = await get(Uri.parse('$localHost/llmkit/models'));
+        final response = await get(Uri.parse('$localHost/modelkit/models'));
         expect(response.statusCode, 200);
 
         final payload = jsonDecode(response.body) as List<dynamic>;
@@ -471,10 +470,16 @@ void main() {
         expect(qwen['name'], 'qwen3-8b');
         expect(qwen['alias'], 'qwen3-8b');
         expect(qwen['description'], 'text model');
-        expect(qwen['type'], 'textGeneration');
+        expect(qwen['task'], 'chat');
         expect(qwen['contextWindowSize'], 8192);
         expect(qwen['isRemote'], isFalse);
         expect(qwen['isCustom'], isFalse);
+
+        // Stopped local chat model must not be listed.
+        expect(byId.containsKey('stopped-local-model'), isFalse);
+
+        final embedding = byId['bge-large-zh-v1.5-q8_0']!;
+        expect(embedding['task'], 'embedding');
 
         final remote = byId['remote-gpt']!;
         expect(remote['name'], 'gpt-4.1');
@@ -533,14 +538,14 @@ void main() {
         ),
       ],
     );
-    final client = LLMClient(
+    final client = ModelClient(
       serviceLocator: serviceLocator,
       kernelFuture: Future<KernelService?>.value(null),
     );
 
     try {
       final response = await client.send(
-        serviceType: LLMServiceType.text,
+        task: ModelTask.chat,
         method: 'POST',
         path: '/v1/chat/completions',
         queryParameters: const {'source': 'test'},
@@ -553,10 +558,10 @@ void main() {
       final warning = records.lastWhere(
         (record) =>
             record.level == Level.WARNING &&
-            record.message.contains('LLM proxy upstream error'),
+            record.message.contains('Model proxy upstream error'),
       );
       expect(warning.message, contains('status=504'));
-      expect(warning.message, contains('service=llm_text'));
+      expect(warning.message, contains('task=chat'));
       expect(warning.message, contains('/v1/chat/completions?source=test'));
       expect(warning.message, contains('upstream timeout'));
     } finally {
@@ -613,14 +618,14 @@ void main() {
         ),
       ],
     );
-    final client = LLMClient(
+    final client = ModelClient(
       serviceLocator: serviceLocator,
       kernelFuture: Future<KernelService?>.value(null),
     );
 
     try {
       final response = await client.send(
-        serviceType: LLMServiceType.text,
+        task: ModelTask.chat,
         method: 'POST',
         path: '/v1/chat/completions',
         body: utf8.encode(
@@ -686,14 +691,14 @@ void main() {
           ),
         ],
       );
-      final client = LLMClient(
+      final client = ModelClient(
         serviceLocator: serviceLocator,
         kernelFuture: Future<KernelService?>.value(null),
       );
 
       try {
         final response = await client.send(
-          serviceType: LLMServiceType.text,
+          task: ModelTask.chat,
           method: 'POST',
           path: '/v1/chat/completions',
           body: utf8.encode(
@@ -760,14 +765,14 @@ void main() {
           ),
         ],
       );
-      final client = LLMClient(
+      final client = ModelClient(
         serviceLocator: serviceLocator,
         kernelFuture: Future<KernelService?>.value(null),
       );
 
       try {
         final response = await client.send(
-          serviceType: LLMServiceType.text,
+          task: ModelTask.chat,
           method: 'POST',
           path: '/',
           body: utf8.encode(
@@ -837,14 +842,14 @@ void main() {
           ),
         ],
       );
-      final client = LLMClient(
+      final client = ModelClient(
         serviceLocator: serviceLocator,
         kernelFuture: Future<KernelService?>.value(null),
       );
 
       try {
         final response = await client.send(
-          serviceType: LLMServiceType.text,
+          task: ModelTask.chat,
           method: 'POST',
           path: '/v1/chat/completions',
           body: utf8.encode(
@@ -915,14 +920,14 @@ void main() {
           ),
         ],
       );
-      final client = LLMClient(
+      final client = ModelClient(
         serviceLocator: serviceLocator,
         kernelFuture: Future<KernelService?>.value(null),
       );
 
       try {
         final response = await client.send(
-          serviceType: LLMServiceType.text,
+          task: ModelTask.chat,
           method: 'POST',
           path: '/',
           body: utf8.encode(
@@ -990,14 +995,14 @@ void main() {
         ),
       ],
     );
-    final client = LLMClient(
+    final client = ModelClient(
       serviceLocator: serviceLocator,
       kernelFuture: Future<KernelService?>.value(null),
     );
 
     try {
       final response = await client.send(
-        serviceType: LLMServiceType.text,
+        task: ModelTask.chat,
         method: 'POST',
         path: '/v1/chat/completions',
         body: utf8.encode(
@@ -1066,14 +1071,14 @@ void main() {
         ),
       ],
     );
-    final client = LLMClient(
+    final client = ModelClient(
       serviceLocator: serviceLocator,
       kernelFuture: Future<KernelService?>.value(null),
     );
 
     try {
       final response = await client.send(
-        serviceType: LLMServiceType.text,
+        task: ModelTask.chat,
         method: 'POST',
         path: '/v1/chat/completions',
         headers: const {'accept': 'text/event-stream'},

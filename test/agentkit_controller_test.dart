@@ -231,7 +231,7 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
 
   @override
   Future<int?> getServicePort(String serviceKey, {String? modelId}) async {
-    if (serviceKey != ApiConfig.serviceLlmText) {
+    if (serviceKey != ApiConfig.serviceLlmChat) {
       return null;
     }
     if (modelId != null) {

@@ -28,10 +28,8 @@ class ModelClientResponse {
 
 /// Task-oriented model categorization.
 ///
-/// Replaces the legacy IO-shape oriented `LLMServiceType` (text / vision /
-/// embedding / tts / asr). Vision-language models live behind
-/// [ModelTask.chat] and are identified by `capabilities.vision = true`
-/// rather than a separate task.
+/// Vision-language models live behind [ModelTask.chat] and are identified by
+/// `capabilities.vision = true` rather than a separate task.
 enum ModelTask {
   /// Chat / completions (text + vision).
   chat,
@@ -105,22 +103,12 @@ extension ModelTaskX on ModelTask {
   }
 }
 
-/// Service identifiers historically used by [LLMServiceType] callers that the
-/// model resolver may emit through `LlmModelInfo.type`.
-const Set<String> _legacyChatServiceKeys = {
-  // ignore: deprecated_member_use_from_same_package
-  ApiConfig.serviceLlmText,
-  // ignore: deprecated_member_use_from_same_package
-  ApiConfig.serviceLlmVision,
-};
-
 /// Task-oriented model proxy client.
 ///
-/// This is the new entry point for ModelKit and replaces the legacy
-/// `LLMClient` (which now delegates here). It speaks [ModelTask] instead of
-/// `LLMServiceType`, routes chat (text + vision) through a single endpoint,
-/// and identifies VLM by `capabilities.vision` on the resolved model rather
-/// than by a dedicated path.
+/// Entry point for ModelKit. It speaks [ModelTask], routes chat
+/// (text + vision) through a single endpoint, and identifies VLM by
+/// `capabilities.vision` on the resolved model rather than by a dedicated
+/// path.
 class ModelClient {
   static const int _errorBodyPreviewLimit = 512;
 
@@ -399,30 +387,12 @@ class ModelClient {
     }
   }
 
-  /// Resolves a port for [task] from the service locator, transparently
-  /// falling back to the deprecated `llm_text` / `llm_vision` keys so external
-  /// `AgentOSServiceLocator` implementations that haven't migrated yet still
-  /// work.
-  Future<int?> _lookupServicePort(ModelTask task, String? modelId) async {
-    // Prefer the canonical task service key.
-    final primary = await _serviceLocator.getServicePort(
+  /// Resolves a port for [task] from the service locator.
+  Future<int?> _lookupServicePort(ModelTask task, String? modelId) {
+    return _serviceLocator.getServicePort(
       task.serviceKey,
       modelId: modelId,
     );
-    if (primary != null) return primary;
-
-    // Chat task: also try the legacy text/vision keys so unmigrated locators
-    // keep working.
-    if (task == ModelTask.chat) {
-      for (final legacy in _legacyChatServiceKeys) {
-        final port = await _serviceLocator.getServicePort(
-          legacy,
-          modelId: modelId,
-        );
-        if (port != null) return port;
-      }
-    }
-    return null;
   }
 
   /// Wraps the upstream stream with token-counting instrumentation.

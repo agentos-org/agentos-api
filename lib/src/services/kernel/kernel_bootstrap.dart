@@ -47,9 +47,9 @@ class KernelBootstrapResult {
     if (kernelService == null) {
       return false;
     }
-    final llmPort =
-        await serviceLocator.getServicePort(ApiConfig.serviceLlmText) ??
-        await serviceLocator.getServicePort(ApiConfig.serviceLlmVision);
+    final llmPort = await serviceLocator.getServicePort(
+      ApiConfig.serviceLlmChat,
+    );
     final llmModelList = await serviceLocator.getLlmModelList();
     if (llmPort == null && !llmModelList.any((m) => m.isRemote)) {
       _kernelBootstrapLogger.info(

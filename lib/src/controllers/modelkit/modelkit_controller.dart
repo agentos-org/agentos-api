@@ -4,15 +4,13 @@ import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
-import '../../config.dart';
 import '../../locator.dart';
 import '../../services/modelkit/model_client.dart';
 
 /// ModelKit Controller
 ///
 /// Task-oriented gateway controller. Exposes one route per [ModelTask]:
-/// `/chat`, `/embedding`, `/asr`, `/tts`. Replaces the legacy IO-oriented
-/// `LLMKitController` (`/text`, `/vision`, ...). Vision-language models live
+/// `/chat`, `/embedding`, `/asr`, `/tts`. Vision-language models live
 /// behind `/chat` and are identified by `capabilities.vision = true` on the
 /// resolved model.
 class ModelKitController {
@@ -71,8 +69,6 @@ class ModelKitController {
   ///
   /// Each entry carries `task` (`chat` / `embedding` / `asr` / `tts`),
   /// `input` / `output` modality wire names, and a `capabilities` block.
-  /// The legacy IO-oriented `type` field is not emitted; LLMKit consumers
-  /// that need it should call `/llmkit/models` instead.
   Future<Response> _listModels(Request request) async {
     try {
       final models = await _client.serviceLocator.getLlmModelList();
@@ -242,25 +238,7 @@ class ModelKitController {
       task.serviceKey,
       modelId: model.id,
     );
-    if (port != null) return true;
-    // Fall back to legacy service keys for chat-capable locators that
-    // haven't migrated to `llm_chat` yet.
-    if (task == ModelTask.chat) {
-      // ignore: deprecated_member_use_from_same_package
-      for (final legacy in const [
-        // ignore: deprecated_member_use_from_same_package
-        ApiConfig.serviceLlmText,
-        // ignore: deprecated_member_use_from_same_package
-        ApiConfig.serviceLlmVision,
-      ]) {
-        final fallback = await _client.serviceLocator.getServicePort(
-          legacy,
-          modelId: model.id,
-        );
-        if (fallback != null) return true;
-      }
-    }
-    return false;
+    return port != null;
   }
 
   /// Infers the [ModelTask] from a legacy `LlmModelInfo.type` string.

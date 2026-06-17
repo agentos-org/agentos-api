@@ -29,7 +29,7 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
 
   @override
   Future<int?> getServicePort(String serviceKey, {String? modelId}) async {
-    if (serviceKey == 'llm_text') {
+    if (serviceKey == 'llm_chat') {
       return llmPort;
     }
     if (serviceKey == 'llm_embedding') {

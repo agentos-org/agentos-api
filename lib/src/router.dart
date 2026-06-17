@@ -6,7 +6,6 @@ import 'locator.dart';
 import 'controllers/agentkit/agentkit_controller.dart';
 import 'controllers/appkit/appkit_controller.dart';
 import 'controllers/cronkit/cronkit_controller.dart';
-import 'controllers/llmkit/llmkit_controller.dart';
 import 'controllers/modelkit/modelkit_controller.dart';
 import 'controllers/ragkit/ragkit_controller.dart';
 import 'controllers/system_controller.dart';
@@ -132,9 +131,6 @@ Router createGatewayRouter({
   router.mount('${ApiConfig.toolkitPath}/', toolKitController.router.call);
 
   // ModelKit API (task-oriented model proxy: chat / embedding / asr / tts).
-  // The legacy LLMKit mount is preserved for backward compatibility and
-  // shares the same ModelClient instance so they target the same upstream
-  // services.
   final modelClient = ModelClient(
     serviceLocator: serviceLocator,
     kernelFuture: kernelFuture,
@@ -147,14 +143,6 @@ Router createGatewayRouter({
     '${ApiConfig.modelkitPath}/',
     modelKitController.router.call,
   );
-
-  // ignore: deprecated_member_use
-  final llmKitController = LLMKitController(
-    kernelFuture: kernelFuture,
-    modelClient: modelClient,
-  );
-  // ignore: deprecated_member_use_from_same_package
-  router.mount('${ApiConfig.llmkitPath}/', llmKitController.router.call);
 
   return router;
 }

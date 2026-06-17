@@ -656,19 +656,13 @@ class CronKitController {
     if (model.isRemote) {
       return model.baseUrl;
     }
-    final specificPort =
-        await _serviceLocator.getServicePort(
-          ApiConfig.serviceLlmText,
-          modelId: model.id,
-        ) ??
-        await _serviceLocator.getServicePort(
-          ApiConfig.serviceLlmVision,
-          modelId: model.id,
-        );
+    final specificPort = await _serviceLocator.getServicePort(
+      ApiConfig.serviceLlmChat,
+      modelId: model.id,
+    );
     final fallbackPort =
         specificPort ??
-        await _serviceLocator.getServicePort(ApiConfig.serviceLlmText) ??
-        await _serviceLocator.getServicePort(ApiConfig.serviceLlmVision);
+        await _serviceLocator.getServicePort(ApiConfig.serviceLlmChat);
     if (fallbackPort == null) {
       return null;
     }
