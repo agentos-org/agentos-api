@@ -273,7 +273,7 @@ Common endpoints:
 
 - `GET /toolkit/list?all=0` - list running tools. Use `all=1` to include
   stopped tools. Returns `[{ "id", "alias", "host", "port", "status",
-  "serverId" }]`.
+  "serverId", "server": { "repo", "name", "tag" } }]`.
 - `GET /toolkit/{toolId}/load` - return the tool's OpenTool JSON
   description, including available functions and parameter schemas.
 - `POST /toolkit/{toolId}/call` - call one function:

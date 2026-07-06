@@ -260,7 +260,8 @@ $ curl http://127.0.0.1:8888/toolkit/list \
 常用端点：
 
 - `GET /toolkit/list?all=0` - 列出运行中的工具。`all=1` 会包含已停止工具。
-  返回 `[{ "id", "alias", "host", "port", "status", "serverId" }]`。
+  返回 `[{ "id", "alias", "host", "port", "status", "serverId",
+  "server": { "repo", "name", "tag" } }]`。
 - `GET /toolkit/{toolId}/load` - 返回工具的 OpenTool JSON 描述，包含可用函数
   和参数 schema。
 - `POST /toolkit/{toolId}/call` - 调用一个函数：

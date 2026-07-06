@@ -175,7 +175,23 @@ void main() {
         if (request.uri.path == '/opentool-daemon/tools/list') {
           expect(request.method, 'GET');
           expect(request.uri.queryParameters['all'], '1');
-          request.response.write(jsonEncode(<Map<String, dynamic>>[]));
+          request.response.write(
+            jsonEncode(<Map<String, dynamic>>[
+              <String, dynamic>{
+                'id': 'tool-1',
+                'alias': 'websearch',
+                'host': '127.0.0.1',
+                'port': 9001,
+                'status': 'running',
+                'serverId': 'server-1',
+                'server': <String, dynamic>{
+                  'repo': 'opentool-server-websearch',
+                  'name': 'opentool-server-websearch',
+                  'tag': '0.1.0',
+                },
+              },
+            ]),
+          );
         } else if (request.uri.path == '/opentool-daemon/tools/tool-1/load') {
           expect(request.method, 'GET');
           request.response.write(
@@ -227,7 +243,19 @@ void main() {
         );
 
         expect(response.statusCode, 200);
-        expect(jsonDecode(response.body), isEmpty);
+        final tool =
+            (jsonDecode(response.body) as List<dynamic>).single
+                as Map<String, dynamic>;
+        expect(tool['serverId'], 'server-1');
+        expect(tool['server'], <String, dynamic>{
+          'repo': 'opentool-server-websearch',
+          'name': 'opentool-server-websearch',
+          'tag': '0.1.0',
+        });
+        expect(
+          requestedPaths,
+          isNot(contains('/opentool-daemon/servers/list')),
+        );
 
         final loadResponse = await get(
           Uri.parse(

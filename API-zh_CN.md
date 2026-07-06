@@ -1350,12 +1350,17 @@ Authorization: Bearer <POST /appkit/register 返回的 token>
   "host": "127.0.0.1",
   "port": 9001,
   "status": "running",
-  "serverId": "srv-1"
+  "serverId": "srv-1",
+  "server": {
+    "repo": "demo-repo",
+    "name": "demo",
+    "tag": "1.0.0"
+  }
 }
 ```
 
-`status` 通常为 `running` 或 `notRunning`。`serverId` 可能不存在，也可能指向
-平台侧预置的 server。
+`status` 通常为 `running` 或 `notRunning`。`serverId` 和 `server` 均可能不
+存在；存在时用于标识创建该工具所使用的来源 Server。
 
 #### FunctionCall
 
@@ -1417,7 +1422,12 @@ data:{"json":"payload"}
     "host": "127.0.0.1",
     "port": 9001,
     "status": "running",
-    "serverId": "srv-1"
+    "serverId": "srv-1",
+    "server": {
+      "repo": "demo-repo",
+      "name": "demo",
+      "tag": "1.0.0"
+    }
   }
 ]
 ```

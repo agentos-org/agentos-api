@@ -1355,12 +1355,17 @@ Missing or invalid tokens return `401`.
   "host": "127.0.0.1",
   "port": 9001,
   "status": "running",
-  "serverId": "srv-1"
+  "serverId": "srv-1",
+  "server": {
+    "repo": "demo-repo",
+    "name": "demo",
+    "tag": "1.0.0"
+  }
 }
 ```
 
-`status` is usually `running` or `notRunning`. `serverId` may be omitted or may
-refer to a server that was provisioned by the platform.
+`status` is usually `running` or `notRunning`. `serverId` and `server` may be
+omitted. When present, they identify the source server used to create the tool.
 
 #### FunctionCall
 
@@ -1422,7 +1427,12 @@ Response:
     "host": "127.0.0.1",
     "port": 9001,
     "status": "running",
-    "serverId": "srv-1"
+    "serverId": "srv-1",
+    "server": {
+      "repo": "demo-repo",
+      "name": "demo",
+      "tag": "1.0.0"
+    }
   }
 ]
 ```
