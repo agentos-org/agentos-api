@@ -20,6 +20,9 @@ class _FakeLiteAgentSDK extends LiteAgentSDK {
   Agent? capturedAgent;
   String? capturedUpdatedAgentId;
   String? capturedInitSessionAgentId;
+  Session? capturedHistorySession;
+  int? capturedHistoryPage;
+  int? capturedHistoryPageSize;
 
   @override
   Future<Session> initSimple(SimpleCapability simpleCapability) async {
@@ -45,6 +48,29 @@ class _FakeLiteAgentSDK extends LiteAgentSDK {
     capturedUpdatedAgentId = agentId;
     capturedAgent = agent;
     return AgentId(agentId: agentId);
+  }
+
+  @override
+  Future<List<AgentMessage>> getHistory(
+    Session session, {
+    int? page,
+    int? pageSize,
+  }) async {
+    capturedHistorySession = session;
+    capturedHistoryPage = page;
+    capturedHistoryPageSize = pageSize;
+    return [
+      AgentMessage(
+        sessionId: session.sessionId,
+        originalTaskId: 'root-task',
+        taskId: 'child-task',
+        role: AgentRoleType.AGENT,
+        to: AgentRoleType.USER,
+        type: AgentMessageType.TEXT,
+        content: 'done',
+        createTime: DateTime.utc(2026, 7, 10),
+      ),
+    ];
   }
 }
 
@@ -391,6 +417,55 @@ Always produce a short plan before tool use.
     expect(response.statusCode, 200);
     expect(fakeSdk.capturedCapability, isNotNull);
     expect(fakeSdk.capturedCapability!.skills, const [plannerSkill]);
+  });
+
+  test('forwards history pagination and preserves originalTaskId', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'GET',
+        Uri.parse(
+          'http://localhost/history?sessionId=session-1&page=2&pageSize=50',
+        ),
+        headers: const <String, String>{'authorization': 'Bearer user-token'},
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedHistorySession?.sessionId, 'session-1');
+    expect(fakeSdk.capturedHistoryPage, 2);
+    expect(fakeSdk.capturedHistoryPageSize, 50);
+    final payload = jsonDecode(await response.readAsString()) as List<dynamic>;
+    expect(payload.single['originalTaskId'], 'root-task');
+    expect(payload.single['taskId'], 'child-task');
+  });
+
+  test('rejects incomplete or invalid history pagination', () async {
+    final controller = AgentKitController(
+      sdk: _FakeLiteAgentSDK(),
+      kernelFuture: Future.value(null),
+    );
+
+    for (final query in <String>[
+      'sessionId=session-1&page=1',
+      'sessionId=session-1&page=0&pageSize=50',
+      'sessionId=session-1&page=1&pageSize=invalid',
+    ]) {
+      final response = await controller.router.call(
+        Request(
+          'GET',
+          Uri.parse('http://localhost/history?$query'),
+          headers: const <String, String>{'authorization': 'Bearer user-token'},
+        ),
+      );
+
+      expect(response.statusCode, 400, reason: query);
+    }
   });
 
   test('maps llmConfig.modelId to model for /initSimple', () async {

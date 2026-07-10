@@ -581,7 +581,7 @@ class AgentKitController {
     }
   }
 
-  // GET /history?sessionId=xxx
+  // GET /history?sessionId=xxx&page=1&pageSize=50
   Future<Response> _handleHistory(Request request) async {
     try {
       final sessionId = request.url.queryParameters['sessionId'];
@@ -591,8 +591,38 @@ class AgentKitController {
           body: jsonEncode({'error': 'sessionId is required'}),
         );
       }
+      final rawPage = request.url.queryParameters['page'];
+      final rawPageSize = request.url.queryParameters['pageSize'];
+      if ((rawPage == null) != (rawPageSize == null)) {
+        return Response(
+          400,
+          body: jsonEncode({
+            'error': 'page and pageSize must be provided together',
+          }),
+        );
+      }
+
+      int? page;
+      int? pageSize;
+      if (rawPage != null && rawPageSize != null) {
+        page = int.tryParse(rawPage);
+        pageSize = int.tryParse(rawPageSize);
+        if (page == null || page <= 0 || pageSize == null || pageSize <= 0) {
+          return Response(
+            400,
+            body: jsonEncode({
+              'error': 'page and pageSize must be positive integers',
+            }),
+          );
+        }
+      }
+
       final session = Session(sessionId: sessionId);
-      final messages = await _sdk.getHistory(session);
+      final messages = await _sdk.getHistory(
+        session,
+        page: page,
+        pageSize: pageSize,
+      );
       return _jsonResponse(messages.map((m) => m.toJson()).toList());
     } catch (e) {
       return _errorResponse(e, 'history');
@@ -1013,7 +1043,9 @@ class AgentKitController {
       return null;
     }
 
-    final adapter = matched.provider.trim().isEmpty ? 'openai' : matched.provider;
+    final adapter = matched.provider.trim().isEmpty
+        ? 'openai'
+        : matched.provider;
     final result = <String, dynamic>{
       // liteagent using `lite_oneapi`，real upstream provider is differentiated by `adapter`.
       // kernel build LLMConfig `provider=lite_oneapi` `adapter=model.provider`,

@@ -168,6 +168,7 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | --- | --- | --- | --- |
 | `sessionId` | `string` | 是 | Session ID。 |
 | `agentId` | `string` | 否 | Agent ID。 |
+| `originalTaskId` | `string` | 是 | 根任务 ID。对于旧版 LiteAgent 响应，该字段回退为 `taskId`。 |
 | `parentTaskId` | `string` | 否 | 父 task ID。 |
 | `taskId` | `string` | 是 | Task ID。 |
 | `role` | `string` | 是 | `system`、`user`、`agent`、`llm`、`tool`。 |
@@ -177,6 +178,14 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | `reasoningContent` | `string` | 否 | 推理文本。 |
 | `completions` | `object` | 否 | Token 使用情况。 |
 | `createTime` | `string` | 是 | ISO 时间。 |
+
+当 `type` 为 `taskStatus` 时，`content` 包含：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `status` | `string` | 是 | 当前任务状态。 |
+| `taskId` | `string` | 否 | 与该状态更新关联的任务 ID。 |
+| `description` | `object` | 否 | 额外的状态详情。 |
 
 `completions` 字段：
 
@@ -394,6 +403,10 @@ Query:
 | 字段 | 类型 | 必填 |
 | --- | --- | --- |
 | `sessionId` | `string` | 是 |
+| `page` | `integer` | 否 |
+| `pageSize` | `integer` | 否 |
+
+`page` 和 `pageSize` 必须成对提供，且均为正整数。页码从 1 开始；两者均省略时，返回完整的持久化历史记录。
 
 响应：`200 OK`（`AgentMessage[]`）
 
@@ -403,6 +416,7 @@ Query:
 [
   {
     "sessionId": "session-1",
+    "originalTaskId": "task-1",
     "taskId": "task-1",
     "role": "user",
     "to": "agent",

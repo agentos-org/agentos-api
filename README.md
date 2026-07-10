@@ -94,7 +94,7 @@ Supported routes:
 - `POST /agentkit/initSimple`
 - `POST /agentkit/chat` (SSE stream)
 - `POST /agentkit/chat/simple`
-- `GET /agentkit/history`
+- `GET /agentkit/history` (optional paired `page` and `pageSize` query params)
 - `GET /agentkit/stop`
 - `GET /agentkit/clear`
 - `POST /agentkit/callback`

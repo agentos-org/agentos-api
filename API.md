@@ -171,6 +171,7 @@ If backend/sdk operation fails, the gateway may return `502`.
 | --- | --- | --- | --- |
 | `sessionId` | `string` | Yes | Session ID. |
 | `agentId` | `string` | No | Agent ID. |
+| `originalTaskId` | `string` | Yes | Root task ID. For older LiteAgent payloads, this falls back to `taskId`. |
 | `parentTaskId` | `string` | No | Parent task ID. |
 | `taskId` | `string` | Yes | Task ID. |
 | `role` | `string` | Yes | `system`, `user`, `agent`, `llm`, `tool`. |
@@ -180,6 +181,14 @@ If backend/sdk operation fails, the gateway may return `502`.
 | `reasoningContent` | `string` | No | Model reasoning text. |
 | `completions` | `object` | No | Token usage info. |
 | `createTime` | `string` | Yes | ISO timestamp. |
+
+When `type` is `taskStatus`, `content` contains:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `status` | `string` | Yes | Current task status. |
+| `taskId` | `string` | No | Task ID associated with the status update. |
+| `description` | `object` | No | Additional status details. |
 
 `completions` fields:
 
@@ -397,6 +406,12 @@ Query:
 | Field | Type | Required |
 | --- | --- | --- |
 | `sessionId` | `string` | Yes |
+| `page` | `integer` | No |
+| `pageSize` | `integer` | No |
+
+`page` and `pageSize` must be supplied together as positive integers. Page
+numbers are 1-based. When both are omitted, the complete persisted history is
+returned.
 
 Response: `200 OK` (`AgentMessage[]`)
 
@@ -406,6 +421,7 @@ Example response:
 [
   {
     "sessionId": "session-1",
+    "originalTaskId": "task-1",
     "taskId": "task-1",
     "role": "user",
     "to": "agent",

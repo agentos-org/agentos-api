@@ -87,7 +87,7 @@ AgentKit 在 `/agentkit/` 下提供 LiteAgent 兼容接口，并通过 LiteAgent
 - `POST /agentkit/initSimple`
 - `POST /agentkit/chat`（SSE 流式）
 - `POST /agentkit/chat/simple`
-- `GET /agentkit/history`
+- `GET /agentkit/history`（可选成对传入 `page` 和 `pageSize` 查询参数）
 - `GET /agentkit/stop`
 - `GET /agentkit/clear`
 - `POST /agentkit/callback`
