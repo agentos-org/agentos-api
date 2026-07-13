@@ -234,12 +234,18 @@ class AgentKitController {
 
       final requestContext = _requestContextService.resolve(request);
 
-      final controller = StreamController<List<int>>();
+      final lifecycle = _ChatRequestLifecycle(
+        rootSessionId: sessionId,
+        rootCallbackTimeout: _functionCallTimeoutForSession(sessionId),
+        failPendingCallbacks: _failPendingCallbacksForSessions,
+        onClientCancel: () => _stopCancelledChat(session),
+      );
 
       final handler = _GatewayAgentMessageHandler(
         onMessage: (agentMessage) {
           final json = jsonEncode(agentMessage.toJson());
-          controller.add(utf8.encode('event:message\ndata:$json\n\n'));
+          final wasForwarded = lifecycle.addSse('message', json);
+          if (!wasForwarded) return;
           if (requestContext != null) {
             unawaited(
               _agentKitService.archiveAgentMessage(
@@ -253,61 +259,50 @@ class AgentKitController {
         },
         onChunk: (chunk) {
           final json = jsonEncode(chunk.toJson());
-          controller.add(utf8.encode('event:chunk\ndata:$json\n\n'));
+          lifecycle.addSse('chunk', json);
         },
         onFunctionCall: (callbackSessionId, functionCall) async {
+          lifecycle.trackCallbackSession(callbackSessionId);
           final eventPayload = jsonEncode({
             'sessionId': callbackSessionId,
             'functionCall': functionCall.toJson(),
           });
-          controller.add(
-            utf8.encode('event:functionCall\ndata:$eventPayload\n\n'),
+          if (!lifecycle.addSse('functionCall', eventPayload)) {
+            return _closedToolReturn(functionCall);
+          }
+          return _waitExternalToolReturn(
+            callbackSessionId,
+            functionCall,
+            timeout: _functionCallTimeoutForChat(
+              callbackSessionId,
+              rootTimeout: lifecycle.rootCallbackTimeout,
+            ),
           );
-          return _waitExternalToolReturn(callbackSessionId, functionCall);
         },
         onStreamFunctionCall:
             (callSessionId, functionCall, onToolReturn) async {
-              final terminal = _waitExternalStreamToolReturn(
-                callSessionId,
-                functionCall,
-              );
+              lifecycle.trackCallbackSession(callSessionId);
               final eventPayload = jsonEncode({
                 'sessionId': callSessionId,
                 'functionCall': functionCall.toJson(),
                 'stream': true,
               });
-              controller.add(
-                utf8.encode('event:functionCall\ndata:$eventPayload\n\n'),
+              if (!lifecycle.addSse('functionCall', eventPayload)) {
+                onToolReturn(_closedStreamToolReturn(functionCall));
+                return;
+              }
+              final terminal = _waitExternalStreamToolReturn(
+                callSessionId,
+                functionCall,
+                timeout: _functionCallTimeoutForChat(
+                  callSessionId,
+                  rootTimeout: lifecycle.rootCallbackTimeout,
+                ),
               );
               onToolReturn(await terminal);
             },
-        onDone: () {
-          _failPendingToolReturnsForSession(
-            sessionId,
-            code: 'stream_closed',
-            message: 'Chat stream closed before external callback.',
-          );
-          _failPendingStreamToolReturnsForSession(
-            sessionId,
-            code: 'stream_closed',
-            message: 'Chat stream closed before external streamCallback.',
-          );
-          controller.close();
-        },
-        onError: (e) {
-          _failPendingToolReturnsForSession(
-            sessionId,
-            code: 'stream_error',
-            message: e.toString(),
-          );
-          _failPendingStreamToolReturnsForSession(
-            sessionId,
-            code: 'stream_error',
-            message: e.toString(),
-          );
-          controller.addError(e);
-          controller.close();
-        },
+        onDone: lifecycle.finish,
+        onError: lifecycle.fail,
       );
 
       // Don't await — sdk.chat completes when SSE stream ends. Stream callback
@@ -318,15 +313,21 @@ class AgentKitController {
         _chatWithRawSse(
           session: session,
           userTask: userTask,
-          controller: controller,
+          lifecycle: lifecycle,
           requestContext: requestContext,
         );
       } else {
-        _sdk.chat(session, userTask, handler);
+        unawaited(() async {
+          try {
+            await _sdk.chat(session, userTask, handler);
+          } catch (error, stackTrace) {
+            lifecycle.fail(error, stackTrace);
+          }
+        }());
       }
 
       return Response.ok(
-        controller.stream,
+        lifecycle.stream,
         headers: {
           'content-type': 'text/event-stream',
           'cache-control': 'no-cache, no-store, no-transform',
@@ -343,7 +344,7 @@ class AgentKitController {
   void _chatWithRawSse({
     required Session session,
     required UserTask userTask,
-    required StreamController<List<int>> controller,
+    required _ChatRequestLifecycle lifecycle,
     required AgentRequestContext? requestContext,
   }) {
     unawaited(() async {
@@ -357,14 +358,14 @@ class AgentKitController {
           dispatch: (rawData) => _handleRawSseFunctionCall(
             session: session,
             rawData: rawData,
-            controller: controller,
+            lifecycle: lifecycle,
           ),
           onError: (error) async {
-            if (!controller.isClosed) controller.addError(error);
+            lifecycle.fail(error);
           },
         );
         final stream = await _sdk.sseService.chat(session.sessionId, userTask);
-        stream
+        final subscription = stream
             .asyncMap((event) async {
               final data = event.data;
               if (data == null) return;
@@ -372,7 +373,8 @@ class AgentKitController {
               if (eventName == SSEEventType.MESSAGE) {
                 final agentMessage = AgentMessage.fromJson(jsonDecode(data));
                 final json = jsonEncode(agentMessage.toJson());
-                controller.add(utf8.encode('event:message\ndata:$json\n\n'));
+                final wasForwarded = lifecycle.addSse('message', json);
+                if (!wasForwarded) return;
                 if (requestContext != null) {
                   unawaited(
                     _agentKitService.archiveAgentMessage(
@@ -388,7 +390,7 @@ class AgentKitController {
               if (eventName == SSEEventType.CHUNK) {
                 final chunk = AgentMessageChunk.fromJson(jsonDecode(data));
                 final json = jsonEncode(chunk.toJson());
-                controller.add(utf8.encode('event:chunk\ndata:$json\n\n'));
+                lifecycle.addSse('chunk', json);
                 return;
               }
               if (eventName == SSEEventType.FUNCTION_CALL) {
@@ -398,39 +400,19 @@ class AgentKitController {
             .listen(
               (_) {},
               onDone: () async {
-                await functionCalls.close();
-                _failPendingToolReturnsForSession(
-                  session.sessionId,
-                  code: 'stream_closed',
-                  message: 'Chat stream closed before external callback.',
-                );
-                _failPendingStreamToolReturnsForSession(
-                  session.sessionId,
-                  code: 'stream_closed',
-                  message: 'Chat stream closed before external streamCallback.',
-                );
-                await controller.close();
+                functionCalls.beginClose();
+                lifecycle.finish();
+                await functionCalls.waitForInFlight();
               },
               onError: (Object e) async {
-                await functionCalls.close();
-                final message = e.toString();
-                _failPendingToolReturnsForSession(
-                  session.sessionId,
-                  code: 'stream_error',
-                  message: message,
-                );
-                _failPendingStreamToolReturnsForSession(
-                  session.sessionId,
-                  code: 'stream_error',
-                  message: message,
-                );
-                controller.addError(e);
-                await controller.close();
+                functionCalls.beginClose();
+                lifecycle.fail(e);
+                await functionCalls.waitForInFlight();
               },
             );
+        lifecycle.setUpstreamCancellation(subscription.cancel);
       } catch (e) {
-        controller.addError(e);
-        await controller.close();
+        lifecycle.fail(e);
       }
     }());
   }
@@ -438,7 +420,7 @@ class AgentKitController {
   Future<void> _handleRawSseFunctionCall({
     required Session session,
     required String rawData,
-    required StreamController<List<int>> controller,
+    required _ChatRequestLifecycle lifecycle,
   }) async {
     final parsed = _parseRawSseFunctionCall(
       rawData,
@@ -453,12 +435,30 @@ class AgentKitController {
       'functionCall': parsed.functionCall.toJson(),
       if (isStream) 'stream': true,
     });
-    controller.add(utf8.encode('event:functionCall\ndata:$eventPayload\n\n'));
+    lifecycle.trackCallbackSession(parsed.callbackSessionId);
+    if (!lifecycle.addSse('functionCall', eventPayload)) {
+      if (isStream) {
+        await _sdk.streamCallback(
+          Session(sessionId: parsed.callbackSessionId),
+          _closedStreamToolReturn(parsed.functionCall),
+        );
+      } else {
+        await _sdk.callback(
+          Session(sessionId: parsed.callbackSessionId),
+          _closedToolReturn(parsed.functionCall),
+        );
+      }
+      return;
+    }
 
     if (isStream) {
       final terminal = await _waitExternalStreamToolReturn(
         parsed.callbackSessionId,
         parsed.functionCall,
+        timeout: _functionCallTimeoutForChat(
+          parsed.callbackSessionId,
+          rootTimeout: lifecycle.rootCallbackTimeout,
+        ),
       );
       await _sdk.streamCallback(
         Session(sessionId: parsed.callbackSessionId),
@@ -470,6 +470,10 @@ class AgentKitController {
     final toolReturn = await _waitExternalToolReturn(
       parsed.callbackSessionId,
       parsed.functionCall,
+      timeout: _functionCallTimeoutForChat(
+        parsed.callbackSessionId,
+        rootTimeout: lifecycle.rootCallbackTimeout,
+      ),
     );
     await _sdk.callback(
       Session(sessionId: parsed.callbackSessionId),
@@ -580,6 +584,13 @@ class AgentKitController {
   Duration _functionCallTimeoutForSession(String sessionId) {
     return _functionCallTimeoutsBySession[sessionId] ??
         _defaultFunctionCallTimeout;
+  }
+
+  Duration _functionCallTimeoutForChat(
+    String callbackSessionId, {
+    required Duration rootTimeout,
+  }) {
+    return _functionCallTimeoutsBySession[callbackSessionId] ?? rootTimeout;
   }
 
   Set<String> _extractStreamFunctionNames(Map<String, dynamic> capabilityBody) {
@@ -1347,10 +1358,10 @@ class AgentKitController {
 
   Future<ToolReturn> _waitExternalToolReturn(
     String sessionId,
-    FunctionCall functionCall,
-  ) {
+    FunctionCall functionCall, {
+    required Duration timeout,
+  }) {
     final key = _toolReturnKey(sessionId, functionCall.id);
-    final timeout = _functionCallTimeoutForSession(sessionId);
     final completer = Completer<ToolReturn>();
     final existing = _pendingToolReturns.putIfAbsent(key, () => completer);
     if (!identical(existing, completer)) {
@@ -1391,6 +1402,29 @@ class AgentKitController {
     });
   }
 
+  ToolReturn _closedToolReturn(FunctionCall functionCall) {
+    return ToolReturn(
+      id: functionCall.id,
+      result: _toolErrorResult(
+        code: 'stream_closed',
+        message: 'Chat stream closed before external callback.',
+      ),
+    );
+  }
+
+  EventToolReturn _closedStreamToolReturn(FunctionCall functionCall) {
+    return EventToolReturn(
+      eventType: EventType.ERROR,
+      toolReturn: ToolReturn(
+        id: functionCall.id,
+        result: _toolErrorResult(
+          code: 'stream_closed',
+          message: 'Chat stream closed before external callback.',
+        ),
+      ),
+    );
+  }
+
   bool _completePendingToolReturn(String sessionId, ToolReturn toolReturn) {
     final key = _toolReturnKey(sessionId, toolReturn.id);
     final completer = _pendingToolReturns[key];
@@ -1404,10 +1438,10 @@ class AgentKitController {
 
   Future<EventToolReturn> _waitExternalStreamToolReturn(
     String sessionId,
-    FunctionCall functionCall,
-  ) {
+    FunctionCall functionCall, {
+    required Duration timeout,
+  }) {
     final key = _toolReturnKey(sessionId, functionCall.id);
-    final timeout = _functionCallTimeoutForSession(sessionId);
     final completer = Completer<EventToolReturn>();
     final existing = _pendingStreamToolReturns.putIfAbsent(
       key,
@@ -1528,6 +1562,36 @@ class AgentKitController {
     }
   }
 
+  void _failPendingCallbacksForSessions(
+    Set<String> sessionIds, {
+    required String code,
+    required String message,
+  }) {
+    for (final sessionId in sessionIds) {
+      _failPendingToolReturnsForSession(
+        sessionId,
+        code: code,
+        message: message,
+      );
+      _failPendingStreamToolReturnsForSession(
+        sessionId,
+        code: code,
+        message: message,
+      );
+    }
+  }
+
+  Future<void> _stopCancelledChat(Session session) async {
+    try {
+      await _sdk.stop(session);
+    } catch (error) {
+      requestLogger.warning(
+        'AgentKit could not stop cancelled chat for '
+        'sessionId=${session.sessionId}: $error',
+      );
+    }
+  }
+
   bool _isTerminalStreamEvent(String eventType) {
     final normalized = eventType.trim().toLowerCase();
     return normalized == EventType.DONE || normalized == EventType.ERROR;
@@ -1586,6 +1650,128 @@ class AgentKitController {
     return {
       'error': {'code': code, 'message': message},
     };
+  }
+}
+
+typedef _FailPendingCallbacks =
+    void Function(
+      Set<String> sessionIds, {
+      required String code,
+      required String message,
+    });
+
+class _ChatRequestLifecycle {
+  _ChatRequestLifecycle({
+    required String rootSessionId,
+    required this.rootCallbackTimeout,
+    required _FailPendingCallbacks failPendingCallbacks,
+    required Future<void> Function() onClientCancel,
+  }) : _callbackSessionIds = {rootSessionId},
+       _failPendingCallbacks = failPendingCallbacks,
+       _onClientCancel = onClientCancel {
+    _controller = StreamController<List<int>>(onCancel: _handleClientCancel);
+  }
+
+  late final StreamController<List<int>> _controller;
+  final Duration rootCallbackTimeout;
+  final Set<String> _callbackSessionIds;
+  final _FailPendingCallbacks _failPendingCallbacks;
+  final Future<void> Function() _onClientCancel;
+  Future<void> Function()? _cancelUpstream;
+  bool _terminal = false;
+  bool _clientCancelled = false;
+
+  Stream<List<int>> get stream => _controller.stream;
+
+  void trackCallbackSession(String sessionId) {
+    if (sessionId.isNotEmpty) _callbackSessionIds.add(sessionId);
+  }
+
+  bool addSse(String event, String json) {
+    if (_terminal) return false;
+    try {
+      _controller.add(utf8.encode('event:$event\ndata:$json\n\n'));
+      return true;
+    } catch (error, stackTrace) {
+      fail(error, stackTrace);
+      return false;
+    }
+  }
+
+  void finish() {
+    _terminate(
+      code: 'stream_closed',
+      message: 'Chat stream closed before external callback.',
+    );
+  }
+
+  void fail(Object error, [StackTrace? stackTrace]) {
+    if (_terminal) {
+      requestLogger.warning(
+        'AgentKit ignored an error after the chat stream was terminal: $error',
+      );
+      return;
+    }
+    _terminate(
+      code: 'stream_error',
+      message: error.toString(),
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+
+  void setUpstreamCancellation(Future<void> Function() cancelUpstream) {
+    _cancelUpstream = cancelUpstream;
+    if (_clientCancelled) _runAsync(cancelUpstream);
+  }
+
+  void _handleClientCancel() {
+    if (_terminal) return;
+    _clientCancelled = true;
+    _terminate(
+      code: 'stream_closed',
+      message: 'Chat stream closed before external callback.',
+    );
+    final cancelUpstream = _cancelUpstream;
+    if (cancelUpstream != null) _runAsync(cancelUpstream);
+    _runAsync(_onClientCancel);
+  }
+
+  void _terminate({
+    required String code,
+    required String message,
+    Object? error,
+    StackTrace? stackTrace,
+  }) {
+    if (_terminal) return;
+    _terminal = true;
+    _failPendingCallbacks(
+      Set<String>.unmodifiable(_callbackSessionIds),
+      code: code,
+      message: message,
+    );
+    if (error != null && !_clientCancelled) {
+      _controller.addError(error, stackTrace);
+    }
+    unawaited(
+      _controller.close().catchError((Object closeError) {
+        requestLogger.warning(
+          'AgentKit could not close a terminal chat stream: $closeError',
+        );
+      }),
+    );
+  }
+
+  void _runAsync(Future<void> Function() operation) {
+    unawaited(() async {
+      try {
+        await operation();
+      } catch (error) {
+        requestLogger.warning(
+          'AgentKit chat cancellation cleanup failed: $error',
+        );
+      }
+    }());
   }
 }
 
@@ -1735,15 +1921,23 @@ class _GatewayFunctionCallEventCoalescer {
     _inFlight.add(future);
   }
 
-  Future<void> close() async {
+  void beginClose() {
     if (_closed) return;
     _closed = true;
     for (final callId in _pending.keys.toList(growable: false)) {
       _dispatch(callId);
     }
+  }
+
+  Future<void> waitForInFlight() async {
     if (_inFlight.isNotEmpty) {
       await Future.wait(_inFlight.toList(growable: false));
     }
+  }
+
+  Future<void> close() async {
+    beginClose();
+    await waitForInFlight();
   }
 }
 

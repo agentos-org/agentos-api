@@ -7,7 +7,10 @@ import 'package:agentos_api/src/config.dart';
 import 'package:agentos_api/src/locator.dart';
 import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
+import 'package:liteagent_sdk_dart/src/api/sse_service.dart';
 import 'package:opentool_dart/opentool_client.dart';
+// ignore: depend_on_referenced_packages
+import 'package:sse_client_dart/sse_client_dart.dart' as sse;
 import 'package:shelf/shelf.dart';
 import 'package:test/test.dart';
 
@@ -218,10 +221,13 @@ class _FunctionCallLiteAgentSDK extends LiteAgentSDK {
 }
 
 class _StreamFunctionCallLiteAgentSDK extends LiteAgentSDK {
-  _StreamFunctionCallLiteAgentSDK({this.callbackSessionId})
-    : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
+  _StreamFunctionCallLiteAgentSDK({
+    this.callbackSessionId,
+    this.initSessionId = 'test-session',
+  }) : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
 
   final String? callbackSessionId;
+  final String initSessionId;
 
   EventToolReturn? terminalStreamReturn;
   final List<EventToolReturn> forwardedStreamCallbacks = [];
@@ -231,7 +237,7 @@ class _StreamFunctionCallLiteAgentSDK extends LiteAgentSDK {
 
   @override
   Future<Session> initSession({Capability? capability, String? agentId}) async {
-    return Session(sessionId: 'test-session');
+    return Session(sessionId: initSessionId);
   }
 
   @override
@@ -275,6 +281,82 @@ class _RawSseLiteAgentSDK extends LiteAgentSDK {
   @override
   Future<Session> initSession({Capability? capability, String? agentId}) async {
     return Session(sessionId: 'root-session');
+  }
+}
+
+class _RecordingRawSseLiteAgentSDK extends _RawSseLiteAgentSDK {
+  _RecordingRawSseLiteAgentSDK(super.baseUrl, {SseService? controlledService}) {
+    if (controlledService != null) sseService = controlledService;
+  }
+
+  final Completer<(String, ToolReturn)> callbackCompleter =
+      Completer<(String, ToolReturn)>();
+  final Completer<(String, EventToolReturn)> streamCallbackCompleter =
+      Completer<(String, EventToolReturn)>();
+
+  @override
+  Future<void> callback(Session session, ToolReturn toolReturn) async {
+    if (!callbackCompleter.isCompleted) {
+      callbackCompleter.complete((session.sessionId, toolReturn));
+    }
+  }
+
+  @override
+  Future<void> streamCallback(
+    Session session,
+    EventToolReturn streamToolReturn,
+  ) async {
+    if (!streamCallbackCompleter.isCompleted) {
+      streamCallbackCompleter.complete((session.sessionId, streamToolReturn));
+    }
+  }
+
+  @override
+  Future<void> stop(Session session, {String? taskId}) async {}
+}
+
+class _ControlledSseService extends SseService {
+  _ControlledSseService() : super('http://127.0.0.1:9527/api/v1', null);
+
+  final StreamController<sse.Event> events = StreamController<sse.Event>();
+
+  @override
+  Future<Stream<sse.Event>> chat(String sessionId, UserTask userTaskDto) async {
+    return events.stream;
+  }
+}
+
+class _LifecycleLiteAgentSDK extends LiteAgentSDK {
+  _LifecycleLiteAgentSDK() : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
+
+  final Completer<AgentMessageHandler> handlerCompleter =
+      Completer<AgentMessageHandler>();
+  final Completer<String> stopCompleter = Completer<String>();
+  final List<String> stoppedSessionIds = [];
+  final List<(String, ToolReturn)> forwardedCallbacks = [];
+
+  @override
+  Future<void> chat(
+    Session session,
+    UserTask userTask,
+    AgentMessageHandler agentMessageHandler,
+  ) async {
+    if (!handlerCompleter.isCompleted) {
+      handlerCompleter.complete(agentMessageHandler);
+    }
+  }
+
+  @override
+  Future<void> stop(Session session, {String? taskId}) async {
+    stoppedSessionIds.add(session.sessionId);
+    if (!stopCompleter.isCompleted) {
+      stopCompleter.complete(session.sessionId);
+    }
+  }
+
+  @override
+  Future<void> callback(Session session, ToolReturn toolReturn) async {
+    forwardedCallbacks.add((session.sessionId, toolReturn));
   }
 }
 
@@ -396,6 +478,22 @@ class _FakeKernelService implements KernelService {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName} not mocked');
+}
+
+Request _chatRequest(String sessionId) {
+  return Request(
+    'POST',
+    Uri.parse('http://localhost/chat?sessionId=$sessionId'),
+    headers: <String, String>{
+      'authorization': 'Bearer user-token',
+      'content-type': 'application/json',
+    },
+    body: jsonEncode(<String, dynamic>{
+      'content': <Map<String, dynamic>>[
+        <String, dynamic>{'type': 'text', 'message': 'hi'},
+      ],
+    }),
+  );
 }
 
 void main() {
@@ -1331,6 +1429,475 @@ Always produce a short plan before tool use.
   });
 
   test(
+    'returns stream_closed for a child functionCall after downstream close',
+    () async {
+      final fakeSdk = _LifecycleLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final zoneErrors = <Object>[];
+      late ToolReturn toolReturn;
+
+      await runZoned(
+        () async {
+          final response = await controller.router.call(
+            _chatRequest('root-session'),
+          );
+          final streamDone = response.read().drain<void>();
+          final handler = await fakeSdk.handlerCompleter.future;
+          await handler.onDone();
+          await streamDone.timeout(const Duration(seconds: 2));
+
+          toolReturn = await handler
+              .onFunctionCall(
+                'child-session',
+                FunctionCall(
+                  id: 'late-normal-call',
+                  name: 'get_project_snapshot',
+                  arguments: const {},
+                ),
+              )
+              .timeout(const Duration(seconds: 2));
+          await Future<void>.delayed(Duration.zero);
+        },
+        zoneSpecification: ZoneSpecification(
+          handleUncaughtError: (self, parent, zone, error, stackTrace) {
+            zoneErrors.add(error);
+          },
+        ),
+      );
+
+      expect(toolReturn.result['error']['code'], 'stream_closed');
+      expect(
+        toolReturn.result['error']['message'],
+        'Chat stream closed before external callback.',
+      );
+      expect(zoneErrors, isEmpty);
+    },
+  );
+
+  test(
+    'returns terminal stream_closed ERROR for child stream call after close',
+    () async {
+      final fakeSdk = _LifecycleLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final response = await controller.router.call(
+        _chatRequest('root-session'),
+      );
+      final streamDone = response.read().drain<void>();
+      final handler = await fakeSdk.handlerCompleter.future;
+      await handler.onDone();
+      await streamDone.timeout(const Duration(seconds: 2));
+
+      final returned = Completer<EventToolReturn>();
+      await handler
+          .onStreamFunctionCall(
+            'child-session',
+            FunctionCall(
+              id: 'late-stream-call',
+              name: 'read_memory',
+              arguments: const {},
+            ),
+            returned.complete,
+          )
+          .timeout(const Duration(seconds: 2));
+      final terminal = await returned.future.timeout(
+        const Duration(seconds: 2),
+      );
+
+      expect(terminal.eventType, EventType.ERROR);
+      expect(terminal.toolReturn.result['error']['code'], 'stream_closed');
+      expect(
+        terminal.toolReturn.result['error']['message'],
+        'Chat stream closed before external callback.',
+      );
+    },
+  );
+
+  test(
+    'same child session resolves concurrent callbacks by functionCall id',
+    () async {
+      final fakeSdk = _LifecycleLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final response = await controller.router.call(
+        _chatRequest('root-session'),
+      );
+      final functionCallEvents = Completer<void>();
+      final streamDone = Completer<void>();
+      var eventCount = 0;
+      response.read().listen((_) {
+        eventCount++;
+        if (eventCount == 2 && !functionCallEvents.isCompleted) {
+          functionCallEvents.complete();
+        }
+      }, onDone: streamDone.complete);
+      final handler = await fakeSdk.handlerCompleter.future;
+      final firstReturn = handler.onFunctionCall(
+        'shared-child-session',
+        FunctionCall(
+          id: 'shared-child-call-1',
+          name: 'read_memory',
+          arguments: const {},
+        ),
+      );
+      final secondReturn = handler.onFunctionCall(
+        'shared-child-session',
+        FunctionCall(
+          id: 'shared-child-call-2',
+          name: 'read_project_documents',
+          arguments: const {},
+        ),
+      );
+      var secondCompleted = false;
+      unawaited(
+        secondReturn.then((_) {
+          secondCompleted = true;
+        }),
+      );
+      await functionCallEvents.future.timeout(const Duration(seconds: 2));
+
+      Future<Response> sendCallback(String id, String value) {
+        return controller.router.call(
+          Request(
+            'POST',
+            Uri.parse(
+              'http://localhost/callback?sessionId=shared-child-session',
+            ),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'id': id,
+              'result': <String, dynamic>{'value': value},
+            }),
+          ),
+        );
+      }
+
+      final firstResponse = await sendCallback('shared-child-call-1', 'first');
+      expect(firstResponse.statusCode, 200);
+      final first = await firstReturn.timeout(const Duration(seconds: 2));
+      expect(first.result['value'], 'first');
+      expect(secondCompleted, isFalse);
+
+      final secondResponse = await sendCallback(
+        'shared-child-call-2',
+        'second',
+      );
+      expect(secondResponse.statusCode, 200);
+      final second = await secondReturn.timeout(const Duration(seconds: 2));
+      expect(second.result['value'], 'second');
+      expect(fakeSdk.forwardedCallbacks, isEmpty);
+
+      await handler.onDone();
+      await streamDone.future.timeout(const Duration(seconds: 2));
+    },
+  );
+
+  test('done and error immediately settle child pending callbacks', () async {
+    for (final terminalKind in <String>['done', 'error']) {
+      final fakeSdk = _LifecycleLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final response = await controller.router.call(
+        _chatRequest('root-session'),
+      );
+      final streamErrors = <Object>[];
+      final streamDone = Completer<void>();
+      response.read().listen(
+        (_) {},
+        onError: streamErrors.add,
+        onDone: streamDone.complete,
+      );
+      final handler = await fakeSdk.handlerCompleter.future;
+      final normalReturn = handler.onFunctionCall(
+        'child-normal-session',
+        FunctionCall(
+          id: 'pending-normal-$terminalKind',
+          name: 'external_tool',
+          arguments: const {},
+        ),
+      );
+      final streamReturn = Completer<EventToolReturn>();
+      final streamDispatch = handler.onStreamFunctionCall(
+        'child-stream-session',
+        FunctionCall(
+          id: 'pending-stream-$terminalKind',
+          name: 'stream_tool',
+          arguments: const {},
+        ),
+        streamReturn.complete,
+      );
+
+      if (terminalKind == 'done') {
+        await handler.onDone();
+      } else {
+        await handler.onError(Exception('upstream failed'));
+      }
+
+      final normal = await normalReturn.timeout(const Duration(seconds: 2));
+      final stream = await streamReturn.future.timeout(
+        const Duration(seconds: 2),
+      );
+      await streamDispatch.timeout(const Duration(seconds: 2));
+      await streamDone.future.timeout(const Duration(seconds: 2));
+      final expectedCode = terminalKind == 'done'
+          ? 'stream_closed'
+          : 'stream_error';
+      expect(normal.result['error']['code'], expectedCode);
+      expect(stream.eventType, EventType.ERROR);
+      expect(stream.toolReturn.result['error']['code'], expectedCode);
+      expect(streamErrors, terminalKind == 'error' ? hasLength(1) : isEmpty);
+    }
+  });
+
+  test(
+    'upstream error settles normal and stream callbacks across child sessions',
+    () async {
+      final fakeSdk = _LifecycleLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final response = await controller.router.call(
+        _chatRequest('root-session'),
+      );
+      final streamErrors = <Object>[];
+      final streamDone = Completer<void>();
+      response.read().listen(
+        (_) {},
+        onError: streamErrors.add,
+        onDone: streamDone.complete,
+      );
+      final handler = await fakeSdk.handlerCompleter.future;
+      final normalReturns = List<Future<ToolReturn>>.generate(
+        3,
+        (index) => handler.onFunctionCall(
+          'normal-child-$index',
+          FunctionCall(
+            id: 'normal-error-call-$index',
+            name: 'normal_tool_$index',
+            arguments: const {},
+          ),
+        ),
+      );
+      final streamReturns = List.generate(
+        2,
+        (_) => Completer<EventToolReturn>(),
+      );
+      final streamDispatches = List<Future<void>>.generate(
+        2,
+        (index) => handler.onStreamFunctionCall(
+          'stream-child-$index',
+          FunctionCall(
+            id: 'stream-error-call-$index',
+            name: 'stream_tool_$index',
+            arguments: const {},
+          ),
+          streamReturns[index].complete,
+        ),
+      );
+
+      await handler.onError(Exception('root stream failed'));
+
+      final normals = await Future.wait(
+        normalReturns,
+      ).timeout(const Duration(seconds: 2));
+      final streams = await Future.wait(
+        streamReturns.map((item) => item.future),
+      ).timeout(const Duration(seconds: 2));
+      await Future.wait(streamDispatches).timeout(const Duration(seconds: 2));
+      await streamDone.future.timeout(const Duration(seconds: 2));
+
+      expect(
+        normals.map((item) => item.result['error']['code']),
+        everyElement('stream_error'),
+      );
+      expect(
+        streams.map((item) => item.eventType),
+        everyElement(EventType.ERROR),
+      );
+      expect(
+        streams.map((item) => item.toolReturn.result['error']['code']),
+        everyElement('stream_error'),
+      );
+      expect(streamErrors, hasLength(1));
+    },
+  );
+
+  test(
+    'concurrent terminal signals settle multiple in-flight calls once',
+    () async {
+      final fakeSdk = _LifecycleLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final zoneErrors = <Object>[];
+      final streamErrors = <Object>[];
+      var doneCount = 0;
+      late List<ToolReturn> returns;
+
+      await runZoned(
+        () async {
+          final response = await controller.router.call(
+            _chatRequest('root-session'),
+          );
+          final streamDone = Completer<void>();
+          response.read().listen(
+            (_) {},
+            onError: streamErrors.add,
+            onDone: () {
+              doneCount++;
+              streamDone.complete();
+            },
+          );
+          final handler = await fakeSdk.handlerCompleter.future;
+          final pending = List<Future<ToolReturn>>.generate(
+            4,
+            (index) => handler.onFunctionCall(
+              'child-session-$index',
+              FunctionCall(
+                id: 'in-flight-$index',
+                name: 'external_tool_$index',
+                arguments: const {},
+              ),
+            ),
+          );
+
+          await Future.wait<void>([
+            handler.onDone(),
+            handler.onError(Exception('late upstream error')),
+            handler.onError(Exception('second late upstream error')),
+          ]);
+          returns = await Future.wait(
+            pending,
+          ).timeout(const Duration(seconds: 2));
+          await streamDone.future.timeout(const Duration(seconds: 2));
+          await Future<void>.delayed(Duration.zero);
+        },
+        zoneSpecification: ZoneSpecification(
+          handleUncaughtError: (self, parent, zone, error, stackTrace) {
+            zoneErrors.add(error);
+          },
+        ),
+      );
+
+      expect(doneCount, 1);
+      expect(streamErrors, isEmpty);
+      expect(
+        returns.map((item) => item.result['error']['code']),
+        everyElement('stream_closed'),
+      );
+      expect(zoneErrors, isEmpty);
+    },
+  );
+
+  test(
+    'client cancellation cleans child pending callbacks and stops root',
+    () async {
+      final fakeSdk = _LifecycleLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final response = await controller.router.call(
+        _chatRequest('root-session'),
+      );
+      final subscription = response.read().listen((_) {});
+      final handler = await fakeSdk.handlerCompleter.future;
+      final pending = handler.onFunctionCall(
+        'child-session',
+        FunctionCall(
+          id: 'cancelled-call',
+          name: 'external_tool',
+          arguments: const {},
+        ),
+      );
+
+      await subscription.cancel();
+
+      final toolReturn = await pending.timeout(const Duration(seconds: 2));
+      final stoppedSessionId = await fakeSdk.stopCompleter.future.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(toolReturn.result['error']['code'], 'stream_closed');
+      expect(stoppedSessionId, 'root-session');
+      expect(fakeSdk.stoppedSessionIds, ['root-session']);
+    },
+  );
+
+  test(
+    'cancel done and errors race without duplicate terminal or zone errors',
+    () async {
+      final fakeSdk = _LifecycleLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final zoneErrors = <Object>[];
+      late List<ToolReturn> returns;
+
+      await runZoned(
+        () async {
+          final response = await controller.router.call(
+            _chatRequest('root-session'),
+          );
+          final subscription = response.read().listen((_) {});
+          final handler = await fakeSdk.handlerCompleter.future;
+          final pending = List<Future<ToolReturn>>.generate(
+            3,
+            (index) => handler.onFunctionCall(
+              'race-child-$index',
+              FunctionCall(
+                id: 'race-call-$index',
+                name: 'race_tool_$index',
+                arguments: const {},
+              ),
+            ),
+          );
+
+          await Future.wait<void>([
+            subscription.cancel(),
+            handler.onDone(),
+            handler.onError(Exception('dispatch failed')),
+            handler.onError(Exception('upstream failed')),
+          ]);
+          returns = await Future.wait(
+            pending,
+          ).timeout(const Duration(seconds: 2));
+          await fakeSdk.stopCompleter.future.timeout(
+            const Duration(seconds: 2),
+          );
+          await Future<void>.delayed(Duration.zero);
+        },
+        zoneSpecification: ZoneSpecification(
+          handleUncaughtError: (self, parent, zone, error, stackTrace) {
+            zoneErrors.add(error);
+          },
+        ),
+      );
+
+      expect(
+        returns.map((item) => item.result['error']['code']),
+        everyElement('stream_closed'),
+      );
+      expect(fakeSdk.stoppedSessionIds, ['root-session']);
+      expect(zoneErrors, isEmpty);
+    },
+  );
+
+  test(
     'routes multi-agent function callbacks by child session without role guessing',
     () async {
       const scenarios = [
@@ -1545,6 +2112,186 @@ Always produce a short plan before tool use.
       }
     },
   );
+
+  test(
+    'raw SSE close returns immediate normal and stream tool errors upstream',
+    () async {
+      for (final isStream in <bool>[false, true]) {
+        final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final upstreamDone = upstream.listen((request) async {
+          await request.drain<void>();
+          request.response.headers.set(
+            HttpHeaders.contentTypeHeader,
+            'text/event-stream; charset=utf-8',
+          );
+          request.response.write(
+            'event:functionCall\n'
+            'data:${jsonEncode(<String, dynamic>{
+              'sessionId': 'child-session',
+              'functionCall': <String, dynamic>{'id': isStream ? 'raw-stream-call' : 'raw-normal-call', 'name': isStream ? 'stream_tool' : 'normal_tool', 'arguments': <String, dynamic>{}},
+            })}\n\n',
+          );
+          await request.response.close();
+        });
+
+        try {
+          final fakeSdk = _RecordingRawSseLiteAgentSDK(
+            'http://${upstream.address.host}:${upstream.port}',
+          );
+          final controller = AgentKitController(
+            sdk: fakeSdk,
+            kernelFuture: Future.value(null),
+          );
+          final initResponse = await controller.router.call(
+            Request(
+              'POST',
+              Uri.parse('http://localhost/initSession'),
+              headers: <String, String>{
+                'authorization': 'Bearer user-token',
+                'content-type': 'application/json',
+              },
+              body: jsonEncode(<String, dynamic>{
+                'systemPrompt': 'test',
+                'callbackOpenTool': <String, dynamic>{
+                  'opentool': jsonEncode(<String, dynamic>{
+                    'functions': <Map<String, dynamic>>[
+                      <String, dynamic>{'name': 'stream_tool', 'stream': true},
+                    ],
+                  }),
+                },
+              }),
+            ),
+          );
+          expect(initResponse.statusCode, 200);
+
+          final response = await controller.router.call(
+            _chatRequest('root-session'),
+          );
+          final firstEvent = Completer<void>();
+          final subscription = response.read().listen((_) {
+            if (!firstEvent.isCompleted) firstEvent.complete();
+          });
+          await firstEvent.future.timeout(const Duration(seconds: 2));
+          await subscription.cancel();
+
+          if (isStream) {
+            final forwarded = await fakeSdk.streamCallbackCompleter.future
+                .timeout(const Duration(seconds: 2));
+            expect(forwarded.$1, 'child-session');
+            expect(forwarded.$2.eventType, EventType.ERROR);
+            expect(
+              forwarded.$2.toolReturn.result['error']['code'],
+              'stream_closed',
+            );
+          } else {
+            final forwarded = await fakeSdk.callbackCompleter.future.timeout(
+              const Duration(seconds: 2),
+            );
+            expect(forwarded.$1, 'child-session');
+            expect(forwarded.$2.result['error']['code'], 'stream_closed');
+          }
+        } finally {
+          await upstream.close(force: true);
+          await upstreamDone.cancel();
+        }
+      }
+    },
+  );
+
+  test('raw SSE child callbacks inherit root chat timeout', () async {
+    for (final isStream in <bool>[false, true]) {
+      final sseService = _ControlledSseService();
+      final fakeSdk = _RecordingRawSseLiteAgentSDK(
+        'http://127.0.0.1:9527/api/v1',
+        controlledService: sseService,
+      );
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final initResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'test',
+            'callbackOpenTool': <String, dynamic>{
+              'timeout': 1,
+              'opentool': jsonEncode(<String, dynamic>{
+                'functions': <Map<String, dynamic>>[
+                  <String, dynamic>{'name': 'stream_tool', 'stream': true},
+                ],
+              }),
+            },
+          }),
+        ),
+      );
+      expect(initResponse.statusCode, 200);
+
+      final response = await controller.router.call(
+        _chatRequest('root-session'),
+      );
+      final firstEvent = Completer<void>();
+      final subscription = response.read().listen((_) {
+        if (!firstEvent.isCompleted) firstEvent.complete();
+      });
+
+      try {
+        final functionCallId = isStream
+            ? 'raw-stream-timeout'
+            : 'raw-normal-timeout';
+        sseService.events.add(
+          sse.Event(
+            event: SSEEventType.FUNCTION_CALL,
+            data: jsonEncode(<String, dynamic>{
+              'sessionId': 'raw-child-session',
+              'originalTaskId': 'root-task',
+              'taskId': 'child-task',
+              'role': AgentRoleType.AGENT,
+              'to': AgentRoleType.CLIENT,
+              'type': AgentMessageType.FUNCTION_CALL,
+              'content': <String, dynamic>{
+                'id': functionCallId,
+                'name': isStream ? 'stream_tool' : 'normal_tool',
+                'arguments': <String, dynamic>{},
+              },
+              'createTime': DateTime.utc(2026, 7, 13).toIso8601String(),
+            }),
+          ),
+        );
+        await firstEvent.future.timeout(const Duration(seconds: 2));
+
+        if (isStream) {
+          final forwarded = await fakeSdk.streamCallbackCompleter.future
+              .timeout(const Duration(seconds: 3));
+          expect(forwarded.$1, 'raw-child-session');
+          expect(forwarded.$2.eventType, EventType.ERROR);
+          expect(
+            forwarded.$2.toolReturn.result['error']['code'],
+            'stream_callback_timeout',
+          );
+          expect(
+            forwarded.$2.toolReturn.result['error']['message'],
+            contains('1s'),
+          );
+        } else {
+          final forwarded = await fakeSdk.callbackCompleter.future.timeout(
+            const Duration(seconds: 3),
+          );
+          expect(forwarded.$1, 'raw-child-session');
+          expect(forwarded.$2.result['error']['code'], 'callback_timeout');
+          expect(forwarded.$2.result['error']['message'], contains('1s'));
+        }
+      } finally {
+        await subscription.cancel();
+        await sseService.events.close();
+      }
+    }
+  });
 
   test(
     'forwards functionCall by SSE and resolves via /callback without sdk.callback forwarding',
@@ -1770,6 +2517,100 @@ Always produce a short plan before tool use.
     expect(timedOut.result['error']['message'], contains('1s'));
     await streamDone;
   });
+
+  test(
+    'child callback inherits root chat timeout when child was not initialized',
+    () async {
+      final fakeSdk = _FunctionCallLiteAgentSDK(
+        callbackSessionId: 'internal-child-session',
+        initSessionId: 'root-session',
+      );
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+
+      final initResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'root',
+            'callbackOpenTool': <String, dynamic>{
+              'opentool': '{}',
+              'timeout': 1,
+            },
+          }),
+        ),
+      );
+      expect(initResponse.statusCode, 200);
+
+      final chatResponse = await controller.router.call(
+        _chatRequest('root-session'),
+      );
+      final streamDone = chatResponse.read().drain<void>();
+      final timedOut = await fakeSdk.functionReturnCompleter.future.timeout(
+        const Duration(seconds: 3),
+      );
+
+      expect(timedOut.result['error']['code'], 'callback_timeout');
+      expect(timedOut.result['error']['message'], contains('1s'));
+      await streamDone.timeout(const Duration(seconds: 2));
+    },
+  );
+
+  test(
+    'child stream callback inherits root timeout when child was not initialized',
+    () async {
+      final fakeSdk = _StreamFunctionCallLiteAgentSDK(
+        callbackSessionId: 'internal-child-session',
+        initSessionId: 'root-session',
+      );
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+
+      final initResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'root',
+            'callbackOpenTool': <String, dynamic>{
+              'opentool': '{}',
+              'timeout': 1,
+            },
+          }),
+        ),
+      );
+      expect(initResponse.statusCode, 200);
+
+      final chatResponse = await controller.router.call(
+        _chatRequest('root-session'),
+      );
+      final streamDone = chatResponse.read().drain<void>();
+      final terminal = await fakeSdk.streamReturnCompleter.future.timeout(
+        const Duration(seconds: 3),
+      );
+
+      expect(terminal.eventType, EventType.ERROR);
+      expect(
+        terminal.toolReturn.result['error']['code'],
+        'stream_callback_timeout',
+      );
+      expect(terminal.toolReturn.result['error']['message'], contains('1s'));
+      await streamDone.timeout(const Duration(seconds: 2));
+    },
+  );
 
   test(
     'reads callback timeout from agent capability when using agentId',
