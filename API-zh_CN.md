@@ -64,7 +64,7 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `opentool` | `string` | 是 | OpenTool JSON。 |
-| `timeout` | `number` | 否 | 超时秒数。 |
+| `timeout` | 正整数 | 否 | 外部回调超时秒数。AgentKit 按 session 保存；未提供或值非法时使用网关兼容默认值 300 秒。 |
 
 #### SessionName
 
@@ -296,6 +296,7 @@ Query（可选）：
 - 支持 `Capability.skills`，并会原样转发给 LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown 文档。
 - 每个 skill 文档的规范来源为 [agentskills.io/specification](https://agentskills.io/specification)，重点遵循其中 `SKILL.md` 的格式要求：YAML frontmatter 加 Markdown 正文。
 - 也支持 `Capability.llmConfig.modelId`。AgentKit 会先用 `modelId` 在内部模型注册表中做反查，再展开成 LiteAgent 可用的具体 `llmConfig`。其中解析出的模型名会写入 `llmConfig.model`；同时网关还会在可用时补齐 `baseUrl`、`apiKey`、`provider`、`adapter`、`contextWindowSize` 等字段。
+- 网关使用 `callbackOpenTool.timeout` 等待外部 function call 回调。通过 `agentId` 初始化时，会在可获取的情况下读取已保存的 Agent capability；无法获取时使用兼容默认值 300 秒。
 
 响应：`200 OK`（`Session`）
 
@@ -429,6 +430,37 @@ Query:
 ]
 ```
 
+#### GET /agentkit/history/summary
+
+按任务轮次返回轻量摘要，用于摘要优先的历史加载。`page` 默认为 `1`，
+`pageSize` 默认为 `30`，且不能超过 `200`。
+
+Query：
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `sessionId` | `string` | 是 |
+| `page` | `integer` | 否 |
+| `pageSize` | `integer` | 否 |
+
+响应：`200 OK`（`HistoryTurnSummaryDto[]`）
+
+#### GET /agentkit/history/process
+
+按任务轮次懒加载过程消息。`page` 默认为 `1`，`pageSize` 默认为 `50`，
+且不能超过 `200`。
+
+Query：
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `sessionId` | `string` | 是 |
+| `originalTaskId` | `string` | 是 |
+| `page` | `integer` | 否 |
+| `pageSize` | `integer` | 否 |
+
+响应：`200 OK`（`AgentMessage[]`）
+
 #### GET /agentkit/stop
 
 Query:
@@ -476,6 +508,7 @@ Query:
 
 说明：
 - 如果存在相同 `sessionId` + `toolReturn.id` 的待完成外部 `functionCall`，该接口会优先完成该调用。
+- 对于已经超时或完成的网关代理调用，迟到 callback 返回 `200 OK`，响应为 `{"status":"ignored","reason":"callback_expired"}` 或 `callback_completed`，且不会再次转发到下游。
 - 否则会按兼容逻辑转发到 LiteAgent 的 `/callback`。
 
 示例请求：
@@ -524,6 +557,7 @@ Query:
 说明：
 - 该接口是 `/agentkit/callback` 的流式配套版本。
 - 适用于客户端保留了原始流事件上下文，并希望带着事件类型回传工具结果的场景。
+- 已超时或完成的网关代理调用，其迟到流事件同样返回 `200 OK` 的 ignored 响应，并且不会再次转发到下游。
 
 ## CronKit
 

@@ -23,6 +23,13 @@ class _FakeLiteAgentSDK extends LiteAgentSDK {
   Session? capturedHistorySession;
   int? capturedHistoryPage;
   int? capturedHistoryPageSize;
+  String? capturedHistorySummarySessionId;
+  int? capturedHistorySummaryPage;
+  int? capturedHistorySummaryPageSize;
+  String? capturedHistoryProcessSessionId;
+  String? capturedHistoryProcessOriginalTaskId;
+  int? capturedHistoryProcessPage;
+  int? capturedHistoryProcessPageSize;
 
   @override
   Future<Session> initSimple(SimpleCapability simpleCapability) async {
@@ -72,6 +79,57 @@ class _FakeLiteAgentSDK extends LiteAgentSDK {
       ),
     ];
   }
+
+  @override
+  Future<List<HistoryTurnSummaryDto>> getHistorySummary(
+    String sessionId, {
+    int page = 1,
+    int pageSize = 30,
+  }) async {
+    capturedHistorySummarySessionId = sessionId;
+    capturedHistorySummaryPage = page;
+    capturedHistorySummaryPageSize = pageSize;
+    return [
+      HistoryTurnSummaryDto(
+        originalTaskId: 'root-task',
+        sessionId: sessionId,
+        userMessage: null,
+        finalMessage: null,
+        status: HistoryTurnStatus.done,
+        error: null,
+        createdAt: DateTime.utc(2026, 7, 12, 10),
+        completedAt: DateTime.utc(2026, 7, 12, 10, 0, 5),
+        durationMs: 5000,
+        usage: null,
+        processMessageCount: 4,
+      ),
+    ];
+  }
+
+  @override
+  Future<List<AgentMessage>> getHistoryProcess(
+    String sessionId,
+    String originalTaskId, {
+    int page = 1,
+    int pageSize = 50,
+  }) async {
+    capturedHistoryProcessSessionId = sessionId;
+    capturedHistoryProcessOriginalTaskId = originalTaskId;
+    capturedHistoryProcessPage = page;
+    capturedHistoryProcessPageSize = pageSize;
+    return [
+      AgentMessage(
+        sessionId: 'child-session',
+        originalTaskId: originalTaskId,
+        taskId: 'child-task',
+        role: AgentRoleType.AGENT,
+        to: AgentRoleType.CLIENT,
+        type: AgentMessageType.REASONING,
+        content: 'working',
+        createTime: DateTime.utc(2026, 7, 12, 10, 0, 1),
+      ),
+    ];
+  }
 }
 
 class _ThrowingLiteAgentSDK extends LiteAgentSDK {
@@ -89,11 +147,41 @@ class _ThrowingLiteAgentSDK extends LiteAgentSDK {
 }
 
 class _FunctionCallLiteAgentSDK extends LiteAgentSDK {
-  _FunctionCallLiteAgentSDK() : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
+  _FunctionCallLiteAgentSDK({
+    this.callbackSessionId,
+    this.functionName = 'external_tool',
+    this.initSessionId = 'test-session',
+    this.agent,
+    this.failAgentLookup = false,
+  }) : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
+
+  final String? callbackSessionId;
+  final String functionName;
+  final String initSessionId;
+  final Agent? agent;
+  final bool failAgentLookup;
 
   ToolReturn? forwardedCallback;
   UserTask? capturedUserTask;
+  Capability? capturedCapability;
+  int clearCalls = 0;
   final Completer<ToolReturn> functionReturnCompleter = Completer<ToolReturn>();
+
+  @override
+  Future<Agent> getAgent(String agentId) async {
+    if (failAgentLookup) throw Exception('agent lookup unavailable');
+    return agent ??
+        Agent(
+          name: 'test-agent',
+          capability: Capability(systemPrompt: 'test'),
+        );
+  }
+
+  @override
+  Future<Session> initSession({Capability? capability, String? agentId}) async {
+    capturedCapability = capability;
+    return Session(sessionId: initSessionId);
+  }
 
   @override
   Future<void> chat(
@@ -104,10 +192,10 @@ class _FunctionCallLiteAgentSDK extends LiteAgentSDK {
     capturedUserTask = userTask;
     unawaited(() async {
       final toolReturn = await agentMessageHandler.onFunctionCall(
-        session.sessionId,
+        callbackSessionId ?? session.sessionId,
         FunctionCall(
           id: 'fn-1',
-          name: 'external_tool',
+          name: functionName,
           arguments: {'query': 'hello'},
         ),
       );
@@ -122,16 +210,29 @@ class _FunctionCallLiteAgentSDK extends LiteAgentSDK {
   Future<void> callback(Session session, ToolReturn toolReturn) async {
     forwardedCallback = toolReturn;
   }
+
+  @override
+  Future<void> clear(Session session) async {
+    clearCalls++;
+  }
 }
 
 class _StreamFunctionCallLiteAgentSDK extends LiteAgentSDK {
-  _StreamFunctionCallLiteAgentSDK()
+  _StreamFunctionCallLiteAgentSDK({this.callbackSessionId})
     : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
+
+  final String? callbackSessionId;
 
   EventToolReturn? terminalStreamReturn;
   final List<EventToolReturn> forwardedStreamCallbacks = [];
+  final List<String> forwardedStreamCallbackSessionIds = [];
   final Completer<EventToolReturn> streamReturnCompleter =
       Completer<EventToolReturn>();
+
+  @override
+  Future<Session> initSession({Capability? capability, String? agentId}) async {
+    return Session(sessionId: 'test-session');
+  }
 
   @override
   Future<void> chat(
@@ -141,7 +242,7 @@ class _StreamFunctionCallLiteAgentSDK extends LiteAgentSDK {
   ) async {
     unawaited(() async {
       await agentMessageHandler.onStreamFunctionCall(
-        session.sessionId,
+        callbackSessionId ?? session.sessionId,
         FunctionCall(
           id: 'stream-fn-1',
           name: 'sequentiallyRead',
@@ -163,7 +264,17 @@ class _StreamFunctionCallLiteAgentSDK extends LiteAgentSDK {
     Session session,
     EventToolReturn streamToolReturn,
   ) async {
+    forwardedStreamCallbackSessionIds.add(session.sessionId);
     forwardedStreamCallbacks.add(streamToolReturn);
+  }
+}
+
+class _RawSseLiteAgentSDK extends LiteAgentSDK {
+  _RawSseLiteAgentSDK(String baseUrl) : super(baseUrl: baseUrl);
+
+  @override
+  Future<Session> initSession({Capability? capability, String? agentId}) async {
+    return Session(sessionId: 'root-session');
   }
 }
 
@@ -180,7 +291,7 @@ class _ReasoningLiteAgentSDK extends LiteAgentSDK {
       await agentMessageHandler.onMessage(
         session.sessionId,
         AgentMessage(
-          sessionId: session.sessionId,
+          sessionId: 'child-message-session',
           taskId: 'task-reasoning',
           role: AgentRoleType.LLM,
           to: AgentRoleType.CLIENT,
@@ -206,7 +317,7 @@ class _ReasoningLiteAgentSDK extends LiteAgentSDK {
       await agentMessageHandler.onChunk(
         session.sessionId,
         AgentMessageChunk(
-          sessionId: session.sessionId,
+          sessionId: 'child-chunk-session',
           taskId: 'task-reasoning',
           role: AgentRoleType.LLM,
           to: AgentRoleType.CLIENT,
@@ -465,6 +576,84 @@ Always produce a short plan before tool use.
       );
 
       expect(response.statusCode, 400, reason: query);
+    }
+  });
+
+  test('forwards summary-first history with SDK defaults', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'GET',
+        Uri.parse('http://localhost/history/summary?sessionId=root-session'),
+        headers: const <String, String>{'authorization': 'Bearer user-token'},
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedHistorySummarySessionId, 'root-session');
+    expect(fakeSdk.capturedHistorySummaryPage, 1);
+    expect(fakeSdk.capturedHistorySummaryPageSize, 30);
+    final payload = jsonDecode(await response.readAsString()) as List<dynamic>;
+    expect(payload.single['originalTaskId'], 'root-task');
+    expect(payload.single['status'], HistoryTurnStatus.done);
+    expect(payload.single['processMessageCount'], 4);
+  });
+
+  test('forwards lazy history process pagination and child messages', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'GET',
+        Uri.parse(
+          'http://localhost/history/process?sessionId=root-session&'
+          'originalTaskId=root-task&page=2&pageSize=25',
+        ),
+        headers: const <String, String>{'authorization': 'Bearer user-token'},
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    expect(fakeSdk.capturedHistoryProcessSessionId, 'root-session');
+    expect(fakeSdk.capturedHistoryProcessOriginalTaskId, 'root-task');
+    expect(fakeSdk.capturedHistoryProcessPage, 2);
+    expect(fakeSdk.capturedHistoryProcessPageSize, 25);
+    final payload = jsonDecode(await response.readAsString()) as List<dynamic>;
+    expect(payload.single['sessionId'], 'child-session');
+    expect(payload.single['originalTaskId'], 'root-task');
+    expect(payload.single['type'], AgentMessageType.REASONING);
+  });
+
+  test('validates summary and process history query parameters', () async {
+    final controller = AgentKitController(
+      sdk: _FakeLiteAgentSDK(),
+      kernelFuture: Future.value(null),
+    );
+
+    for (final path in <String>[
+      '/history/summary',
+      '/history/summary?sessionId=root&page=0',
+      '/history/summary?sessionId=root&pageSize=201',
+      '/history/process?sessionId=root',
+      '/history/process?sessionId=root&originalTaskId=task&page=invalid',
+    ]) {
+      final response = await controller.router.call(
+        Request(
+          'GET',
+          Uri.parse('http://localhost$path'),
+          headers: const <String, String>{'authorization': 'Bearer user-token'},
+        ),
+      );
+      expect(response.statusCode, 400, reason: path);
     }
   });
 
@@ -1142,6 +1331,222 @@ Always produce a short plan before tool use.
   });
 
   test(
+    'routes multi-agent function callbacks by child session without role guessing',
+    () async {
+      const scenarios = [
+        (
+          callbackSessionId: 'project-planner-session',
+          functionName: 'read_brief',
+        ),
+        (
+          callbackSessionId: 'presentation-builder-session',
+          functionName: 'read_presentation_html',
+        ),
+      ];
+
+      for (final scenario in scenarios) {
+        final fakeSdk = _FunctionCallLiteAgentSDK(
+          callbackSessionId: scenario.callbackSessionId,
+          functionName: scenario.functionName,
+        );
+        final controller = AgentKitController(
+          sdk: fakeSdk,
+          kernelFuture: Future.value(null),
+        );
+
+        final chatResponse = await controller.router.call(
+          Request(
+            'POST',
+            Uri.parse('http://localhost/chat?sessionId=root-session'),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'content': <Map<String, dynamic>>[
+                <String, dynamic>{'type': 'text', 'message': 'hi'},
+              ],
+            }),
+          ),
+        );
+
+        expect(chatResponse.statusCode, 200);
+        final firstChunkCompleter = Completer<String>();
+        late final StreamSubscription<List<int>> subscription;
+        subscription = chatResponse.read().listen((bytes) {
+          if (!firstChunkCompleter.isCompleted) {
+            firstChunkCompleter.complete(utf8.decode(bytes));
+          }
+        });
+        final sseChunk = await firstChunkCompleter.future.timeout(
+          const Duration(seconds: 2),
+        );
+        expect(sseChunk, contains('event:functionCall'));
+        expect(
+          sseChunk,
+          contains('"sessionId":"${scenario.callbackSessionId}"'),
+        );
+        expect(sseChunk, isNot(contains('"sessionId":"root-session"')));
+        expect(sseChunk, contains('"name":"${scenario.functionName}"'));
+
+        final callbackResponse = await controller.router.call(
+          Request(
+            'POST',
+            Uri.parse(
+              'http://localhost/callback?sessionId='
+              '${scenario.callbackSessionId}',
+            ),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'id': 'fn-1',
+              'result': <String, dynamic>{
+                'handledBy': scenario.callbackSessionId,
+              },
+            }),
+          ),
+        );
+
+        expect(callbackResponse.statusCode, 200);
+        final resolved = await fakeSdk.functionReturnCompleter.future.timeout(
+          const Duration(seconds: 2),
+        );
+        expect(resolved.result['handledBy'], scenario.callbackSessionId);
+        expect(fakeSdk.forwardedCallback, isNull);
+        await subscription.cancel();
+      }
+    },
+  );
+
+  test(
+    'raw stream adapter coalesces duplicate root and child function calls',
+    () async {
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final upstreamDone = upstream.listen((request) async {
+        await request.drain<void>();
+        if (request.uri.path != '/chat') {
+          request.response.statusCode = HttpStatus.ok;
+          await request.response.close();
+          return;
+        }
+        request.response.headers.set(
+          HttpHeaders.contentTypeHeader,
+          'text/event-stream; charset=utf-8',
+        );
+        Map<String, dynamic> functionCallEvent(String sessionId) => {
+          'sessionId': sessionId,
+          'originalTaskId': 'root-task',
+          'taskId': sessionId == 'root-session' ? 'root-task' : 'child-task',
+          'role': AgentRoleType.AGENT,
+          'to': AgentRoleType.CLIENT,
+          'type': AgentMessageType.FUNCTION_CALL,
+          'content': <String, dynamic>{
+            'id': 'duplicate-call',
+            'name': 'sequentiallyRead',
+            'arguments': <String, dynamic>{},
+          },
+          'createTime': DateTime.utc(2026, 7, 12).toIso8601String(),
+        };
+        for (final sessionId in <String>['root-session', 'child-session']) {
+          request.response.write(
+            'event:functionCall\n'
+            'data:${jsonEncode(functionCallEvent(sessionId))}\n\n',
+          );
+        }
+        await request.response.close();
+      });
+
+      try {
+        final controller = AgentKitController(
+          sdk: _RawSseLiteAgentSDK(
+            'http://${upstream.address.host}:${upstream.port}',
+          ),
+          kernelFuture: Future.value(null),
+        );
+        final initResponse = await controller.router.call(
+          Request(
+            'POST',
+            Uri.parse('http://localhost/initSession'),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'systemPrompt': 'Use the stream callback.',
+              'callbackOpenTool': <String, dynamic>{
+                'opentool': jsonEncode(<String, dynamic>{
+                  'functions': <Map<String, dynamic>>[
+                    <String, dynamic>{
+                      'name': 'sequentiallyRead',
+                      'stream': true,
+                    },
+                  ],
+                }),
+              },
+            }),
+          ),
+        );
+        expect(initResponse.statusCode, 200);
+
+        final chatResponse = await controller.router.call(
+          Request(
+            'POST',
+            Uri.parse('http://localhost/chat?sessionId=root-session'),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'content': <Map<String, dynamic>>[
+                <String, dynamic>{'type': 'text', 'message': 'read'},
+              ],
+            }),
+          ),
+        );
+
+        final chunks = <String>[];
+        final firstChunk = Completer<void>();
+        final subscription = chatResponse.read().listen((bytes) {
+          chunks.add(utf8.decode(bytes));
+          if (!firstChunk.isCompleted) firstChunk.complete();
+        });
+        await firstChunk.future.timeout(const Duration(seconds: 2));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final sseText = chunks.join();
+        expect(RegExp('event:functionCall').allMatches(sseText), hasLength(1));
+        expect(sseText, contains('"sessionId":"child-session"'));
+        expect(sseText, isNot(contains('"sessionId":"root-session"')));
+        expect(sseText, contains('"stream":true'));
+        await controller.router.call(
+          Request(
+            'POST',
+            Uri.parse(
+              'http://localhost/streamCallback?sessionId=child-session',
+            ),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'event': EventType.DONE,
+              'toolReturn': <String, dynamic>{
+                'id': 'duplicate-call',
+                'result': <String, dynamic>{},
+              },
+            }),
+          ),
+        );
+        await subscription.cancel();
+      } finally {
+        await upstream.close(force: true);
+        await upstreamDone.cancel();
+      }
+    },
+  );
+
+  test(
     'forwards functionCall by SSE and resolves via /callback without sdk.callback forwarding',
     () async {
       final fakeSdk = _FunctionCallLiteAgentSDK();
@@ -1217,9 +1622,325 @@ Always produce a short plan before tool use.
       expect(resolved.id, 'fn-1');
       expect(resolved.result['ok'], true);
       expect(fakeSdk.forwardedCallback, isNull);
+
+      final duplicateResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/callback?sessionId=s1'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'id': 'fn-1',
+            'result': <String, dynamic>{'ok': true},
+          }),
+        ),
+      );
+      expect(duplicateResponse.statusCode, 200);
+      expect(
+        jsonDecode(await duplicateResponse.readAsString()),
+        <String, dynamic>{'status': 'ignored', 'reason': 'callback_completed'},
+      );
+      expect(fakeSdk.forwardedCallback, isNull);
       await subscription.cancel();
     },
   );
+
+  test(
+    'uses callbackOpenTool.timeout and ignores a late callback after timeout',
+    () async {
+      final fakeSdk = _FunctionCallLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+
+      final initResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'hello',
+            'callbackOpenTool': <String, dynamic>{
+              'opentool': '{}',
+              'timeout': 1,
+            },
+          }),
+        ),
+      );
+      expect(initResponse.statusCode, 200);
+
+      final chatResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/chat?sessionId=test-session'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'content': <Map<String, dynamic>>[
+              <String, dynamic>{'type': 'text', 'message': 'hi'},
+            ],
+          }),
+        ),
+      );
+      final streamDone = chatResponse.read().toList();
+      final timedOut = await fakeSdk.functionReturnCompleter.future.timeout(
+        const Duration(seconds: 3),
+      );
+      expect(timedOut.result['error']['code'], 'callback_timeout');
+      expect(timedOut.result['error']['message'], contains('1s'));
+      await streamDone;
+
+      final lateResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/callback?sessionId=test-session'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'id': 'fn-1',
+            'result': <String, dynamic>{'ok': true},
+          }),
+        ),
+      );
+      expect(lateResponse.statusCode, 200);
+      expect(jsonDecode(await lateResponse.readAsString()), <String, dynamic>{
+        'status': 'ignored',
+        'reason': 'callback_expired',
+      });
+      expect(fakeSdk.forwardedCallback, isNull);
+    },
+  );
+
+  test('uses the real child callback session timeout', () async {
+    final fakeSdk = _FunctionCallLiteAgentSDK(
+      callbackSessionId: 'child-session',
+      initSessionId: 'child-session',
+    );
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final initResponse = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSession'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'systemPrompt': 'child',
+          'callbackOpenTool': <String, dynamic>{'opentool': '{}', 'timeout': 1},
+        }),
+      ),
+    );
+    expect(initResponse.statusCode, 200);
+
+    final chatResponse = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/chat?sessionId=root-session'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'content': <Map<String, dynamic>>[
+            <String, dynamic>{'type': 'text', 'message': 'hi'},
+          ],
+        }),
+      ),
+    );
+    final streamDone = chatResponse.read().toList();
+    final timedOut = await fakeSdk.functionReturnCompleter.future.timeout(
+      const Duration(seconds: 3),
+    );
+    expect(timedOut.result['error']['code'], 'callback_timeout');
+    expect(timedOut.result['error']['message'], contains('1s'));
+    await streamDone;
+  });
+
+  test(
+    'reads callback timeout from agent capability when using agentId',
+    () async {
+      final fakeSdk = _FunctionCallLiteAgentSDK(
+        agent: Agent(
+          name: 'configured-agent',
+          capability: Capability(
+            systemPrompt: 'agent',
+            callbackOpenTool: CallbackOpenTool(opentool: '{}', timeout: 1),
+          ),
+        ),
+      );
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+
+      final initResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession?agentId=agent-1'),
+          headers: const <String, String>{'authorization': 'Bearer user-token'},
+        ),
+      );
+      expect(initResponse.statusCode, 200);
+
+      final chatResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/chat?sessionId=test-session'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'content': <Map<String, dynamic>>[
+              <String, dynamic>{'type': 'text', 'message': 'hi'},
+            ],
+          }),
+        ),
+      );
+      final streamDone = chatResponse.read().toList();
+      final timedOut = await fakeSdk.functionReturnCompleter.future.timeout(
+        const Duration(seconds: 3),
+      );
+      expect(timedOut.result['error']['message'], contains('1s'));
+      await streamDone;
+    },
+  );
+
+  test('falls back when agent capability cannot be read', () async {
+    final controller = AgentKitController(
+      sdk: _FunctionCallLiteAgentSDK(failAgentLookup: true),
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSession?agentId=agent-1'),
+        headers: const <String, String>{'authorization': 'Bearer user-token'},
+      ),
+    );
+    expect(response.statusCode, 200);
+  });
+
+  test('sanitizes invalid callbackOpenTool.timeout values', () async {
+    for (final invalidTimeout in <Object>[0, -1, '600', 1.5]) {
+      final fakeSdk = _FunctionCallLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'hello',
+            'callbackOpenTool': <String, dynamic>{
+              'opentool': '{}',
+              'timeout': invalidTimeout,
+            },
+          }),
+        ),
+      );
+      expect(response.statusCode, 200, reason: '$invalidTimeout');
+      expect(
+        fakeSdk.capturedCapability?.callbackOpenTool?.timeout,
+        isNull,
+        reason: '$invalidTimeout',
+      );
+    }
+  });
+
+  test('clear removes the configured session callback timeout', () async {
+    final fakeSdk = _FunctionCallLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+    final initResponse = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSession'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'systemPrompt': 'hello',
+          'callbackOpenTool': <String, dynamic>{'opentool': '{}', 'timeout': 1},
+        }),
+      ),
+    );
+    expect(initResponse.statusCode, 200);
+    final clearResponse = await controller.router.call(
+      Request(
+        'GET',
+        Uri.parse('http://localhost/clear?sessionId=test-session'),
+        headers: const <String, String>{'authorization': 'Bearer user-token'},
+      ),
+    );
+    expect(clearResponse.statusCode, 200);
+    expect(fakeSdk.clearCalls, 1);
+
+    final chatResponse = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/chat?sessionId=test-session'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'content': <Map<String, dynamic>>[
+            <String, dynamic>{'type': 'text', 'message': 'hi'},
+          ],
+        }),
+      ),
+    );
+    final subscription = chatResponse.read().listen((_) {});
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    expect(fakeSdk.functionReturnCompleter.isCompleted, isFalse);
+
+    final callbackResponse = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/callback?sessionId=test-session'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'id': 'fn-1',
+          'result': <String, dynamic>{'ok': true},
+        }),
+      ),
+    );
+    expect(callbackResponse.statusCode, 200);
+    final resolved = await fakeSdk.functionReturnCompleter.future.timeout(
+      const Duration(seconds: 2),
+    );
+    expect(resolved.result['ok'], true);
+    await subscription.cancel();
+  });
 
   test(
     'keeps llmConfig unset for /chat when request omits llmConfig',
@@ -1609,6 +2330,210 @@ Always produce a short plan before tool use.
   );
 
   test(
+    'routes and cleans stream callbacks by child session for DONE and ERROR',
+    () async {
+      for (final terminalEvent in <String>[EventType.DONE, EventType.ERROR]) {
+        final fakeSdk = _StreamFunctionCallLiteAgentSDK(
+          callbackSessionId: 'child-session',
+        );
+        final controller = AgentKitController(
+          sdk: fakeSdk,
+          kernelFuture: Future.value(null),
+        );
+
+        final chatResponse = await controller.router.call(
+          Request(
+            'POST',
+            Uri.parse('http://localhost/chat?sessionId=root-session'),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'content': <Map<String, dynamic>>[
+                <String, dynamic>{'type': 'text', 'message': 'hi'},
+              ],
+            }),
+          ),
+        );
+
+        expect(chatResponse.statusCode, 200);
+        final firstChunkCompleter = Completer<String>();
+        late final StreamSubscription<List<int>> subscription;
+        subscription = chatResponse.read().listen((bytes) {
+          if (!firstChunkCompleter.isCompleted) {
+            firstChunkCompleter.complete(utf8.decode(bytes));
+          }
+        });
+        final sseChunk = await firstChunkCompleter.future.timeout(
+          const Duration(seconds: 2),
+        );
+        expect(sseChunk, contains('event:functionCall'));
+        expect(sseChunk, contains('"sessionId":"child-session"'));
+        expect(sseChunk, isNot(contains('"sessionId":"root-session"')));
+        expect(sseChunk, contains('"stream":true'));
+
+        final dataResponse = await controller.router.call(
+          Request(
+            'POST',
+            Uri.parse(
+              'http://localhost/streamCallback?sessionId=child-session',
+            ),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'event': EventType.DATA,
+              'toolReturn': <String, dynamic>{
+                'id': 'stream-fn-1',
+                'result': <String, dynamic>{'data': 'chunk'},
+              },
+            }),
+          ),
+        );
+        expect(dataResponse.statusCode, 200);
+        expect(fakeSdk.forwardedStreamCallbackSessionIds, ['child-session']);
+
+        final terminalBody = <String, dynamic>{
+          'event': terminalEvent,
+          'toolReturn': <String, dynamic>{
+            'id': 'stream-fn-1',
+            'result': <String, dynamic>{},
+          },
+        };
+        final terminalResponse = await controller.router.call(
+          Request(
+            'POST',
+            Uri.parse(
+              'http://localhost/streamCallback?sessionId=child-session',
+            ),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(terminalBody),
+          ),
+        );
+        expect(terminalResponse.statusCode, 200);
+        final terminal = await fakeSdk.streamReturnCompleter.future.timeout(
+          const Duration(seconds: 2),
+        );
+        expect(terminal.eventType, terminalEvent);
+        expect(fakeSdk.forwardedStreamCallbacks, hasLength(1));
+
+        await Future<void>.delayed(Duration.zero);
+        final afterCleanupResponse = await controller.router.call(
+          Request(
+            'POST',
+            Uri.parse(
+              'http://localhost/streamCallback?sessionId=child-session',
+            ),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(terminalBody),
+          ),
+        );
+        expect(afterCleanupResponse.statusCode, 200);
+        expect(
+          jsonDecode(await afterCleanupResponse.readAsString()),
+          <String, dynamic>{
+            'status': 'ignored',
+            'reason': 'callback_completed',
+          },
+        );
+        expect(fakeSdk.forwardedStreamCallbacks, hasLength(1));
+        expect(fakeSdk.forwardedStreamCallbackSessionIds, ['child-session']);
+        await subscription.cancel();
+      }
+    },
+  );
+
+  test(
+    'uses session timeout for stream callbacks and ignores late events',
+    () async {
+      final fakeSdk = _StreamFunctionCallLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+      final initResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'hello',
+            'callbackOpenTool': <String, dynamic>{
+              'opentool': '{}',
+              'timeout': 1,
+            },
+          }),
+        ),
+      );
+      expect(initResponse.statusCode, 200);
+
+      final chatResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/chat?sessionId=test-session'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'content': <Map<String, dynamic>>[
+              <String, dynamic>{'type': 'text', 'message': 'hi'},
+            ],
+          }),
+        ),
+      );
+      final streamDone = chatResponse.read().toList();
+      final terminal = await fakeSdk.streamReturnCompleter.future.timeout(
+        const Duration(seconds: 3),
+      );
+      expect(terminal.eventType, EventType.ERROR);
+      expect(
+        terminal.toolReturn.result['error']['code'],
+        'stream_callback_timeout',
+      );
+      expect(terminal.toolReturn.result['error']['message'], contains('1s'));
+      await streamDone;
+
+      for (final eventType in <String>[EventType.DATA, EventType.DONE]) {
+        final lateResponse = await controller.router.call(
+          Request(
+            'POST',
+            Uri.parse('http://localhost/streamCallback?sessionId=test-session'),
+            headers: <String, String>{
+              'authorization': 'Bearer user-token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, dynamic>{
+              'event': eventType,
+              'toolReturn': <String, dynamic>{
+                'id': 'stream-fn-1',
+                'result': <String, dynamic>{'late': true},
+              },
+            }),
+          ),
+        );
+        expect(lateResponse.statusCode, 200);
+        expect(jsonDecode(await lateResponse.readAsString()), <String, dynamic>{
+          'status': 'ignored',
+          'reason': 'callback_expired',
+        });
+      }
+      expect(fakeSdk.forwardedStreamCallbacks, isEmpty);
+    },
+  );
+
+  test(
     'forwards reasoning/dispatch/planning message chunk types via SSE',
     () async {
       final fakeSdk = _ReasoningLiteAgentSDK();
@@ -1644,6 +2569,8 @@ Always produce a short plan before tool use.
       expect(sseText, contains('"type":"reasoning"'));
       expect(sseText, contains('"type":"dispatch"'));
       expect(sseText, contains('"type":"planning"'));
+      expect(sseText, contains('"sessionId":"child-message-session"'));
+      expect(sseText, contains('"sessionId":"child-chunk-session"'));
     },
   );
 }

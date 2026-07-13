@@ -95,6 +95,8 @@ Supported routes:
 - `POST /agentkit/chat` (SSE stream)
 - `POST /agentkit/chat/simple`
 - `GET /agentkit/history` (optional paired `page` and `pageSize` query params)
+- `GET /agentkit/history/summary` (summary-first task history)
+- `GET /agentkit/history/process` (lazy process messages by `originalTaskId`)
 - `GET /agentkit/stop`
 - `GET /agentkit/clear`
 - `POST /agentkit/callback`

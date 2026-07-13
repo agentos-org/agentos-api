@@ -67,7 +67,7 @@ If backend/sdk operation fails, the gateway may return `502`.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `opentool` | `string` | Yes | OpenTool JSON. |
-| `timeout` | `number` | No | Timeout seconds. |
+| `timeout` | positive integer | No | External callback timeout in seconds. AgentKit stores this per session; omitted or invalid values use the gateway-compatible default of 300 seconds. |
 
 #### SessionName
 
@@ -299,6 +299,7 @@ Notes:
 - `Capability.skills` is supported and forwarded as-is to LiteAgent SDK. Each item should be a complete Agent Skills markdown document.
 - The source spec for each skill document is [agentskills.io/specification](https://agentskills.io/specification), especially the `SKILL.md` format with YAML frontmatter followed by Markdown content.
 - `Capability.llmConfig.modelId` is also supported. AgentKit resolves `modelId` from the internal model registry, then expands it into a concrete LiteAgent `llmConfig`. The resolved model name is written to `llmConfig.model`; the gateway also fills fields such as `baseUrl`, `apiKey`, `provider`, `adapter`, and `contextWindowSize` when available.
+- The gateway uses `callbackOpenTool.timeout` for external function-call waits. With `agentId`, it reads the stored agent capability when available; otherwise it uses the 300-second compatibility default.
 
 Response: `200 OK` (`Session`)
 
@@ -434,6 +435,38 @@ Example response:
 ]
 ```
 
+#### GET /agentkit/history/summary
+
+Returns one lightweight task-turn summary per item for summary-first history
+loading. `page` defaults to `1`, `pageSize` defaults to `30`, and `pageSize`
+must not exceed `200`.
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `sessionId` | `string` | Yes |
+| `page` | `integer` | No |
+| `pageSize` | `integer` | No |
+
+Response: `200 OK` (`HistoryTurnSummaryDto[]`)
+
+#### GET /agentkit/history/process
+
+Lazily returns process messages for one task turn. `page` defaults to `1`,
+`pageSize` defaults to `50`, and `pageSize` must not exceed `200`.
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `sessionId` | `string` | Yes |
+| `originalTaskId` | `string` | Yes |
+| `page` | `integer` | No |
+| `pageSize` | `integer` | No |
+
+Response: `200 OK` (`AgentMessage[]`)
+
 #### GET /agentkit/stop
 
 Query:
@@ -481,6 +514,7 @@ Response: `200 OK`
 
 Notes:
 - If there is a pending external `functionCall` for the same `sessionId` + `toolReturn.id`, this endpoint completes that pending call.
+- A late callback for a gateway-proxied call that already expired or completed returns `200 OK` with `{"status":"ignored","reason":"callback_expired"}` or `callback_completed`, and is not forwarded downstream.
 - Otherwise, the request is forwarded to LiteAgent `/callback` (legacy behavior).
 
 Example request:
@@ -529,6 +563,7 @@ Example request:
 Notes:
 - This endpoint is the stream-oriented callback companion to `/agentkit/callback`.
 - It is typically used when the client keeps event context and wants to return a tool result tagged with the original stream event type.
+- Late stream events for expired or completed gateway-proxied calls use the same `200 OK` ignored response and are not forwarded downstream.
 
 ## CronKit
 
