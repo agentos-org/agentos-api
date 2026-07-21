@@ -129,30 +129,55 @@ class KernelBootstrapResult {
     _kernelBootstrapLogger.info(
       'KernelBootstrap syncEmbeddings: detected ${availableEmbeddingModels.length} embedding model(s): ${availableEmbeddingModels.map((model) => model.name).join(",")}',
     );
+    final requestedEmbeddingsModel = embeddingsModel?.trim();
+    final selectedEmbeddingModel = _selectEmbeddingModel(
+      availableEmbeddingModels,
+      requestedEmbeddingsModel,
+    );
     final resolvedEmbeddingsModel =
-        embeddingsModel ??
-        (availableEmbeddingModels.isEmpty
-            ? null
-            : availableEmbeddingModels.first.name);
+        selectedEmbeddingModel?.name.trim() ?? requestedEmbeddingsModel;
     if (resolvedEmbeddingsModel == null || resolvedEmbeddingsModel.isEmpty) {
       _kernelBootstrapLogger.warning(
         'KernelBootstrap syncEmbeddings: embeddings service is running on port $embeddingsPort, but no embeddings model is available from service locator.',
       );
       return false;
     }
+
+    String? embeddingModelBaseUrl;
+    String? embeddingModelApiKey;
+    if (selectedEmbeddingModel?.isRemote ?? false) {
+      embeddingModelBaseUrl = selectedEmbeddingModel!.baseUrl?.trim();
+      // Passing an explicit empty key prevents Kernel's legacy compatibility
+      // fallback from forwarding the vector-store key to a remote model.
+      embeddingModelApiKey = selectedEmbeddingModel.apiKey ?? '';
+    } else {
+      final llmEmbeddingPort = await serviceLocator.getServicePort(
+        ApiConfig.serviceLlmEmbedding,
+        modelId: selectedEmbeddingModel?.id,
+      );
+      if (llmEmbeddingPort != null) {
+        embeddingModelBaseUrl = 'http://localhost:$llmEmbeddingPort';
+      }
+    }
+    if (embeddingModelBaseUrl == null || embeddingModelBaseUrl.isEmpty) {
+      _kernelBootstrapLogger.warning(
+        'KernelBootstrap syncEmbeddings: model=$resolvedEmbeddingsModel is available, but its inference endpoint is not.',
+      );
+      return false;
+    }
+
+    final modelRoute = selectedEmbeddingModel?.isRemote ?? false
+        ? 'remote'
+        : 'local';
     _kernelBootstrapLogger.info(
-      'KernelBootstrap syncEmbeddings: configuring embeddings on port $embeddingsPort with model=$resolvedEmbeddingsModel.',
-    );
-    final llmEmbeddingPort = await serviceLocator.getServicePort(
-      ApiConfig.serviceLlmEmbedding,
+      'KernelBootstrap syncEmbeddings: configuring embeddings on port $embeddingsPort with model=$resolvedEmbeddingsModel route=$modelRoute.',
     );
     return kernelService.updateEmbeddingsConfig(
       kernel.EmbeddingsConfig(
         baseUrl: 'http://localhost:$embeddingsPort',
-        embeddingModelBaseUrl: llmEmbeddingPort != null
-            ? 'http://localhost:$llmEmbeddingPort'
-            : null,
+        embeddingModelBaseUrl: embeddingModelBaseUrl,
         apiKey: embeddingsApiKey,
+        embeddingModelApiKey: embeddingModelApiKey,
         docsName: embeddingsDocsName,
         model: resolvedEmbeddingsModel,
       ),
@@ -208,6 +233,23 @@ class KernelBootstrapResult {
       requireEmbeddings: requireEmbeddings,
     );
   }
+}
+
+LlmModelInfo? _selectEmbeddingModel(
+  List<LlmModelInfo> availableModels,
+  String? requestedModel,
+) {
+  if (requestedModel == null || requestedModel.isEmpty) {
+    return availableModels.isEmpty ? null : availableModels.first;
+  }
+  for (final model in availableModels) {
+    if (model.id == requestedModel ||
+        model.name == requestedModel ||
+        (model.alias.isNotEmpty && model.alias == requestedModel)) {
+      return model;
+    }
+  }
+  return null;
 }
 
 class KernelBootstrap {

@@ -63,6 +63,10 @@ List<kernel.KernelLlmModel> buildKernelLlmModels(
 }
 
 bool supportsTextInference(LlmModelInfo model) {
+  final normalizedTask = model.task?.trim().toLowerCase();
+  if (normalizedTask != null && normalizedTask.isNotEmpty) {
+    return normalizedTask == 'chat';
+  }
   final normalizedType = model.type.trim().toLowerCase();
   if (normalizedType.isEmpty) {
     return true;
@@ -81,6 +85,10 @@ bool supportsTextInference(LlmModelInfo model) {
 }
 
 bool supportsEmbeddingInference(LlmModelInfo model) {
+  final normalizedTask = model.task?.trim().toLowerCase();
+  if (normalizedTask == 'embedding') {
+    return true;
+  }
   final normalizedType = model.type.trim().toLowerCase();
   final normalizedParameters = model.parameters.trim().toLowerCase();
   if (normalizedType.contains('embedding') ||

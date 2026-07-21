@@ -8,13 +8,16 @@ import 'package:test/test.dart';
 class _FakeServiceLocator implements AgentOSServiceLocator {
   _FakeServiceLocator({
     this.llmPort,
+    this.llmEmbeddingPort = 52030,
     this.models = const [],
     this.openToolHost = '127.0.0.1',
   });
 
   final int? llmPort;
+  final int? llmEmbeddingPort;
   final List<LlmModelInfo> models;
   final String openToolHost;
+  String? requestedEmbeddingModelId;
 
   @override
   String get liteagentBaseUrl => 'http://127.0.0.1:9527/api/v1';
@@ -33,7 +36,11 @@ class _FakeServiceLocator implements AgentOSServiceLocator {
       return llmPort;
     }
     if (serviceKey == 'llm_embedding') {
-      return 52030;
+      requestedEmbeddingModelId = modelId;
+      return llmEmbeddingPort;
+    }
+    if (serviceKey == 'embeddings') {
+      return 9537;
     }
     if (serviceKey == 'opentool') {
       return 19627;
@@ -132,7 +139,7 @@ void main() {
 
     expect(ok, isTrue);
     expect(kernel.updatedModels, isNotNull);
-    expect(kernel.updatedModels!.single.model, 'qwen');
+    expect(kernel.updatedModels!.single.model, 'Qwen');
     expect(kernel.updatedModels!.single.type, 'text');
   });
 
@@ -145,6 +152,43 @@ void main() {
         liteAgentSdk: LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1'),
       );
       final locator = _FakeServiceLocator(llmPort: null);
+
+      final ok = await result.syncLlmModelsFromServiceLocator(locator);
+
+      expect(ok, isFalse);
+      expect(kernel.updatedModels, isNull);
+    },
+  );
+
+  test(
+    'syncLlmModelsFromServiceLocator excludes a task-only embedding model',
+    () async {
+      final kernel = _FakeKernelService();
+      final result = KernelBootstrapResult(
+        kernelService: kernel,
+        liteAgentSdk: LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1'),
+      );
+      final locator = _FakeServiceLocator(
+        models: const [
+          LlmModelInfo(
+            id: 'remote-embedding-id',
+            name: 'remote-embedding',
+            alias: 'remote-embedding',
+            description: '',
+            parameters: '',
+            paramsB: 0,
+            quantization: '',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['remote'],
+            repoId: '',
+            type: '',
+            task: 'embedding',
+            baseUrl: 'https://embedding.example/v1',
+          ),
+        ],
+      );
 
       final ok = await result.syncLlmModelsFromServiceLocator(locator);
 
@@ -178,6 +222,21 @@ void main() {
           type: 'text',
           contextWindowSize: 8192,
         ),
+        LlmModelInfo(
+          id: 'bge-local',
+          name: 'bge-local',
+          alias: 'bge-local',
+          description: 'embedding model',
+          parameters: 'embedding',
+          paramsB: 0,
+          quantization: 'q8',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: ['embedding'],
+          repoId: 'repo',
+          type: 'llm_embedding',
+        ),
       ],
     );
 
@@ -187,7 +246,11 @@ void main() {
     expect(result.liteAgentSdk.dio.options.baseUrl, locator.liteagentBaseUrl);
     expect(kernel.updatedModels, isNotNull);
     expect(kernel.updatedEmbeddings, isNotNull);
-    expect(kernel.updatedEmbeddings!.baseUrl, 'http://localhost:52030');
+    expect(kernel.updatedEmbeddings!.baseUrl, 'http://localhost:9537');
+    expect(
+      kernel.updatedEmbeddings!.embeddingModelBaseUrl,
+      'http://localhost:52030',
+    );
     expect(kernel.updatedOpenToolDaemon, isNotNull);
     expect(kernel.updatedOpenToolDaemon!.host, '127.0.0.1');
     expect(kernel.updatedOpenToolDaemon!.port, 19627);
@@ -206,7 +269,7 @@ void main() {
   });
 
   test(
-    'syncEmbeddingsFromServiceLocator configures embeddings without llmModel',
+    'syncEmbeddingsFromServiceLocator configures a local embedding model',
     () async {
       final kernel = _FakeKernelService();
       final result = KernelBootstrapResult(
@@ -255,9 +318,160 @@ void main() {
 
       expect(ok, isTrue);
       expect(kernel.updatedEmbeddings, isNotNull);
-      expect(kernel.updatedEmbeddings!.baseUrl, 'http://localhost:52030');
+      expect(kernel.updatedEmbeddings!.baseUrl, 'http://localhost:9537');
+      expect(
+        kernel.updatedEmbeddings!.embeddingModelBaseUrl,
+        'http://localhost:52030',
+      );
+      expect(kernel.updatedEmbeddings!.embeddingModelApiKey, isNull);
       expect(kernel.updatedEmbeddings!.docsName, 'agentos_default_embeddings');
       expect(kernel.updatedEmbeddings!.model, 'bge-large-zh-v1.5-q8_0');
+      expect(locator.requestedEmbeddingModelId, 'bge-large-zh-v1.5-q8_0');
+    },
+  );
+
+  test(
+    'syncEmbeddingsFromServiceLocator forwards a remote model endpoint and key',
+    () async {
+      final kernel = _FakeKernelService();
+      final result = KernelBootstrapResult(
+        kernelService: kernel,
+        liteAgentSdk: LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1'),
+      );
+      final locator = _FakeServiceLocator(
+        llmEmbeddingPort: null,
+        models: const [
+          LlmModelInfo(
+            id: 'remote-embedding-id',
+            name: 'text-embedding-3-large',
+            alias: 'remote-embedding',
+            description: 'remote embedding model',
+            parameters: '',
+            paramsB: 0,
+            quantization: '',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['remote'],
+            repoId: '',
+            type: '',
+            task: 'embedding',
+            baseUrl: 'https://embedding.example/v1',
+            apiKey: 'remote-model-key',
+            isCustom: true,
+          ),
+        ],
+      );
+
+      final ok = await result.syncEmbeddingsFromServiceLocator(
+        locator,
+        embeddingsApiKey: 'vector-store-key',
+      );
+
+      expect(ok, isTrue);
+      final config = kernel.updatedEmbeddings!;
+      expect(config.baseUrl, 'http://localhost:9537');
+      expect(config.apiKey, 'vector-store-key');
+      expect(config.embeddingModelBaseUrl, 'https://embedding.example/v1');
+      expect(config.embeddingModelApiKey, 'remote-model-key');
+      expect(config.model, 'text-embedding-3-large');
+      expect(locator.requestedEmbeddingModelId, isNull);
+    },
+  );
+
+  test(
+    'syncEmbeddingsFromServiceLocator selects a requested remote model by alias',
+    () async {
+      final kernel = _FakeKernelService();
+      final result = KernelBootstrapResult(
+        kernelService: kernel,
+        liteAgentSdk: LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1'),
+      );
+      final locator = _FakeServiceLocator(
+        models: const [
+          LlmModelInfo(
+            id: 'local-id',
+            name: 'local-model',
+            alias: 'local',
+            description: '',
+            parameters: 'embedding',
+            paramsB: 0,
+            quantization: '',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['embedding'],
+            repoId: '',
+            type: 'embedding',
+          ),
+          LlmModelInfo(
+            id: 'remote-id',
+            name: 'remote-model',
+            alias: 'preferred-remote',
+            description: '',
+            parameters: '',
+            paramsB: 0,
+            quantization: '',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['remote'],
+            repoId: '',
+            type: 'embedding',
+            baseUrl: 'https://remote.example/v1',
+            apiKey: 'remote-key',
+          ),
+        ],
+      );
+
+      final ok = await result.syncEmbeddingsFromServiceLocator(
+        locator,
+        embeddingsModel: 'preferred-remote',
+      );
+
+      expect(ok, isTrue);
+      expect(kernel.updatedEmbeddings!.model, 'remote-model');
+      expect(
+        kernel.updatedEmbeddings!.embeddingModelBaseUrl,
+        'https://remote.example/v1',
+      );
+      expect(kernel.updatedEmbeddings!.embeddingModelApiKey, 'remote-key');
+    },
+  );
+
+  test(
+    'syncEmbeddingsFromServiceLocator does not use the vector store as a model endpoint',
+    () async {
+      final kernel = _FakeKernelService();
+      final result = KernelBootstrapResult(
+        kernelService: kernel,
+        liteAgentSdk: LiteAgentSDK(baseUrl: 'http://127.0.0.1:9527/api/v1'),
+      );
+      final locator = _FakeServiceLocator(
+        llmEmbeddingPort: null,
+        models: const [
+          LlmModelInfo(
+            id: 'local-id',
+            name: 'local-model',
+            alias: '',
+            description: '',
+            parameters: 'embedding',
+            paramsB: 0,
+            quantization: '',
+            sizeGB: 0,
+            minRAMGB: 0,
+            downloadUrl: '',
+            tags: ['embedding'],
+            repoId: '',
+            type: 'embedding',
+          ),
+        ],
+      );
+
+      final ok = await result.syncEmbeddingsFromServiceLocator(locator);
+
+      expect(ok, isFalse);
+      expect(kernel.updatedEmbeddings, isNull);
     },
   );
 }
