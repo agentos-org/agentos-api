@@ -17,7 +17,7 @@ dependencies:
   liteagent_sdk_dart: ^0.2.9
   opentool_dart: ^2.0.0
   opentool_daemon: ^0.2.2
-  agentos_kernel: ^0.1.0
+  agentos_kernel: ^0.1.1
 
 dev_dependencies:
   http: ^1.2.2
