@@ -1275,6 +1275,47 @@ Query:
 - `appGroupId` 是可选的。
 - 如果不传，服务端会默认使用 `bundleId` 作为有效 group ID。
 
+App 也可以通过稳定的 `ref` 和 server `name` 声明本地 OpenTool Server 依赖：
+
+```json
+{
+  "bundleId": "com.demo.app",
+  "opentoolServers": [
+    {"ref": "websearch", "name": "opentool-server-websearch"}
+  ]
+}
+```
+
+注册始终选择同名 server 中已安装的最高语义版本，App 不能固定具体版本。如果同名
+server 的 tag 都不是语义版本，则为保持兼容性继续采用 daemon 返回的顺序。
+
+网关会在返回前快速检查本地 OpenTool daemon。已经可用的工具返回可调用的
+`id`；正在拉起或本地没有找到的工具不返回 `id`：
+
+```json
+{
+  "token": "sk-...",
+  "bundleId": "com.demo.app",
+  "appGroupId": "com.demo.app",
+  "opentoolServers": [
+    {
+      "ref": "websearch",
+      "server": {
+        "repo": "native",
+        "name": "opentool-server-websearch",
+        "tag": "1.2.0"
+      },
+      "status": "running",
+      "id": "tool-..."
+    }
+  ]
+}
+```
+
+注册状态包括 `running`、`starting`、`notFound`。只有 `running` 返回 `id`。
+`starting` 会在后台继续执行；最终成功或失败都会通过 `GET /appkit/subscribe`
+通知 App。
+
 ### GET /appkit/subscribe
 
 需要 Bearer token（来自 `/appkit/register`）。
@@ -1289,11 +1330,55 @@ data: {"bundleId":"com.demo.app"}
 
 ```
 
-```
-event: callApp
-data: {"bundleId":"com.demo.app","contentList":[{"type":"text","message":"..."}]}
+新的业务通知统一使用 `appEvent` envelope。register 返回 `starting` 后，ToolKit
+成功拉起本地 OpenTool Server 时会推送最终可调用的 tool ID：
+
+```text
+id: evt-...
+event: appEvent
+data: {"version":1,"id":"evt-...","type":"toolkit.provision.succeeded","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"running","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"},"id":"tool-..."}}
 
 ```
+
+如果拉起失败，则推送：
+
+```text
+id: evt-...
+event: appEvent
+data: {"version":1,"id":"evt-...","type":"toolkit.provision.failed","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"failed","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"},"error":{"code":"startFailed","message":"..."}}}
+
+```
+
+声明的 tool 就绪后，AgentOS 会持续监控 OpenTool daemon 和具体 tool 进程。
+任意一层不可用时推送：
+
+```text
+id: evt-...
+event: appEvent
+data: {"version":1,"id":"evt-...","type":"toolkit.tool.unavailable","source":"toolkit","time":"2026-07-15T10:35:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"unavailable","scope":"tool","reason":"healthcheckFailed","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"}}}
+
+```
+
+daemon 停止、报错或无法连接时，`scope` 为 `daemon`；否则为 `tool`。tool 层的
+`reason` 包括 `removed`、`stopped`、`healthcheckFailed`；daemon 层包括
+`daemonStarting`、`daemonStopped`、`daemonError`、`daemonUnavailable`。
+
+同一个 tool 恢复健康后，AgentOS 会推送对应的恢复事件：
+
+```text
+id: evt-...
+event: appEvent
+data: {"version":1,"id":"evt-...","type":"toolkit.tool.available","source":"toolkit","time":"2026-07-15T10:35:05.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"running","scope":"tool","reason":"recovered","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"}}}
+
+```
+
+可用性事件只在状态发生变化时推送，相同状态的重复检查不会产生重复事件。事件中的
+`id` 是 register 或 `toolkit.provision.succeeded` 返回的具体 OpenTool 实例 ID。
+
+如果 App 尚未建立订阅，AppKit 事件会先暂存，并在 `welcome` 后立即补发。对于
+register 返回 `starting` 的声明，App 应以 `toolkit.provision.succeeded` 作为工具
+正式可调用的时点；收到 `toolkit.tool.unavailable` 后停止使用该 tool，直到收到
+`toolkit.tool.available`。`app.command.requested` 类型预留给未来发送到 App 的指令。
 
 如果 token 缺失或无效，直接返回 `401`。
 

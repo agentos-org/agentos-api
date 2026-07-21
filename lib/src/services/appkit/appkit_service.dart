@@ -10,12 +10,15 @@ import '../../models/app/app_models.dart';
 final Logger _appKitLogger = Logger('agentos_server');
 
 class AppKitService {
+  static const int _maxPendingEventsPerBundle = 100;
+
   final List<String> _apps = [];
   final Map<String, _RegisteredApp> _tokenRegistry = {};
   final Map<String, String> _bundleTokens = {};
   final Map<String, List<String>> _bundleAgents = {};
 
   final Map<String, StreamController<EventDto>> _subscribers = {};
+  final Map<String, List<EventDto>> _pendingEvents = {};
 
   List<String> listApps() => List.unmodifiable(_apps);
 
@@ -93,6 +96,12 @@ class AppKitService {
             }),
           ),
         );
+        final pending = _pendingEvents.remove(bundleId);
+        if (pending != null) {
+          for (final event in pending) {
+            controller.add(event);
+          }
+        }
       },
       onCancel: () {
         _subscribers.remove(bundleId);
@@ -116,6 +125,38 @@ class AppKitService {
     }
     controller.add(event);
     return true;
+  }
+
+  void publishAppEvent(String bundleId, AppEventDto event) {
+    final dto = EventDto(
+      id: event.id,
+      event: 'appEvent',
+      data: jsonEncode(event.toJson()),
+    );
+    if (pushEvent(bundleId, dto)) {
+      return;
+    }
+    final pending = _pendingEvents.putIfAbsent(bundleId, () => []);
+    pending.add(dto);
+    if (pending.length > _maxPendingEventsPerBundle) {
+      pending.removeAt(0);
+    }
+  }
+
+  AppEventDto createAppEvent({
+    required String type,
+    required String source,
+    required String subject,
+    required Map<String, dynamic> data,
+  }) {
+    return AppEventDto(
+      id: 'evt-${uniqueId(shorter: true)}',
+      type: type,
+      source: source,
+      time: DateTime.now().toUtc(),
+      subject: subject,
+      data: data,
+    );
   }
 
   String _issueToken() {

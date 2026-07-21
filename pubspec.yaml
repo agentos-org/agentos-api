@@ -13,8 +13,10 @@ dependencies:
   hive: ^2.2.3
   logging: ^1.2.0
   unique_id_dart: ^1.0.0
+  pub_semver: ^2.2.0
   liteagent_sdk_dart: ^0.2.9
   opentool_dart: ^2.0.0
+  opentool_daemon: ^0.2.2
   agentos_kernel: ^0.1.0
 
 dev_dependencies:

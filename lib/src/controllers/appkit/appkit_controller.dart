@@ -7,12 +7,21 @@ import 'package:shelf_router/shelf_router.dart';
 import '../../middleware.dart';
 import '../../models/app/app_models.dart';
 import '../../services/appkit/appkit_service.dart';
+import '../../services/appkit/opentool_availability_service.dart';
+import '../../services/appkit/opentool_provisioning_service.dart';
 
 class AppKitController {
-  AppKitController({AppKitService? service})
-    : _service = service ?? AppKitService();
+  AppKitController({
+    AppKitService? service,
+    OpenToolProvisioner? openToolProvisioner,
+    OpenToolAvailabilityTracker? openToolAvailabilityTracker,
+  }) : _service = service ?? AppKitService(),
+       _openToolProvisioner = openToolProvisioner,
+       _openToolAvailabilityTracker = openToolAvailabilityTracker;
 
   final AppKitService _service;
+  final OpenToolProvisioner? _openToolProvisioner;
+  final OpenToolAvailabilityTracker? _openToolAvailabilityTracker;
 
   Router get router {
     final router = Router();
@@ -27,12 +36,32 @@ class AppKitController {
       requestLogger.warning('AppKit register: invalid JSON payload.');
       return Response(400, body: 'Invalid JSON payload.');
     }
-    final bundle = AppBundleDto.fromJson(payload);
+    late final AppBundleDto bundle;
+    try {
+      bundle = AppBundleDto.fromJson(payload);
+    } on FormatException catch (error) {
+      requestLogger.warning('AppKit register: ${error.message}');
+      return Response(400, body: error.message);
+    }
     if (bundle.bundleId.isEmpty) {
       requestLogger.warning('AppKit register: missing bundleId.');
       return Response(400, body: 'bundleId is required');
     }
-    final token = _service.registerBundle(bundle);
+    var token = _service.registerBundle(bundle);
+    final availabilityGeneration = _openToolAvailabilityTracker
+        ?.replaceBundleDeclarations(bundle.bundleId, bundle.opentoolServers);
+    if (bundle.opentoolServers.isNotEmpty) {
+      final results = await Future.wait(
+        bundle.opentoolServers.map(
+          (declaration) => _ensureOpenToolServer(
+            bundle.bundleId,
+            declaration,
+            availabilityGeneration: availabilityGeneration,
+          ),
+        ),
+      );
+      token = token.withOpenToolServers(results);
+    }
     requestLogger.info('AppKit register: bundleId=${bundle.bundleId}');
     final body = jsonEncode(token.toJson());
     return Response.ok(body, headers: {'content-type': 'application/json'});
@@ -68,7 +97,8 @@ class AppKitController {
     controller.onListen = () {
       subscription = source.listen(
         (event) {
-          final payload = 'event: ${event.event}\ndata: ${event.data}\n\n';
+          final id = event.id == null ? '' : 'id: ${event.id}\n';
+          final payload = '${id}event: ${event.event}\ndata: ${event.data}\n\n';
           controller.add(utf8.encode(payload));
         },
         onError: controller.addError,
@@ -109,5 +139,100 @@ class AppKitController {
     } catch (_) {
       return null;
     }
+  }
+
+  Future<OpenToolRegistrationDto> _ensureOpenToolServer(
+    String bundleId,
+    OpenToolServerDeclarationDto declaration, {
+    int? availabilityGeneration,
+  }) async {
+    final provisioner = _openToolProvisioner;
+    if (provisioner == null) {
+      _publishProvisionFailure(
+        bundleId,
+        OpenToolProvisioningFailure(
+          declaration: declaration,
+          code: 'daemonUnavailable',
+          message: 'OpenTool provisioning is not configured',
+        ),
+      );
+      return OpenToolRegistrationDto(
+        ref: declaration.ref,
+        name: declaration.name,
+        status: OpenToolRegistrationStatus.starting,
+      );
+    }
+    final result = await provisioner.ensureRunning(
+      declaration,
+      onSuccess: (success) {
+        _publishProvisionSuccess(bundleId, success);
+        _trackOpenTool(
+          bundleId,
+          availabilityGeneration,
+          success.declaration,
+          success.server,
+          success.id,
+        );
+      },
+      onFailure: (failure) => _publishProvisionFailure(bundleId, failure),
+    );
+    final server = result.server;
+    final id = result.id;
+    if (result.status == OpenToolRegistrationStatus.running &&
+        server != null &&
+        id != null) {
+      _trackOpenTool(bundleId, availabilityGeneration, declaration, server, id);
+    }
+    return result;
+  }
+
+  void _trackOpenTool(
+    String bundleId,
+    int? generation,
+    OpenToolServerDeclarationDto declaration,
+    OpenToolResolvedServerDto server,
+    String id,
+  ) {
+    final tracker = _openToolAvailabilityTracker;
+    if (tracker == null || generation == null) {
+      return;
+    }
+    tracker.track(
+      bundleId: bundleId,
+      generation: generation,
+      declaration: declaration,
+      server: server,
+      toolId: id,
+    );
+  }
+
+  void _publishProvisionSuccess(
+    String bundleId,
+    OpenToolProvisioningSuccess success,
+  ) {
+    _service.publishAppEvent(
+      bundleId,
+      _service.createAppEvent(
+        type: AppEventType.toolkitProvisionSucceeded,
+        source: 'toolkit',
+        subject: success.declaration.ref,
+        data: success.toEventData(),
+      ),
+    );
+  }
+
+  void _publishProvisionFailure(
+    String bundleId,
+    OpenToolProvisioningFailure failure,
+  ) {
+    _service.publishAppEvent(
+      bundleId,
+      _service.createAppEvent(
+        type: AppEventType.toolkitProvisionFailed,
+        source: 'toolkit',
+        subject: failure.declaration.ref,
+        data: failure.toEventData(),
+      ),
+    );
   }
 }

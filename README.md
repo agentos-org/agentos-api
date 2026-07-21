@@ -300,8 +300,17 @@ identified by `capabilities.vision` on the resolved model.
 - `POST /appkit/register` registers an app bundle:
   `{"bundleId": "com.demo.desktop", "appGroupId": "com.demo"}` ->
   `{"token": "sk-...", "bundleId": "com.demo.desktop", "appGroupId": "com.demo"}`.
+- The request may include
+  `"opentoolServers":[{"ref":"websearch","name":"opentool-server-websearch"}]`.
+  Registration always selects the highest installed semantic version.
+  Registration returns `running` with an `id`, `starting` without an `id`, or
+  `notFound` without an `id` for each declaration.
 - If `appGroupId` is omitted, the server uses `bundleId` as the effective group.
 - `GET /appkit/subscribe` (Bearer required) streams SSE events shaped like
   `event: welcome\ndata: {"bundleId": "..."}\n\n`.
-- When kernel triggers app invocation, subscribed app may receive
-  `event: callApp\ndata: {"bundleId":"...","contentList":[...]}\n\n`.
+- Asynchronous provisioning results use `event: appEvent`; ToolKit emits
+  `toolkit.provision.succeeded` with the ready tool `id`, or
+  `toolkit.provision.failed` with error details.
+- After provisioning, AgentOS keeps monitoring every declared tool. A daemon or
+  tool-process outage emits `toolkit.tool.unavailable`; a later healthy check
+  emits `toolkit.tool.available`. Repeated checks in the same state are deduped.

@@ -1282,6 +1282,50 @@ Notes:
 - `appGroupId` is optional.
 - If omitted, the server uses `bundleId` as the effective group ID.
 
+An app may also declare native OpenTool server dependencies by stable `ref`
+and server `name`:
+
+```json
+{
+  "bundleId": "com.demo.app",
+  "opentoolServers": [
+    {"ref": "websearch", "name": "opentool-server-websearch"}
+  ]
+}
+```
+
+Registration always selects the highest semantic version installed for the
+name. Apps cannot pin a specific server version. If none of the matching tags
+are semantic versions, daemon list order is retained for backward compatibility.
+
+The gateway checks the local OpenTool daemon before returning. A ready tool
+returns its callable `id`; a tool being launched and a missing native server do
+not return an `id`:
+
+```json
+{
+  "token": "sk-...",
+  "bundleId": "com.demo.app",
+  "appGroupId": "com.demo.app",
+  "opentoolServers": [
+    {
+      "ref": "websearch",
+      "server": {
+        "repo": "native",
+        "name": "opentool-server-websearch",
+        "tag": "1.2.0"
+      },
+      "status": "running",
+      "id": "tool-..."
+    }
+  ]
+}
+```
+
+Possible registration statuses are `running`, `starting`, and `notFound`.
+`id` is present only for `running`. Starting continues asynchronously; its
+eventual success or failure is delivered by `GET /appkit/subscribe`.
+
 ### GET /appkit/subscribe
 
 Requires Bearer token (token from `/appkit/register`).
@@ -1296,11 +1340,59 @@ data: {"bundleId":"com.demo.app"}
 
 ```
 
-```
-event: callApp
-data: {"bundleId":"com.demo.app","contentList":[{"type":"text","message":"..."}]}
+New business notifications use the generic `appEvent` envelope. When ToolKit
+finishes provisioning a local OpenTool server that returned `starting`, it
+emits the ready tool ID:
+
+```text
+id: evt-...
+event: appEvent
+data: {"version":1,"id":"evt-...","type":"toolkit.provision.succeeded","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"running","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"},"id":"tool-..."}}
 
 ```
+
+If provisioning fails instead, it emits:
+
+```text
+id: evt-...
+event: appEvent
+data: {"version":1,"id":"evt-...","type":"toolkit.provision.failed","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"failed","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"},"error":{"code":"startFailed","message":"..."}}}
+
+```
+
+After a declared tool becomes ready, AgentOS monitors both the OpenTool daemon
+and the concrete tool process. If either becomes unavailable, it emits:
+
+```text
+id: evt-...
+event: appEvent
+data: {"version":1,"id":"evt-...","type":"toolkit.tool.unavailable","source":"toolkit","time":"2026-07-15T10:35:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"unavailable","scope":"tool","reason":"healthcheckFailed","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"}}}
+
+```
+
+`scope` is `daemon` when the daemon stopped, errored, or could not be reached;
+otherwise it is `tool`. Tool reasons include `removed`, `stopped`, and
+`healthcheckFailed`. Daemon reasons include `daemonStarting`, `daemonStopped`,
+`daemonError`, and `daemonUnavailable`.
+
+When the same tool is healthy again, AgentOS emits the symmetric transition:
+
+```text
+id: evt-...
+event: appEvent
+data: {"version":1,"id":"evt-...","type":"toolkit.tool.available","source":"toolkit","time":"2026-07-15T10:35:05.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"running","scope":"tool","reason":"recovered","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"}}}
+
+```
+
+Availability events are transition-based: repeated checks in the same state do
+not emit duplicates. The `id` identifies the concrete OpenTool instance that
+was returned by registration or `toolkit.provision.succeeded`.
+
+If the app has not subscribed yet, AppKit events are queued and sent immediately
+after `welcome`. Apps should treat `toolkit.provision.succeeded` as the point at
+which a declaration that returned `starting` becomes callable, and stop using a
+tool after `toolkit.tool.unavailable` until `toolkit.tool.available` arrives.
+The `app.command.requested` type is reserved for future commands sent to apps.
 
 If the token is missing or invalid, returns `401`.
 

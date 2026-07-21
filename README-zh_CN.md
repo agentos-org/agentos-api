@@ -288,8 +288,17 @@ $ curl http://127.0.0.1:8888/toolkit/list \
 - `POST /appkit/register` 注册 app bundle：
   `{"bundleId": "com.demo.desktop", "appGroupId": "com.demo"}` ->
   `{"token": "sk-...", "bundleId": "com.demo.desktop", "appGroupId": "com.demo"}`。
+- 请求可包含
+  `"opentoolServers":[{"ref":"websearch","name":"opentool-server-websearch"}]`。
+  注册始终选择已安装的最高语义版本。
+  每个声明会返回：带 `id` 的 `running`、不带 `id` 的 `starting`，或者不带
+  `id` 的 `notFound`。
 - 如果不传 `appGroupId`，服务端会默认以 `bundleId` 作为有效 group。
 - `GET /appkit/subscribe`（需 Bearer token）以 SSE 形式输出事件：
   `event: welcome\ndata: {"bundleId": "..."}\n\n`。
-- 当内核触发 App 调用时，已订阅 App 可能收到：
-  `event: callApp\ndata: {"bundleId":"...","contentList":[...]}\n\n`。
+- 异步拉起结果统一使用 `event: appEvent`；ToolKit 成功时发送带可调用 tool `id`
+  的 `toolkit.provision.succeeded`，失败时发送带错误详情的
+  `toolkit.provision.failed`。
+- 拉起成功后，AgentOS 会持续监控每个已声明 tool。daemon 或 tool 进程不可用时
+  推送 `toolkit.tool.unavailable`，恢复健康后推送 `toolkit.tool.available`；
+  相同状态的重复检查不会重复推送。

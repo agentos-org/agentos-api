@@ -13,6 +13,8 @@ import 'controllers/toolkit/toolkit_controller.dart';
 import 'config.dart';
 import 'middleware.dart';
 import 'services/appkit/appkit_service.dart';
+import 'services/appkit/opentool_availability_service.dart';
+import 'services/appkit/opentool_provisioning_service.dart';
 import 'services/cronkit/cronkit_model_ref_store.dart';
 import 'services/modelkit/model_client.dart';
 import 'services/toolkit/opentool_client.dart';
@@ -38,12 +40,16 @@ Handler createGatewayHandler({
   bool enableLogging = true,
   bool enableCors = true,
   int gatewayPort = ApiConfig.defaultPort,
+  OpenToolProvisioner? openToolProvisioner,
+  OpenToolAvailabilityTracker? openToolAvailabilityTracker,
 }) {
   final router = createGatewayRouter(
     serviceLocator: serviceLocator,
     kernelFuture: kernelFuture,
     liteAgentSdk: liteAgentSdk,
     gatewayPort: gatewayPort,
+    openToolProvisioner: openToolProvisioner,
+    openToolAvailabilityTracker: openToolAvailabilityTracker,
   );
 
   var pipeline = const Pipeline();
@@ -77,6 +83,8 @@ Router createGatewayRouter({
   required Future<KernelService?> kernelFuture,
   required LiteAgentSDK liteAgentSdk,
   int gatewayPort = ApiConfig.defaultPort,
+  OpenToolProvisioner? openToolProvisioner,
+  OpenToolAvailabilityTracker? openToolAvailabilityTracker,
 }) {
   final instanceId = _createGatewayInstanceId();
   requestLogger.info('Creating gateway router instanceId=$instanceId');
@@ -102,7 +110,20 @@ Router createGatewayRouter({
   router.mount('${ApiConfig.agentkitPath}/', agentKitController.router.call);
 
   // AppKit API (app registration/subscription)
-  final appKitController = AppKitController(service: appKitService);
+  final resolvedOpenToolProvisioner =
+      openToolProvisioner ??
+      OpenToolProvisioningService(serviceLocator: serviceLocator);
+  final resolvedOpenToolAvailabilityTracker =
+      openToolAvailabilityTracker ??
+      OpenToolAvailabilityService(
+        serviceLocator: serviceLocator,
+        appKitService: appKitService,
+      );
+  final appKitController = AppKitController(
+    service: appKitService,
+    openToolProvisioner: resolvedOpenToolProvisioner,
+    openToolAvailabilityTracker: resolvedOpenToolAvailabilityTracker,
+  );
   router.mount('${ApiConfig.appkitPath}/', appKitController.router.call);
 
   // CronKit API (cron task management, requires Token)

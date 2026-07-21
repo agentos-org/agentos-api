@@ -6,6 +6,9 @@ export 'src/middleware.dart';
 // Configuration
 export 'src/config.dart';
 
+// AppKit models
+export 'src/models/app/app_models.dart';
+
 // Service Locator
 export 'src/locator.dart';
 
@@ -19,6 +22,8 @@ export 'src/controllers/modelkit/modelkit_controller.dart';
 
 // Services
 export 'src/services/appkit/appkit_service.dart';
+export 'src/services/appkit/opentool_availability_service.dart';
+export 'src/services/appkit/opentool_provisioning_service.dart';
 export 'src/services/toolkit/opentool_client.dart';
 export 'src/services/modelkit/model_client.dart';
 export 'src/services/kernel/kernel_bootstrap.dart';
