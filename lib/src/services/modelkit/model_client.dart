@@ -174,6 +174,7 @@ class ModelClient {
       task: task,
       modelName: modelName,
     );
+    requestBody = _normalizeNullContentInToolCallMessages(requestBody, task: task);
 
     if (kernel != null && modelName != null) {
       metrics = kernel.createLlmMetrics(
@@ -861,6 +862,40 @@ class ModelClient {
         if (existing is String && existing.isNotEmpty) continue;
         message['reasoning_content'] = '';
         mutated = true;
+      }
+
+      if (!mutated) return body;
+      return utf8.encode(jsonEncode(decoded));
+    } catch (_) {
+      return body;
+    }
+  }
+
+  /// Replaces explicit `"content": null` with `""` on assistant messages that
+  /// carry `tool_calls`. Some upstream providers (notably QWen/DashScope)
+  /// reject 400 when `content` is null even though `tool_calls` is present.
+  List<int>? _normalizeNullContentInToolCallMessages(
+    List<int>? body, {
+    required ModelTask task,
+  }) {
+    if (body == null || body.isEmpty) return body;
+    if (task != ModelTask.chat) return body;
+    try {
+      final decoded = jsonDecode(utf8.decode(body));
+      if (decoded is! Map<String, dynamic>) return body;
+      final messages = decoded['messages'];
+      if (messages is! List) return body;
+
+      var mutated = false;
+      for (final message in messages) {
+        if (message is! Map) continue;
+        if (message['role'] != 'assistant') continue;
+        final toolCalls = message['tool_calls'];
+        if (toolCalls is! List || toolCalls.isEmpty) continue;
+        if (message.containsKey('content') && message['content'] == null) {
+          message['content'] = '';
+          mutated = true;
+        }
       }
 
       if (!mutated) return body;
