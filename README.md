@@ -185,6 +185,11 @@ YAML frontmatter first, then Markdown instructions. Example:
 }
 ```
 
+`Capability` execution limits (`maxLlmRequests`, `maxToolRounds`,
+`maxToolCalls`, `maxConsecutiveIdenticalToolRounds`, and
+`maxTaskDurationSeconds`) are also forwarded by `/agentkit/initSession`,
+`/agentkit/agent/create`, and `/agentkit/agent/update`.
+
 ## CronKit API
 
 CronKit exposes kernel-backed cron task management endpoints. All CronKit

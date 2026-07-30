@@ -628,6 +628,48 @@ Always produce a short plan before tool use.
     expect(fakeSdk.capturedCapability!.skills, const [plannerSkill]);
   });
 
+  test('forwards execution limits for /initSession', () async {
+    final fakeSdk = _FakeLiteAgentSDK();
+    final controller = AgentKitController(
+      sdk: fakeSdk,
+      kernelFuture: Future.value(null),
+    );
+
+    final response = await controller.router.call(
+      Request(
+        'POST',
+        Uri.parse('http://localhost/initSession'),
+        headers: <String, String>{
+          'authorization': 'Bearer user-token',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'systemPrompt': 'hello',
+          'maxLlmRequests': 32,
+          'maxToolRounds': 8,
+          'maxToolCalls': 20,
+          'maxConsecutiveIdenticalToolRounds': 2,
+          'maxTaskDurationSeconds': 120,
+        }),
+      ),
+    );
+
+    expect(response.statusCode, 200);
+    final capability = fakeSdk.capturedCapability;
+    expect(capability, isNotNull);
+    expect(capability!.maxLlmRequests, 32);
+    expect(capability.maxToolRounds, 8);
+    expect(capability.maxToolCalls, 20);
+    expect(capability.maxConsecutiveIdenticalToolRounds, 2);
+    expect(capability.maxTaskDurationSeconds, 120);
+    expect(capability.toJson(), containsPair('maxToolRounds', 8));
+    expect(capability.toJson(), containsPair('maxToolCalls', 20));
+    expect(
+      capability.toJson(),
+      containsPair('maxConsecutiveIdenticalToolRounds', 2),
+    );
+  });
+
   test('forwards history pagination and preserves originalTaskId', () async {
     final fakeSdk = _FakeLiteAgentSDK();
     final controller = AgentKitController(
@@ -949,6 +991,50 @@ Always produce a short plan before tool use.
     expect(fakeSdk.capturedUpdatedAgentId, 'agent-1');
     expect(fakeSdk.capturedAgent, isNotNull);
     expect(fakeSdk.capturedAgent!.capability.skills, const [plannerSkill]);
+  });
+
+  test('forwards execution limits for agent create and update', () async {
+    for (final endpoint in <String>[
+      '/agent/create',
+      '/agent/update?agentId=agent-1',
+    ]) {
+      final fakeSdk = _FakeLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+      );
+
+      final response = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost$endpoint'),
+          headers: <String, String>{
+            'authorization': 'Bearer user-token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'name': 'limited-agent',
+            'capability': <String, dynamic>{
+              'systemPrompt': 'hello',
+              'maxLlmRequests': 32,
+              'maxToolRounds': 8,
+              'maxToolCalls': 20,
+              'maxConsecutiveIdenticalToolRounds': 2,
+              'maxTaskDurationSeconds': 120,
+            },
+          }),
+        ),
+      );
+
+      expect(response.statusCode, 200, reason: endpoint);
+      final capability = fakeSdk.capturedAgent?.capability;
+      expect(capability, isNotNull, reason: endpoint);
+      expect(capability!.maxLlmRequests, 32, reason: endpoint);
+      expect(capability.maxToolRounds, 8, reason: endpoint);
+      expect(capability.maxToolCalls, 20, reason: endpoint);
+      expect(capability.maxConsecutiveIdenticalToolRounds, 2, reason: endpoint);
+      expect(capability.maxTaskDurationSeconds, 120, reason: endpoint);
+    }
   });
 
   test('fills empty systemPrompt when missing for /initSession', () async {

@@ -174,6 +174,11 @@ LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown
 }
 ```
 
+`Capability` 的执行限制字段（`maxLlmRequests`、`maxToolRounds`、
+`maxToolCalls`、`maxConsecutiveIdenticalToolRounds` 和
+`maxTaskDurationSeconds`）也会通过 `/agentkit/initSession`、
+`/agentkit/agent/create` 和 `/agentkit/agent/update` 原样转发。
+
 ## CronKit API
 
 CronKit 暴露基于 kernel 的定时任务管理接口。所有 CronKit 路由都需要

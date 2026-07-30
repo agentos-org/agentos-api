@@ -98,6 +98,11 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | `llmConfigList` | `LLMConfig[]` | 否 | 候选 LLM 配置列表（模型选择/回退）。 |
 | `enableThinking` | `boolean` | 否 | 是否输出推理文本。 |
 | `toolReturnPackMinLength` | `number` | 否 | 工具结果打包返回的最小长度阈值。 |
+| `maxLlmRequests` | `number` | 否 | 单个工具型任务允许的大模型请求次数上限，默认 `64`；非正数使用服务端默认值。 |
+| `maxToolRounds` | `number` | 否 | 单个任务允许的工具调用轮数上限，默认 `16`；非正数使用服务端默认值。 |
+| `maxToolCalls` | `number` | 否 | 单个任务允许的工具调用总数上限，默认 `64`；非正数使用服务端默认值。 |
+| `maxConsecutiveIdenticalToolRounds` | `number` | 否 | 工具名称及规范化参数完全相同的连续调用轮数上限，默认 `3`；非正数使用服务端默认值。 |
+| `maxTaskDurationSeconds` | `number` | 否 | 单个工具型任务的最长执行时间，单位为秒，默认 `300`；非正数使用服务端默认值。 |
 
 #### SimpleCapability
 

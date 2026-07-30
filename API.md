@@ -101,6 +101,11 @@ If backend/sdk operation fails, the gateway may return `502`.
 | `llmConfigList` | `LLMConfig[]` | No | Candidate LLM configs for model selection/fallback. |
 | `enableThinking` | `boolean` | No | Enable reasoning output. |
 | `toolReturnPackMinLength` | `number` | No | Minimum packed length before returning tool output. |
+| `maxLlmRequests` | `number` | No | Maximum LLM requests per tool task. Defaults to `64`; non-positive values use the server default. |
+| `maxToolRounds` | `number` | No | Maximum tool-call rounds per task. Defaults to `16`; non-positive values use the server default. |
+| `maxToolCalls` | `number` | No | Maximum total tool calls per task. Defaults to `64`; non-positive values use the server default. |
+| `maxConsecutiveIdenticalToolRounds` | `number` | No | Maximum consecutive rounds with identical tool names and canonical arguments. Defaults to `3`; non-positive values use the server default. |
+| `maxTaskDurationSeconds` | `number` | No | Maximum duration of a tool task in seconds. Defaults to `300`; non-positive values use the server default. |
 
 #### SimpleCapability
 
