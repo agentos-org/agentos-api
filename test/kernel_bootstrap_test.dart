@@ -372,7 +372,7 @@ void main() {
       final config = kernel.updatedEmbeddings!;
       expect(config.baseUrl, 'http://localhost:9537');
       expect(config.apiKey, 'vector-store-key');
-      expect(config.embeddingModelBaseUrl, 'https://embedding.example/v1');
+      expect(config.embeddingModelBaseUrl, 'https://embedding.example');
       expect(config.embeddingModelApiKey, 'remote-model-key');
       expect(config.model, 'text-embedding-3-large');
       expect(locator.requestedEmbeddingModelId, isNull);
@@ -418,7 +418,7 @@ void main() {
             tags: ['remote'],
             repoId: '',
             type: 'embedding',
-            baseUrl: 'https://remote.example/v1',
+            baseUrl: 'https://remote.example/v1/',
             apiKey: 'remote-key',
           ),
         ],
@@ -433,7 +433,7 @@ void main() {
       expect(kernel.updatedEmbeddings!.model, 'remote-model');
       expect(
         kernel.updatedEmbeddings!.embeddingModelBaseUrl,
-        'https://remote.example/v1',
+        'https://remote.example',
       );
       expect(kernel.updatedEmbeddings!.embeddingModelApiKey, 'remote-key');
     },

@@ -146,7 +146,9 @@ class KernelBootstrapResult {
     String? embeddingModelBaseUrl;
     String? embeddingModelApiKey;
     if (selectedEmbeddingModel?.isRemote ?? false) {
-      embeddingModelBaseUrl = selectedEmbeddingModel!.baseUrl?.trim();
+      embeddingModelBaseUrl = _normalizeEmbeddingsModelBaseUrl(
+        selectedEmbeddingModel!.baseUrl ?? '',
+      );
       // Passing an explicit empty key prevents Kernel's legacy compatibility
       // fallback from forwarding the vector-store key to a remote model.
       embeddingModelApiKey = selectedEmbeddingModel.apiKey ?? '';
@@ -250,6 +252,16 @@ LlmModelInfo? _selectEmbeddingModel(
     }
   }
   return null;
+}
+
+String _normalizeEmbeddingsModelBaseUrl(String baseUrl) {
+  final normalized = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+  // lite_embeddings_dart delegates to dart_openai_sdk, which appends its own
+  // `/v1` version segment before `/embeddings`.
+  if (normalized.toLowerCase().endsWith('/v1')) {
+    return normalized.substring(0, normalized.length - 3);
+  }
+  return normalized;
 }
 
 class KernelBootstrap {
