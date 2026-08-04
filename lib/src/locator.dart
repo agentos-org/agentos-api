@@ -459,6 +459,9 @@ class TransferFileInfo {
 /// Transfer session state.
 enum TransferState { pending, preparing, transferring, completed, failed, cancelled }
 
+/// Per-file transfer state.
+enum FileTransferState { pending, transferring, completed, failed }
+
 /// Active transfer session.
 class TransferSession {
   final String transferId;
@@ -470,6 +473,12 @@ class TransferSession {
   final List<TransferFileInfo> files;
   String? errorMessage;
 
+  /// Per-file progress: key is fileName, value is 0.0~1.0.
+  final Map<String, double> fileProgress;
+
+  /// Per-file state: key is fileName.
+  final Map<String, FileTransferState> fileStates;
+
   TransferSession({
     required this.transferId,
     this.state = TransferState.pending,
@@ -479,7 +488,10 @@ class TransferSession {
     this.userId,
     required this.files,
     this.errorMessage,
-  });
+    Map<String, double>? fileProgress,
+    Map<String, FileTransferState>? fileStates,
+  })  : fileProgress = fileProgress ?? {},
+        fileStates = fileStates ?? {};
 
   Map<String, dynamic> toJson() => {
     'transferId': transferId,
