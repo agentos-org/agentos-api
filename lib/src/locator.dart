@@ -413,6 +413,9 @@ abstract class NearbyServiceLocator {
     String? userId,
   });
 
+  /// Stream of file transfer progress updates.
+  Stream<TransferSession>? get fileTransferProgressStream;
+
   /// Stream of incoming file transfer events.
   Stream<IncomingTransferEvent> get incomingTransferStream;
 

@@ -190,6 +190,7 @@ Router createGatewayRouter({
   final discoveryKitService = DiscoveryKitService(
     serviceLocator: serviceLocator,
     authKitService: authKitService,
+    appKitService: appKitService,
   );
   final discoveryKitController = DiscoveryKitController(
     service: discoveryKitService,

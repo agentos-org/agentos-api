@@ -103,7 +103,7 @@ class TransferKitController {
       );
     }).toList();
 
-    final dataDir = _dataDirResolver?.call(bundleId) ?? '/tmp/$bundleId';
+    final dataDir = _dataDirResolver?.call(bundleId);
 
     final session = await _service.sendFiles(
       targetDeviceId: targetDeviceId,
@@ -115,6 +115,17 @@ class TransferKitController {
     if (session == null) {
       return Response(400,
         body: jsonEncode({'error': 'Transfer failed or path validation error'}),
+        headers: {'content-type': 'application/json'},
+      );
+    }
+
+    if (session.state == TransferState.failed) {
+      return Response(502,
+        body: jsonEncode({
+          'error': session.errorMessage ?? 'Target device unreachable',
+          'transferId': session.transferId,
+          'state': 'failed',
+        }),
         headers: {'content-type': 'application/json'},
       );
     }

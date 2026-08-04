@@ -20,6 +20,11 @@ class AppKitService {
   final Map<String, StreamController<EventDto>> _subscribers = {};
   final Map<String, List<EventDto>> _pendingEvents = {};
 
+  final _appOfflineController = StreamController<String>.broadcast();
+
+  /// Stream of bundleIds that have gone offline (SSE disconnected).
+  Stream<String> get appOfflineStream => _appOfflineController.stream;
+
   List<String> listApps() => List.unmodifiable(_apps);
 
   bool isTokenValid(String token) => _registeredAppForToken(token) != null;
@@ -106,6 +111,8 @@ class AppKitService {
       onCancel: () {
         _subscribers.remove(bundleId);
         controller.close();
+        _appOfflineController.add(bundleId);
+        _appKitLogger.info('AppKitService: app went offline: $bundleId');
       },
     );
 

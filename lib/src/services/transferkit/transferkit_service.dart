@@ -27,6 +27,7 @@ class TransferKitService {
 
   final Map<String, TransferSession> _transfers = {};
   final _transferProgressController = StreamController<TransferSession>.broadcast();
+  StreamSubscription<TransferSession>? _progressSub;
 
   Box<String>? _policyBox;
   Box<String>? _historyBox;
@@ -38,6 +39,18 @@ class TransferKitService {
 
   bool get isAvailable => _nearby != null && _nearby!.nearbyTransferEnabled;
 
+  void _ensureProgressListener() {
+    if (_progressSub != null) return;
+    final nearby = _nearby;
+    if (nearby == null) return;
+    final stream = nearby.fileTransferProgressStream;
+    if (stream == null) return;
+    _progressSub = stream.listen((session) {
+      _transfers[session.transferId] = session;
+      _transferProgressController.add(session);
+    });
+  }
+
   /// Send files to a target device.
   ///
   /// [bundleId] is resolved from the bearer token.
@@ -46,20 +59,23 @@ class TransferKitService {
     required String targetDeviceId,
     required String bundleId,
     required List<TransferFileInfo> files,
-    required String dataDir,
+    String? dataDir,
   }) async {
     final nearby = _nearby;
     if (nearby == null || !nearby.nearbyTransferEnabled) {
       return null;
     }
+    _ensureProgressListener();
 
-    // Validate all file paths are within the app's sandbox
-    for (final file in files) {
-      if (!_isPathInSandbox(file.filePath, dataDir)) {
-        _logger.warning(
-          'TransferKit: path traversal attempt: ${file.filePath} not in $dataDir',
-        );
-        return null;
+    // Validate all file paths are within the app's sandbox (skip if no sandbox configured)
+    if (dataDir != null) {
+      for (final file in files) {
+        if (!_isPathInSandbox(file.filePath, dataDir)) {
+          _logger.warning(
+            'TransferKit: path traversal attempt: ${file.filePath} not in $dataDir',
+          );
+          return null;
+        }
       }
     }
 
@@ -94,8 +110,10 @@ class TransferKitService {
   }
 
   /// Get transfer progress stream for SSE.
-  Stream<TransferSession> get transferProgressStream =>
-      _transferProgressController.stream;
+  Stream<TransferSession> get transferProgressStream {
+    _ensureProgressListener();
+    return _transferProgressController.stream;
+  }
 
   /// Get incoming transfer stream for a specific bundleId.
   Stream<IncomingTransferEvent>? getIncomingStream() {
@@ -193,6 +211,7 @@ class TransferKitService {
   }
 
   void dispose() {
+    _progressSub?.cancel();
     _transferProgressController.close();
   }
 

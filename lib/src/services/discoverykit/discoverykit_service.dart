@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:logging/logging.dart';
 
 import '../../locator.dart';
+import '../appkit/appkit_service.dart';
 import '../authkit/authkit_service.dart';
 
 final Logger _logger = Logger('DiscoveryKitService');
@@ -16,14 +17,38 @@ class DiscoveryKitService {
   DiscoveryKitService({
     required AgentOSServiceLocator serviceLocator,
     AuthKitService? authKitService,
+    AppKitService? appKitService,
   }) : _serviceLocator = serviceLocator,
-       _authKitService = authKitService;
+       _authKitService = authKitService {
+    if (appKitService != null) {
+      _listenAppOffline(appKitService);
+    }
+  }
 
   final AgentOSServiceLocator _serviceLocator;
   AuthKitService? _authKitService;
+  StreamSubscription<String>? _offlineSub;
 
   void setAuthKitService(AuthKitService service) {
     _authKitService = service;
+  }
+
+  void setAppKitService(AppKitService service) {
+    _offlineSub?.cancel();
+    _listenAppOffline(service);
+  }
+
+  void _listenAppOffline(AppKitService appKitService) {
+    _offlineSub = appKitService.appOfflineStream.listen((bundleId) {
+      final nearby = _nearby;
+      if (nearby == null) return;
+      final registered = nearby.registeredApps;
+      final hasApp = registered.any((r) => r.bundleId == bundleId);
+      if (hasApp) {
+        nearby.unregisterDiscoveryApp(bundleId);
+        _logger.info('DiscoveryKit: auto-unregistered offline app $bundleId');
+      }
+    });
   }
 
   NearbyServiceLocator? get _nearby =>
