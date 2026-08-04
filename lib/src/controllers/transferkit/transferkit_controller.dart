@@ -184,8 +184,12 @@ class TransferKitController {
     }
 
     StreamSubscription<TransferSession>? sub;
+    Timer? keepAlive;
     final controller = StreamController<List<int>>(
-      onCancel: () => sub?.cancel(),
+      onCancel: () {
+        sub?.cancel();
+        keepAlive?.cancel();
+      },
     );
 
     sub = _service.transferProgressStream
@@ -194,9 +198,25 @@ class TransferKitController {
       (s) {
         final data = jsonEncode(s.toJson());
         controller.add(utf8.encode('data: $data\n\n'));
+        if (s.state == TransferState.completed ||
+            s.state == TransferState.failed) {
+          keepAlive?.cancel();
+          controller.close();
+        }
       },
-      onDone: () => controller.close(),
-      onError: (e) => controller.close(),
+      onDone: () {
+        keepAlive?.cancel();
+        controller.close();
+      },
+      onError: (e) {
+        keepAlive?.cancel();
+        controller.close();
+      },
+    );
+
+    keepAlive = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => controller.add(utf8.encode(': keep-alive\n\n')),
     );
 
     return Response.ok(
@@ -206,6 +226,7 @@ class TransferKitController {
         'cache-control': 'no-cache',
         'connection': 'keep-alive',
       },
+      context: {'shelf.io.buffer_output': false},
     );
   }
 
@@ -239,12 +260,17 @@ class TransferKitController {
           'cache-control': 'no-cache',
           'connection': 'keep-alive',
         },
+        context: {'shelf.io.buffer_output': false},
       );
     }
 
     StreamSubscription<IncomingTransferEvent>? sub;
+    Timer? keepAlive;
     final controller = StreamController<List<int>>(
-      onCancel: () => sub?.cancel(),
+      onCancel: () {
+        sub?.cancel();
+        keepAlive?.cancel();
+      },
     );
 
     sub = incomingStream
@@ -256,8 +282,19 @@ class TransferKitController {
         final data = jsonEncode(event.toJson());
         controller.add(utf8.encode('event: file.received\ndata: $data\n\n'));
       },
-      onDone: () => controller.close(),
-      onError: (e) => controller.close(),
+      onDone: () {
+        keepAlive?.cancel();
+        controller.close();
+      },
+      onError: (e) {
+        keepAlive?.cancel();
+        controller.close();
+      },
+    );
+
+    keepAlive = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => controller.add(utf8.encode(': keep-alive\n\n')),
     );
 
     return Response.ok(
@@ -267,6 +304,7 @@ class TransferKitController {
         'cache-control': 'no-cache',
         'connection': 'keep-alive',
       },
+      context: {'shelf.io.buffer_output': false},
     );
   }
 
