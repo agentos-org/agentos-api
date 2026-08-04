@@ -191,4 +191,7 @@ class AppEventType {
 
   /// Reserved for future AgentKit-to-app commands.
   static const String appCommandRequested = 'app.command.requested';
+
+  /// AuthKit user login state changed (login / logout / account switch).
+  static const String authkitUserChanged = 'authkit.user.changed';
 }

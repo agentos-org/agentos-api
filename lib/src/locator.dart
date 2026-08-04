@@ -3,6 +3,9 @@ import 'dart:async';
 /// Unified service state across all service types
 enum ServiceState { stopped, starting, running, error }
 
+/// File receive policy for incoming transfers.
+enum FileReceivePolicy { autoAccept, requireConfirm }
+
 /// Service status change event emitted by [AgentOSServiceLocator.serviceStatusStream]
 class ServiceStatusEvent {
   /// Service identifier (matches [ApiConfig] service constants)
@@ -264,6 +267,366 @@ extension AgentOSServiceLocatorOpenToolConfig on AgentOSServiceLocator {
       }
     } catch (_) {}
     return '127.0.0.1';
+  }
+}
+
+/// User public profile (avatar + name) exposed to third-party apps.
+class UserProfile {
+  final String name;
+  final String? avatarUrl;
+  final String? avatarBase64;
+
+  const UserProfile({required this.name, this.avatarUrl, this.avatarBase64});
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    if (avatarUrl != null) 'avatarUrl': avatarUrl,
+    if (avatarBase64 != null) 'avatarBase64': avatarBase64,
+  };
+}
+
+/// A registered app on a peer device, discovered via multicast.
+class PeerApp {
+  final String? bundleId;
+  final String? userId;
+  final String? username;
+  final String? appName;
+
+  const PeerApp({this.bundleId, this.userId, this.username, this.appName});
+
+  bool get isDeviceLevel => userId == null && appName == null;
+
+  Map<String, dynamic> toJson() => {
+    if (bundleId != null) 'bundleId': bundleId,
+    if (userId != null) 'userId': userId,
+    if (username != null) 'username': username,
+    if (appName != null) 'appName': appName,
+  };
+
+  factory PeerApp.fromJson(Map<String, dynamic> json) => PeerApp(
+    bundleId: json['bundleId'] as String?,
+    userId: json['userId'] as String?,
+    username: json['username'] as String?,
+    appName: json['appName'] as String?,
+  );
+}
+
+/// Nearby peer device information.
+class PeerDevice {
+  final String deviceId;
+  final String name;
+  final String? avatarBase64;
+  final String deviceName;
+  final String deviceType;
+  final String host;
+  final int port;
+  final bool online;
+  final List<PeerApp> apps;
+
+  const PeerDevice({
+    required this.deviceId,
+    required this.name,
+    this.avatarBase64,
+    required this.deviceName,
+    required this.deviceType,
+    required this.host,
+    required this.port,
+    this.online = true,
+    this.apps = const [],
+  });
+
+  Map<String, dynamic> toJson() => {
+    'deviceId': deviceId,
+    'name': name,
+    if (avatarBase64 != null) 'avatarBase64': avatarBase64,
+    'deviceName': deviceName,
+    'deviceType': deviceType,
+    'host': host,
+    'port': port,
+    'online': online,
+    'apps': apps.map((a) => a.toJson()).toList(),
+  };
+}
+
+/// App-level discovery registration info (internal to this device).
+class DiscoveryRegistration {
+  final String bundleId;
+  final String? userId;
+  final String? username;
+  final String? appName;
+  final FileReceivePolicy receivePolicy;
+
+  const DiscoveryRegistration({
+    required this.bundleId,
+    this.userId,
+    this.username,
+    this.appName,
+    this.receivePolicy = FileReceivePolicy.autoAccept,
+  });
+}
+
+/// Nearby transfer capability extension interface.
+///
+/// Implemented by [RuntimeServiceLocator] when desktop host provides
+/// user account and nearby-transfer settings. API layer detects via
+/// `serviceLocator is NearbyServiceLocator`.
+abstract class NearbyServiceLocator {
+  Future<UserProfile?> getUserProfile();
+
+  String get deviceFingerprint;
+
+  String get deviceDisplayName;
+
+  bool get nearbyTransferEnabled;
+
+  Stream<bool> get nearbyTransferEnabledStream;
+
+  /// Currently discovered peer devices.
+  List<PeerDevice> get discoveredPeers;
+
+  /// Stream of peer device changes (join/leave).
+  Stream<PeerDeviceEvent> get peerEventStream;
+
+  /// Build a PeerDevice representing this device itself for local queries.
+  ///
+  /// [excludeBundleId] omits the registration belonging to this caller so
+  /// that the caller never sees itself in the peer list.
+  PeerDevice selfDeviceAsPeer({String? excludeBundleId});
+
+  /// Register an app to be advertised via multicast discovery.
+  void registerDiscoveryApp(DiscoveryRegistration registration);
+
+  /// Unregister an app from discovery advertisement.
+  void unregisterDiscoveryApp(String bundleId);
+
+  /// All currently registered apps on this device.
+  List<DiscoveryRegistration> get registeredApps;
+
+  /// Send files to a target device.
+  Future<TransferSession> sendFiles({
+    required String targetDeviceId,
+    required String bundleId,
+    required List<TransferFileInfo> files,
+    String? userId,
+  });
+
+  /// Stream of incoming file transfer events.
+  Stream<IncomingTransferEvent> get incomingTransferStream;
+
+  /// Set the global file receive policy.
+  void setReceivePolicy(FileReceivePolicy policy);
+
+  /// Set the base directory for saving received files.
+  void setSaveDirectory(String path);
+}
+
+/// Peer device event types.
+enum PeerDeviceEventType { joined, left, updated }
+
+/// Peer device change event.
+class PeerDeviceEvent {
+  final PeerDeviceEventType type;
+  final PeerDevice device;
+
+  const PeerDeviceEvent({required this.type, required this.device});
+}
+
+/// File info for transfer.
+class TransferFileInfo {
+  final String fileName;
+  final int size;
+  final String filePath;
+  final String? mimeType;
+
+  const TransferFileInfo({
+    required this.fileName,
+    required this.size,
+    required this.filePath,
+    this.mimeType,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'fileName': fileName,
+    'size': size,
+    'filePath': filePath,
+    if (mimeType != null) 'mimeType': mimeType,
+  };
+}
+
+/// Transfer session state.
+enum TransferState { pending, preparing, transferring, completed, failed, cancelled }
+
+/// Active transfer session.
+class TransferSession {
+  final String transferId;
+  TransferState state;
+  double progress;
+  final String targetDeviceId;
+  final String bundleId;
+  final String? userId;
+  final List<TransferFileInfo> files;
+  String? errorMessage;
+
+  TransferSession({
+    required this.transferId,
+    this.state = TransferState.pending,
+    this.progress = 0.0,
+    required this.targetDeviceId,
+    required this.bundleId,
+    this.userId,
+    required this.files,
+    this.errorMessage,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'transferId': transferId,
+    'state': state.name,
+    'progress': progress,
+    'targetDeviceId': targetDeviceId,
+    'bundleId': bundleId,
+    if (userId != null) 'userId': userId,
+    'files': files.map((f) => f.toJson()).toList(),
+    if (errorMessage != null) 'errorMessage': errorMessage,
+  };
+}
+
+/// Incoming file transfer event.
+class IncomingTransferEvent {
+  final String transferId;
+  final String fromDeviceId;
+  final String fromName;
+  final String sourceBundleId;
+  final List<ReceivedFileInfo> files;
+
+  const IncomingTransferEvent({
+    required this.transferId,
+    required this.fromDeviceId,
+    required this.fromName,
+    required this.sourceBundleId,
+    required this.files,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'transferId': transferId,
+    'fromDeviceId': fromDeviceId,
+    'fromName': fromName,
+    'sourceBundleId': sourceBundleId,
+    'files': files.map((f) => f.toJson()).toList(),
+  };
+}
+
+/// Received file info.
+class ReceivedFileInfo {
+  final String fileName;
+  final int size;
+  final String savedPath;
+  final String? mimeType;
+
+  const ReceivedFileInfo({
+    required this.fileName,
+    required this.size,
+    required this.savedPath,
+    this.mimeType,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'fileName': fileName,
+    'size': size,
+    'savedPath': savedPath,
+    if (mimeType != null) 'mimeType': mimeType,
+  };
+}
+
+/// Direction of a transfer.
+enum TransferDirection { send, receive }
+
+/// A persisted transfer history record.
+class TransferHistoryRecord {
+  final String id;
+  final TransferDirection direction;
+  final String peerDeviceId;
+  final String peerName;
+  final String? peerAvatarBase64;
+  final List<TransferHistoryFile> files;
+  final int totalSize;
+  final TransferState state;
+  final DateTime timestamp;
+  final String? savedDir;
+
+  const TransferHistoryRecord({
+    required this.id,
+    required this.direction,
+    required this.peerDeviceId,
+    required this.peerName,
+    this.peerAvatarBase64,
+    required this.files,
+    required this.totalSize,
+    required this.state,
+    required this.timestamp,
+    this.savedDir,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'direction': direction.name,
+    'peerDeviceId': peerDeviceId,
+    'peerName': peerName,
+    if (peerAvatarBase64 != null) 'peerAvatarBase64': peerAvatarBase64,
+    'files': files.map((f) => f.toJson()).toList(),
+    'totalSize': totalSize,
+    'state': state.name,
+    'timestamp': timestamp.toIso8601String(),
+    if (savedDir != null) 'savedDir': savedDir,
+  };
+
+  factory TransferHistoryRecord.fromJson(Map<String, dynamic> json) {
+    return TransferHistoryRecord(
+      id: json['id'] as String,
+      direction: TransferDirection.values.firstWhere(
+        (d) => d.name == json['direction'],
+        orElse: () => TransferDirection.send,
+      ),
+      peerDeviceId: json['peerDeviceId'] as String,
+      peerName: json['peerName'] as String,
+      peerAvatarBase64: json['peerAvatarBase64'] as String?,
+      files: (json['files'] as List)
+          .map((f) => TransferHistoryFile.fromJson(f as Map<String, dynamic>))
+          .toList(),
+      totalSize: json['totalSize'] as int,
+      state: TransferState.values.firstWhere(
+        (s) => s.name == json['state'],
+        orElse: () => TransferState.completed,
+      ),
+      timestamp: DateTime.parse(json['timestamp'] as String),
+      savedDir: json['savedDir'] as String?,
+    );
+  }
+}
+
+/// A file entry inside a transfer history record.
+class TransferHistoryFile {
+  final String fileName;
+  final int size;
+  final String? filePath;
+
+  const TransferHistoryFile({
+    required this.fileName,
+    required this.size,
+    this.filePath,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'fileName': fileName,
+    'size': size,
+    if (filePath != null) 'filePath': filePath,
+  };
+
+  factory TransferHistoryFile.fromJson(Map<String, dynamic> json) {
+    return TransferHistoryFile(
+      fileName: json['fileName'] as String,
+      size: json['size'] as int,
+      filePath: json['filePath'] as String?,
+    );
   }
 }
 

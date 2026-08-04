@@ -5,19 +5,25 @@ import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'locator.dart';
 import 'controllers/agentkit/agentkit_controller.dart';
 import 'controllers/appkit/appkit_controller.dart';
+import 'controllers/authkit/authkit_controller.dart';
 import 'controllers/cronkit/cronkit_controller.dart';
+import 'controllers/discoverykit/discoverykit_controller.dart';
 import 'controllers/modelkit/modelkit_controller.dart';
 import 'controllers/ragkit/ragkit_controller.dart';
 import 'controllers/system_controller.dart';
 import 'controllers/toolkit/toolkit_controller.dart';
+import 'controllers/transferkit/transferkit_controller.dart';
 import 'config.dart';
 import 'middleware.dart';
 import 'services/appkit/appkit_service.dart';
 import 'services/appkit/opentool_availability_service.dart';
 import 'services/appkit/opentool_provisioning_service.dart';
+import 'services/authkit/authkit_service.dart';
 import 'services/cronkit/cronkit_model_ref_store.dart';
+import 'services/discoverykit/discoverykit_service.dart';
 import 'services/modelkit/model_client.dart';
 import 'services/toolkit/opentool_client.dart';
+import 'services/transferkit/transferkit_service.dart';
 
 String _createGatewayInstanceId() {
   final now = DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(16);
@@ -42,6 +48,7 @@ Handler createGatewayHandler({
   int gatewayPort = ApiConfig.defaultPort,
   OpenToolProvisioner? openToolProvisioner,
   OpenToolAvailabilityTracker? openToolAvailabilityTracker,
+  void Function(AuthKitService authKitService)? onAuthKitReady,
 }) {
   final router = createGatewayRouter(
     serviceLocator: serviceLocator,
@@ -50,6 +57,7 @@ Handler createGatewayHandler({
     gatewayPort: gatewayPort,
     openToolProvisioner: openToolProvisioner,
     openToolAvailabilityTracker: openToolAvailabilityTracker,
+    onAuthKitReady: onAuthKitReady,
   );
 
   var pipeline = const Pipeline();
@@ -85,6 +93,7 @@ Router createGatewayRouter({
   int gatewayPort = ApiConfig.defaultPort,
   OpenToolProvisioner? openToolProvisioner,
   OpenToolAvailabilityTracker? openToolAvailabilityTracker,
+  void Function(AuthKitService authKitService)? onAuthKitReady,
 }) {
   final instanceId = _createGatewayInstanceId();
   requestLogger.info('Creating gateway router instanceId=$instanceId');
@@ -164,6 +173,40 @@ Router createGatewayRouter({
     '${ApiConfig.modelkitPath}/',
     modelKitController.router.call,
   );
+
+  // AuthKit API (third-party app authentication)
+  final authKitService = AuthKitService(
+    serviceLocator: serviceLocator,
+    appKitService: appKitService,
+  );
+  final authKitController = AuthKitController(
+    authKitService: authKitService,
+    appKitService: appKitService,
+  );
+  router.mount('${ApiConfig.authkitPath}/', authKitController.router.call);
+  onAuthKitReady?.call(authKitService);
+
+  // DiscoveryKit API (nearby device discovery)
+  final discoveryKitService = DiscoveryKitService(
+    serviceLocator: serviceLocator,
+    authKitService: authKitService,
+  );
+  final discoveryKitController = DiscoveryKitController(
+    service: discoveryKitService,
+    appKitService: appKitService,
+  );
+  router.mount('${ApiConfig.discoverykitPath}/', discoveryKitController.router.call);
+
+  // TransferKit API (file transfer between devices)
+  final transferKitService = TransferKitService(
+    serviceLocator: serviceLocator,
+    appKitService: appKitService,
+  );
+  final transferKitController = TransferKitController(
+    transferKitService: transferKitService,
+    appKitService: appKitService,
+  );
+  router.mount('${ApiConfig.transferkitPath}/', transferKitController.router.call);
 
   return router;
 }
