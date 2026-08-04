@@ -199,7 +199,6 @@ class TransferKitService {
     final box = await _ensurePolicyBox();
     final key = bundleId ?? '_default';
     await box.put(key, policy.name);
-    _nearby?.setReceivePolicy(policy);
     _logger.info('TransferKit: policy set to ${policy.name} for ${bundleId ?? "default"}');
   }
 

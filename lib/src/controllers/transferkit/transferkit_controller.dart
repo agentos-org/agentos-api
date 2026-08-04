@@ -336,6 +336,11 @@ class TransferKitController {
   }
 
   Future<Response> _setPolicy(Request request) async {
+    final token = bearerTokenFrom(request);
+    if (token == null) return unauthorizedResponse();
+    final bundleId = _appKitService.bundleIdForToken(token);
+    if (bundleId == null) return unauthorizedResponse('Invalid app token');
+
     final body = await request.readAsString();
     Map<String, dynamic> payload;
     try {
@@ -354,7 +359,6 @@ class TransferKitController {
       orElse: () => FileReceivePolicy.autoAccept,
     );
 
-    final bundleId = payload['bundleId'] as String?;
     await _service.setPolicy(policy, bundleId: bundleId);
 
     return Response.ok(
