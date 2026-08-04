@@ -34,29 +34,31 @@ class DiscoveryKitService {
   /// Register an app into discovery broadcast.
   ///
   /// [bundleId] identifies the app.
-  /// [userId] must match an existing AuthKit grant for [bundleId].
-  /// [username] and [appName] are optional display fields.
-  bool registerApp({
+  /// username, appName, avatarUrl are resolved internally from AuthKit grant
+  /// and user profile, not from external input.
+  Future<bool> registerApp({
     required String bundleId,
-    String? userId,
-    String? username,
-    String? appName,
-    String? avatarUrl,
     FileReceivePolicy? receivePolicy,
-  }) {
+  }) async {
     final nearby = _nearby;
     if (nearby == null) {
       _logger.warning('DiscoveryKit: registerApp failed — nearby not available');
       return false;
     }
 
-    if (userId != null) {
-      final authKit = _authKitService;
-      if (authKit == null) {
-        _logger.warning('DiscoveryKit: registerApp failed — authKit not available for userId verification');
-        return false;
-      }
+    final authKit = _authKitService;
+    if (authKit == null) {
+      _logger.warning('DiscoveryKit: registerApp failed — authKit not available');
+      return false;
     }
+
+    final grant = await authKit.getGrantForBundle(bundleId);
+    final profile = await authKit.getUserProfile();
+
+    final userId = grant?.userId;
+    final username = profile?.name;
+    final appName = grant?.appName;
+    final avatarUrl = profile?.avatarUrl;
 
     final policy = receivePolicy ?? FileReceivePolicy.autoAccept;
 
@@ -141,7 +143,9 @@ class DiscoveryKitService {
         ));
       } else {
         final filteredApps = peer.apps
-            .where((a) => !a.isDeviceLevel && a.bundleId == callerBundleId)
+            .where((a) => !a.isDeviceLevel
+                && a.bundleId != null
+                && a.bundleId == callerBundleId)
             .toList();
         if (filteredApps.isEmpty) continue;
         result.add(PeerDevice(
@@ -169,22 +173,33 @@ class DiscoveryKitService {
     return nearby.peerEventStream;
   }
 
-  /// Get self device info.
-  Map<String, dynamic>? getSelfInfo() {
+  /// Get self device info in the same structure as a PeerDevice,
+  /// plus additional status fields.
+  Map<String, dynamic>? getSelfInfo({String? callerBundleId}) {
     final nearby = _nearby;
     if (nearby == null) return null;
+
+    final selfPeer = nearby.selfDeviceAsPeer(excludeBundleId: callerBundleId);
+    final registered = callerBundleId != null &&
+        nearby.registeredApps.any((r) => r.bundleId == callerBundleId);
+
+    // Filter apps same way as getPeers does for app-level scan
+    final List<PeerApp> filteredApps;
+    if (callerBundleId != null) {
+      filteredApps = selfPeer.apps
+          .where((a) => !a.isDeviceLevel
+              && a.bundleId != null
+              && a.bundleId == callerBundleId)
+          .toList();
+    } else {
+      filteredApps = const [];
+    }
+
     return {
-      'deviceId': nearby.deviceFingerprint,
-      'deviceName': nearby.deviceDisplayName,
+      ...selfPeer.toJson(),
+      'apps': filteredApps.map((a) => a.toJson()).toList(),
       'nearbyTransferEnabled': nearby.nearbyTransferEnabled,
-      'registeredApps': nearby.registeredApps
-          .map((r) => {
-                'bundleId': r.bundleId,
-                if (r.userId != null) 'userId': r.userId,
-                if (r.username != null) 'username': r.username,
-                if (r.appName != null) 'appName': r.appName,
-              })
-          .toList(),
+      'registered': registered,
     };
   }
 

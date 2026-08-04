@@ -97,12 +97,17 @@ class AuthKitGrant {
 }
 
 class AuthKitUserInfo {
+  final String? userId;
   final String name;
   final String avatarUrl;
 
-  const AuthKitUserInfo({required this.name, required this.avatarUrl});
+  const AuthKitUserInfo({this.userId, required this.name, required this.avatarUrl});
 
-  Map<String, dynamic> toJson() => {'name': name, 'avatarUrl': avatarUrl};
+  Map<String, dynamic> toJson() => {
+    if (userId != null) 'userId': userId,
+    'name': name,
+    'avatarUrl': avatarUrl,
+  };
 }
 
 /// AuthKit service managing authorization flow for third-party apps.
@@ -273,7 +278,7 @@ class AuthKitService {
     final profile = await _getUserProfile();
     final userInfo = {
       'name': profile?.name ?? 'AgentOS User',
-      'avatarUrl': '/authkit/avatar',
+      'avatarUrl': profile?.avatarUrl ?? '',
     };
 
     final grant = await _getGrant(bundleId);
@@ -291,10 +296,12 @@ class AuthKitService {
     final bundleId = await _resolveTokenBundleId(accessToken);
     if (bundleId == null) return null;
 
+    final grant = await _getGrant(bundleId);
     final profile = await _getUserProfile();
     return AuthKitUserInfo(
+      userId: grant?.userId,
       name: profile?.name ?? 'AgentOS User',
-      avatarUrl: '/authkit/avatar',
+      avatarUrl: profile?.avatarUrl ?? '',
     );
   }
 
@@ -322,8 +329,11 @@ class AuthKitService {
     return TokenValidationResult.valid;
   }
 
-  /// Get avatar data (base64 or URL) for proxy endpoint.
-  Future<UserProfile?> getAvatarProfile() => _getUserProfile();
+  /// Get grant info for a specific bundleId (used by DiscoveryKit).
+  Future<AuthKitGrant?> getGrantForBundle(String bundleId) => _getGrant(bundleId);
+
+  /// Get current user profile (name + avatarUrl).
+  Future<UserProfile?> getUserProfile() => _getUserProfile();
 
   /// Revoke authorization for a bundle.
   Future<void> revokeGrant(String bundleId) async {

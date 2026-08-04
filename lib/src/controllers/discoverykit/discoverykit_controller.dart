@@ -27,7 +27,6 @@ class DiscoveryKitController {
     router.get('/self', requireBearer()(_getSelf));
     router.post('/register', requireBearer()(_register));
     router.post('/unregister', requireBearer()(_unregister));
-    router.get('/registrations', requireBearer()(_listRegistrations));
     return router;
   }
 
@@ -48,21 +47,13 @@ class DiscoveryKitController {
       }
     }
 
-    final userId = payload['userId'] as String?;
-    final username = payload['username'] as String?;
-    final appName = payload['appName'] as String?;
-    final avatarUrl = payload['avatarUrl'] as String?;
     final policyStr = payload['receivePolicy'] as String?;
     final receivePolicy = policyStr != null
         ? FileReceivePolicy.values.where((p) => p.name == policyStr).firstOrNull
         : null;
 
-    final success = _service.registerApp(
+    final success = await _service.registerApp(
       bundleId: bundleId,
-      userId: userId,
-      username: username,
-      appName: appName,
-      avatarUrl: avatarUrl,
       receivePolicy: receivePolicy,
     );
 
@@ -90,19 +81,6 @@ class DiscoveryKitController {
 
     return Response.ok(
       jsonEncode({'status': 'unregistered', 'bundleId': bundleId}),
-      headers: {'content-type': 'application/json'},
-    );
-  }
-
-  Future<Response> _listRegistrations(Request request) async {
-    final registrations = _service.getRegisteredApps();
-    return Response.ok(
-      jsonEncode(registrations.map((r) => {
-        'bundleId': r.bundleId,
-        if (r.userId != null) 'userId': r.userId,
-        if (r.username != null) 'username': r.username,
-        if (r.appName != null) 'appName': r.appName,
-      }).toList()),
       headers: {'content-type': 'application/json'},
     );
   }
@@ -139,6 +117,10 @@ class DiscoveryKitController {
       );
     }
 
+    final token = bearerTokenFrom(request);
+    final callerBundleId =
+        token != null ? _appKitService.bundleIdForToken(token) : null;
+
     StreamSubscription<PeerDeviceEvent>? sub;
     final controller = StreamController<List<int>>(
       onCancel: () => sub?.cancel(),
@@ -146,9 +128,28 @@ class DiscoveryKitController {
 
     sub = peerStream.listen(
       (event) {
+        final device = event.device;
+        // Apply same app-level filtering as getPeers
+        final Map<String, dynamic> deviceJson;
+        if (callerBundleId != null) {
+          final filteredApps = device.apps
+              .where((a) => !a.isDeviceLevel
+                  && a.bundleId != null
+                  && a.bundleId == callerBundleId)
+              .toList();
+          if (filteredApps.isEmpty && event.type != PeerDeviceEventType.left) {
+            return;
+          }
+          deviceJson = device.toJson();
+          deviceJson['apps'] = filteredApps.map((a) => a.toJson()).toList();
+        } else {
+          deviceJson = device.toJson();
+          deviceJson['apps'] = <Map<String, dynamic>>[];
+        }
+
         final data = jsonEncode({
           'type': event.type.name,
-          'device': event.device.toJson(),
+          'device': deviceJson,
         });
         controller.add(utf8.encode('event: peer.${event.type.name}\ndata: $data\n\n'));
       },
@@ -167,7 +168,10 @@ class DiscoveryKitController {
   }
 
   Future<Response> _getSelf(Request request) async {
-    final selfInfo = _service.getSelfInfo();
+    final token = bearerTokenFrom(request);
+    final bundleId = token != null ? _appKitService.bundleIdForToken(token) : null;
+
+    final selfInfo = _service.getSelfInfo(callerBundleId: bundleId);
     if (selfInfo == null) {
       return Response.ok(
         jsonEncode({'nearbyTransferEnabled': false}),

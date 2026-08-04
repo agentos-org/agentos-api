@@ -25,7 +25,6 @@ class AuthKitController {
     router.get('/authorize/<requestId>/status', _getStatusHandler);
     router.post('/token', requireBearer()(_exchangeToken));
     router.get('/userinfo', _getUserInfo);
-    router.get('/avatar', _getAvatar);
     router.post('/revoke', requireBearer()(_revoke));
     router.get('/grants', requireBearer()(_listGrants));
     return router;
@@ -170,18 +169,6 @@ class AuthKitController {
   Response _errorResponse(int statusCode, String error, String message) {
     return Response(statusCode,
       body: jsonEncode({'error': error, 'message': message}),
-      headers: {'content-type': 'application/json'},
-    );
-  }
-
-  Future<Response> _getAvatar(Request request) async {
-    final profile = await _service.getAvatarProfile();
-    if (profile == null || profile.avatarUrl == null) {
-      return Response.notFound('No avatar available');
-    }
-
-    return Response.ok(
-      jsonEncode({'avatarUrl': profile.avatarUrl}),
       headers: {'content-type': 'application/json'},
     );
   }
