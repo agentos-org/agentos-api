@@ -7,6 +7,7 @@ import 'package:shelf_router/shelf_router.dart';
 import '../../locator.dart';
 import '../../middleware.dart';
 import '../../services/appkit/appkit_service.dart';
+import '../../services/authkit/authkit_service.dart';
 import '../../services/transferkit/transferkit_service.dart';
 
 /// TransferKit controller for file transfer between AgentOS devices.
@@ -14,13 +15,16 @@ class TransferKitController {
   TransferKitController({
     required TransferKitService transferKitService,
     required AppKitService appKitService,
+    AuthKitService? authKitService,
     String Function(String bundleId)? dataDirResolver,
   }) : _service = transferKitService,
        _appKitService = appKitService,
+       _authKitService = authKitService,
        _dataDirResolver = dataDirResolver;
 
   final TransferKitService _service;
   final AppKitService _appKitService;
+  final AuthKitService? _authKitService;
   final String Function(String bundleId)? _dataDirResolver;
 
   Router get router {
@@ -88,6 +92,8 @@ class TransferKitController {
       return Response(400, body: 'targetDeviceId is required');
     }
 
+    final targetBundleId = payload['targetBundleId'] as String?;
+
     final rawFiles = payload['files'] as List?;
     if (rawFiles == null || rawFiles.isEmpty) {
       return Response(400, body: 'files is required and must not be empty');
@@ -105,11 +111,17 @@ class TransferKitController {
 
     final dataDir = _dataDirResolver?.call(bundleId);
 
+    // Resolve userId from the app grant for this bundleId
+    final grant = await _authKitService?.getGrantForBundle(bundleId);
+    final userId = grant?.userId;
+
     final session = await _service.sendFiles(
       targetDeviceId: targetDeviceId,
       bundleId: bundleId,
       files: files,
       dataDir: dataDir,
+      userId: userId,
+      targetBundleId: targetBundleId,
     );
 
     if (session == null) {
@@ -213,6 +225,11 @@ class TransferKitController {
   }
 
   Response _receiveStream(Request request) {
+    final token = bearerTokenFrom(request);
+    if (token == null) return unauthorizedResponse();
+    final callerBundleId = _appKitService.bundleIdForToken(token);
+    if (callerBundleId == null) return unauthorizedResponse('Invalid app token');
+
     final incomingStream = _service.getIncomingStream();
     if (incomingStream == null) {
       return Response.ok(
@@ -230,7 +247,11 @@ class TransferKitController {
       onCancel: () => sub?.cancel(),
     );
 
-    sub = incomingStream.listen(
+    sub = incomingStream
+        .where((event) =>
+            event.targetBundleId == null ||
+            event.targetBundleId == callerBundleId)
+        .listen(
       (event) {
         final data = jsonEncode(event.toJson());
         controller.add(utf8.encode('event: file.received\ndata: $data\n\n'));

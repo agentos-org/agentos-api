@@ -19,7 +19,9 @@ class TransferKitService {
     HiveProvider? hiveProvider,
   }) : _serviceLocator = serviceLocator,
        _appKitService = appKitService,
-       _hiveProvider = hiveProvider ?? HiveProvider();
+       _hiveProvider = hiveProvider ?? HiveProvider() {
+    _ensureIncomingListener();
+  }
 
   final AgentOSServiceLocator _serviceLocator;
   final AppKitService _appKitService;
@@ -28,6 +30,7 @@ class TransferKitService {
   final Map<String, TransferSession> _transfers = {};
   final _transferProgressController = StreamController<TransferSession>.broadcast();
   StreamSubscription<TransferSession>? _progressSub;
+  StreamSubscription<IncomingTransferEvent>? _incomingSub;
 
   Box<String>? _policyBox;
   Box<String>? _historyBox;
@@ -51,6 +54,17 @@ class TransferKitService {
     });
   }
 
+  void _ensureIncomingListener() {
+    if (_incomingSub != null) return;
+    final nearby = _nearby;
+    if (nearby == null) return;
+    _incomingSub = nearby.incomingTransferStream.listen((event) {
+      if (event.targetBundleId != null && event.targetBundleId!.isNotEmpty) {
+        notifyIncomingFile(event);
+      }
+    });
+  }
+
   /// Send files to a target device.
   ///
   /// Returns a [TransferSession] immediately with state=preparing.
@@ -64,6 +78,8 @@ class TransferKitService {
     required String bundleId,
     required List<TransferFileInfo> files,
     String? dataDir,
+    String? userId,
+    String? targetBundleId,
   }) async {
     final nearby = _nearby;
     if (nearby == null || !nearby.nearbyTransferEnabled) {
@@ -97,6 +113,8 @@ class TransferKitService {
       targetDeviceId: targetDeviceId,
       bundleId: bundleId,
       files: files,
+      userId: userId,
+      targetBundleId: targetBundleId,
     ).then((session) {
       _transfers[session.transferId] = session;
       // If it completed/failed immediately (e.g. peer not found), emit one event
@@ -185,14 +203,17 @@ class TransferKitService {
   }
 
   /// Push incoming file event to the target app via AppKit SSE.
+  /// If targetBundleId is set, notify that app; otherwise notify sourceBundleId.
   void notifyIncomingFile(IncomingTransferEvent event) {
+    final targetId = event.targetBundleId ?? event.sourceBundleId;
+    if (targetId.isEmpty) return;
     final appEvent = _appKitService.createAppEvent(
       type: 'transferkit.file.received',
       source: 'transferkit',
       subject: event.sourceBundleId,
       data: event.toJson(),
     );
-    _appKitService.publishAppEvent(event.sourceBundleId, appEvent);
+    _appKitService.publishAppEvent(targetId, appEvent);
   }
 
   // --- Transfer History ---

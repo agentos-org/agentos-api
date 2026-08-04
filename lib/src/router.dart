@@ -206,6 +206,7 @@ Router createGatewayRouter({
   final transferKitController = TransferKitController(
     transferKitService: transferKitService,
     appKitService: appKitService,
+    authKitService: authKitService,
   );
   router.mount('${ApiConfig.transferkitPath}/', transferKitController.router.call);
 

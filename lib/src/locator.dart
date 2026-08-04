@@ -411,6 +411,7 @@ abstract class NearbyServiceLocator {
     required String bundleId,
     required List<TransferFileInfo> files,
     String? userId,
+    String? targetBundleId,
   });
 
   /// Stream of file transfer progress updates.
@@ -473,6 +474,7 @@ class TransferSession {
   final String targetDeviceId;
   final String bundleId;
   final String? userId;
+  final String? targetBundleId;
   final List<TransferFileInfo> files;
   String? errorMessage;
 
@@ -489,6 +491,7 @@ class TransferSession {
     required this.targetDeviceId,
     required this.bundleId,
     this.userId,
+    this.targetBundleId,
     required this.files,
     this.errorMessage,
     Map<String, double>? fileProgress,
@@ -503,6 +506,7 @@ class TransferSession {
     'targetDeviceId': targetDeviceId,
     'bundleId': bundleId,
     if (userId != null) 'userId': userId,
+    if (targetBundleId != null) 'targetBundleId': targetBundleId,
     'files': files.map((f) => f.toJson()).toList(),
     if (errorMessage != null) 'errorMessage': errorMessage,
   };
@@ -514,6 +518,7 @@ class IncomingTransferEvent {
   final String fromDeviceId;
   final String fromName;
   final String sourceBundleId;
+  final String? targetBundleId;
   final List<ReceivedFileInfo> files;
 
   const IncomingTransferEvent({
@@ -521,6 +526,7 @@ class IncomingTransferEvent {
     required this.fromDeviceId,
     required this.fromName,
     required this.sourceBundleId,
+    this.targetBundleId,
     required this.files,
   });
 
@@ -529,6 +535,7 @@ class IncomingTransferEvent {
     'fromDeviceId': fromDeviceId,
     'fromName': fromName,
     'sourceBundleId': sourceBundleId,
+    if (targetBundleId != null) 'targetBundleId': targetBundleId,
     'files': files.map((f) => f.toJson()).toList(),
   };
 }
