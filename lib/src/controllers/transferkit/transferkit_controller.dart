@@ -34,6 +34,7 @@ class TransferKitController {
     router.get('/transfers/<transferId>/status', _getStatusHandler);
     router.get('/transfers/<transferId>/stream', _streamProgressHandler);
     router.post('/transfers/<transferId>/cancel', _cancelHandler);
+    router.post('/transfers/<transferId>/respond', _respondHandler);
     router.get('/receive/stream', requireBearer()(_receiveStream));
     router.put('/receive/policy', requireBearer()(_setPolicy));
     router.get('/receive/policy', requireBearer()(_getPolicy));
@@ -241,6 +242,32 @@ class TransferKitController {
 
     return Response.ok(
       jsonEncode({'status': 'cancelled'}),
+      headers: {'content-type': 'application/json'},
+    );
+  }
+
+  Future<Response> _respondHandler(Request request, String transferId) async {
+    final token = extractBearerToken(request);
+    if (token == null || token.isEmpty) return unauthorizedResponse();
+    if (!_appKitService.isTokenValid(token)) return unauthorizedResponse();
+    return _respond(request, transferId);
+  }
+
+  Future<Response> _respond(Request request, String transferId) async {
+    final body = await request.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final accept = data['accept'] as bool? ?? false;
+
+    final success = _service.respondToTransfer(transferId, accept);
+    if (!success) {
+      return Response(404,
+        body: jsonEncode({'error': 'Transfer not found or already responded'}),
+        headers: {'content-type': 'application/json'},
+      );
+    }
+
+    return Response.ok(
+      jsonEncode({'status': accept ? 'accepted' : 'declined'}),
       headers: {'content-type': 'application/json'},
     );
   }

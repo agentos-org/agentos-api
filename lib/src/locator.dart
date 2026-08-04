@@ -420,6 +420,10 @@ abstract class NearbyServiceLocator {
   /// Stream of incoming file transfer events.
   Stream<IncomingTransferEvent> get incomingTransferStream;
 
+  /// Respond to a pending incoming transfer (accept or decline).
+  /// Returns true if the transfer was found and responded to.
+  bool respondToTransfer(String transferId, bool accept);
+
   /// Set the global file receive policy.
   void setReceivePolicy(FileReceivePolicy policy);
 
@@ -519,6 +523,7 @@ class IncomingTransferEvent {
   final String fromName;
   final String sourceBundleId;
   final String? targetBundleId;
+  final bool autoAccepted;
   final List<ReceivedFileInfo> files;
 
   const IncomingTransferEvent({
@@ -527,6 +532,7 @@ class IncomingTransferEvent {
     required this.fromName,
     required this.sourceBundleId,
     this.targetBundleId,
+    this.autoAccepted = true,
     required this.files,
   });
 
@@ -536,6 +542,7 @@ class IncomingTransferEvent {
     'fromName': fromName,
     'sourceBundleId': sourceBundleId,
     if (targetBundleId != null) 'targetBundleId': targetBundleId,
+    'autoAccepted': autoAccepted,
     'files': files.map((f) => f.toJson()).toList(),
   };
 }

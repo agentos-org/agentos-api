@@ -203,6 +203,13 @@ class TransferKitService {
     _logger.info('TransferKit: policy set to ${policy.name} for ${bundleId ?? "default"}');
   }
 
+  /// Respond to a pending incoming transfer (accept or decline).
+  bool respondToTransfer(String transferId, bool accept) {
+    final nearby = _nearby;
+    if (nearby == null) return false;
+    return nearby.respondToTransfer(transferId, accept);
+  }
+
   /// Push incoming file event to the target app via AppKit SSE.
   /// If targetBundleId is set, notify that app; otherwise notify sourceBundleId.
   void notifyIncomingFile(IncomingTransferEvent event) {
