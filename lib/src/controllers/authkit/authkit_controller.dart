@@ -180,14 +180,6 @@ class AuthKitController {
       return Response.notFound('No avatar available');
     }
 
-    if (profile.avatarBase64 != null) {
-      final bytes = base64Decode(profile.avatarBase64!);
-      return Response.ok(
-        bytes,
-        headers: {'content-type': 'image/png'},
-      );
-    }
-
     return Response.ok(
       jsonEncode({'avatarUrl': profile.avatarUrl}),
       headers: {'content-type': 'application/json'},

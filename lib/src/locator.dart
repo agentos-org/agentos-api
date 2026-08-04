@@ -274,14 +274,12 @@ extension AgentOSServiceLocatorOpenToolConfig on AgentOSServiceLocator {
 class UserProfile {
   final String name;
   final String? avatarUrl;
-  final String? avatarBase64;
 
-  const UserProfile({required this.name, this.avatarUrl, this.avatarBase64});
+  const UserProfile({required this.name, this.avatarUrl});
 
   Map<String, dynamic> toJson() => {
     'name': name,
     if (avatarUrl != null) 'avatarUrl': avatarUrl,
-    if (avatarBase64 != null) 'avatarBase64': avatarBase64,
   };
 }
 
@@ -291,16 +289,18 @@ class PeerApp {
   final String? userId;
   final String? username;
   final String? appName;
+  final String? avatarUrl;
 
-  const PeerApp({this.bundleId, this.userId, this.username, this.appName});
+  const PeerApp({this.bundleId, this.userId, this.username, this.appName, this.avatarUrl});
 
-  bool get isDeviceLevel => userId == null && appName == null;
+  bool get isDeviceLevel => userId == null;
 
   Map<String, dynamic> toJson() => {
     if (bundleId != null) 'bundleId': bundleId,
     if (userId != null) 'userId': userId,
     if (username != null) 'username': username,
     if (appName != null) 'appName': appName,
+    if (avatarUrl != null) 'avatarUrl': avatarUrl,
   };
 
   factory PeerApp.fromJson(Map<String, dynamic> json) => PeerApp(
@@ -308,6 +308,7 @@ class PeerApp {
     userId: json['userId'] as String?,
     username: json['username'] as String?,
     appName: json['appName'] as String?,
+    avatarUrl: json['avatarUrl'] as String?,
   );
 }
 
@@ -315,7 +316,7 @@ class PeerApp {
 class PeerDevice {
   final String deviceId;
   final String name;
-  final String? avatarBase64;
+  final String? avatarUrl;
   final String deviceName;
   final String deviceType;
   final String host;
@@ -326,7 +327,7 @@ class PeerDevice {
   const PeerDevice({
     required this.deviceId,
     required this.name,
-    this.avatarBase64,
+    this.avatarUrl,
     required this.deviceName,
     required this.deviceType,
     required this.host,
@@ -338,7 +339,7 @@ class PeerDevice {
   Map<String, dynamic> toJson() => {
     'deviceId': deviceId,
     'name': name,
-    if (avatarBase64 != null) 'avatarBase64': avatarBase64,
+    if (avatarUrl != null) 'avatarUrl': avatarUrl,
     'deviceName': deviceName,
     'deviceType': deviceType,
     'host': host,
@@ -354,6 +355,7 @@ class DiscoveryRegistration {
   final String? userId;
   final String? username;
   final String? appName;
+  final String? avatarUrl;
   final FileReceivePolicy receivePolicy;
 
   const DiscoveryRegistration({
@@ -361,6 +363,7 @@ class DiscoveryRegistration {
     this.userId,
     this.username,
     this.appName,
+    this.avatarUrl,
     this.receivePolicy = FileReceivePolicy.autoAccept,
   });
 }
@@ -546,7 +549,7 @@ class TransferHistoryRecord {
   final TransferDirection direction;
   final String peerDeviceId;
   final String peerName;
-  final String? peerAvatarBase64;
+  final String? peerAvatarUrl;
   final List<TransferHistoryFile> files;
   final int totalSize;
   final TransferState state;
@@ -558,7 +561,7 @@ class TransferHistoryRecord {
     required this.direction,
     required this.peerDeviceId,
     required this.peerName,
-    this.peerAvatarBase64,
+    this.peerAvatarUrl,
     required this.files,
     required this.totalSize,
     required this.state,
@@ -571,7 +574,7 @@ class TransferHistoryRecord {
     'direction': direction.name,
     'peerDeviceId': peerDeviceId,
     'peerName': peerName,
-    if (peerAvatarBase64 != null) 'peerAvatarBase64': peerAvatarBase64,
+    if (peerAvatarUrl != null) 'peerAvatarUrl': peerAvatarUrl,
     'files': files.map((f) => f.toJson()).toList(),
     'totalSize': totalSize,
     'state': state.name,
@@ -588,7 +591,7 @@ class TransferHistoryRecord {
       ),
       peerDeviceId: json['peerDeviceId'] as String,
       peerName: json['peerName'] as String,
-      peerAvatarBase64: json['peerAvatarBase64'] as String?,
+      peerAvatarUrl: json['peerAvatarUrl'] as String?,
       files: (json['files'] as List)
           .map((f) => TransferHistoryFile.fromJson(f as Map<String, dynamic>))
           .toList(),

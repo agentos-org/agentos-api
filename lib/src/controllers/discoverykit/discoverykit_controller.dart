@@ -51,6 +51,7 @@ class DiscoveryKitController {
     final userId = payload['userId'] as String?;
     final username = payload['username'] as String?;
     final appName = payload['appName'] as String?;
+    final avatarUrl = payload['avatarUrl'] as String?;
     final policyStr = payload['receivePolicy'] as String?;
     final receivePolicy = policyStr != null
         ? FileReceivePolicy.values.where((p) => p.name == policyStr).firstOrNull
@@ -61,6 +62,7 @@ class DiscoveryKitController {
       userId: userId,
       username: username,
       appName: appName,
+      avatarUrl: avatarUrl,
       receivePolicy: receivePolicy,
     );
 

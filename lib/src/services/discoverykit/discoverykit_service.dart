@@ -41,6 +41,7 @@ class DiscoveryKitService {
     String? userId,
     String? username,
     String? appName,
+    String? avatarUrl,
     FileReceivePolicy? receivePolicy,
   }) {
     final nearby = _nearby;
@@ -64,6 +65,7 @@ class DiscoveryKitService {
       userId: userId,
       username: username,
       appName: appName,
+      avatarUrl: avatarUrl,
       receivePolicy: policy,
     ));
 
@@ -112,6 +114,9 @@ class DiscoveryKitService {
   }
 
   /// Apply scan-level filtering rules.
+  ///
+  /// Device-level: returns device info with empty apps, excludes self.
+  /// App-level: returns device info + only matching bundleId apps.
   List<PeerDevice> _filterPeers(
     List<PeerDevice> peers, {
     String? callerBundleId,
@@ -120,32 +125,37 @@ class DiscoveryKitService {
     final result = <PeerDevice>[];
     for (final peer in peers) {
       final isLocalDevice = peer.deviceId == selfDeviceId;
-      List<PeerApp> filteredApps;
 
       if (callerBundleId == null) {
-        // Device-level scan: only device-level targets
-        filteredApps = peer.apps.where((a) => a.isDeviceLevel).toList();
-        // Exclude the local device's own device-level target
         if (isLocalDevice) continue;
+        result.add(PeerDevice(
+          deviceId: peer.deviceId,
+          name: peer.name,
+          avatarUrl: peer.avatarUrl,
+          deviceName: peer.deviceName,
+          deviceType: peer.deviceType,
+          host: peer.host,
+          port: peer.port,
+          online: peer.online,
+          apps: const [],
+        ));
       } else {
-        // App-level scan: only app-level targets with same bundleId
-        filteredApps = peer.apps
+        final filteredApps = peer.apps
             .where((a) => !a.isDeviceLevel && a.bundleId == callerBundleId)
             .toList();
+        if (filteredApps.isEmpty) continue;
+        result.add(PeerDevice(
+          deviceId: peer.deviceId,
+          name: peer.name,
+          avatarUrl: peer.avatarUrl,
+          deviceName: peer.deviceName,
+          deviceType: peer.deviceType,
+          host: peer.host,
+          port: peer.port,
+          online: peer.online,
+          apps: filteredApps,
+        ));
       }
-
-      if (filteredApps.isEmpty) continue;
-      result.add(PeerDevice(
-        deviceId: peer.deviceId,
-        name: peer.name,
-        avatarBase64: peer.avatarBase64,
-        deviceName: peer.deviceName,
-        deviceType: peer.deviceType,
-        host: peer.host,
-        port: peer.port,
-        online: peer.online,
-        apps: filteredApps,
-      ));
     }
     return result;
   }
