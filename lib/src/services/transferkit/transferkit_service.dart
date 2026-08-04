@@ -53,6 +53,10 @@ class TransferKitService {
 
   /// Send files to a target device.
   ///
+  /// Returns a [TransferSession] immediately with state=preparing.
+  /// The actual transfer runs asynchronously; progress is reported via
+  /// [transferProgressStream].
+  ///
   /// [bundleId] is resolved from the bearer token.
   /// [dataDir] is the app's sandboxed data directory for path validation.
   Future<TransferSession?> sendFiles({
@@ -79,14 +83,54 @@ class TransferKitService {
       }
     }
 
-    final session = await nearby.sendFiles(
+    // Create a preliminary session to return immediately
+    final preliminarySession = TransferSession(
+      transferId: 'tf-pending',
       targetDeviceId: targetDeviceId,
       bundleId: bundleId,
       files: files,
+      state: TransferState.preparing,
     );
 
-    _transfers[session.transferId] = session;
-    return session;
+    // Launch the transfer asynchronously without awaiting completion
+    nearby.sendFiles(
+      targetDeviceId: targetDeviceId,
+      bundleId: bundleId,
+      files: files,
+    ).then((session) {
+      _transfers[session.transferId] = session;
+      // If it completed/failed immediately (e.g. peer not found), emit one event
+      if (session.state == TransferState.failed ||
+          session.state == TransferState.completed) {
+        _transferProgressController.add(session);
+      }
+    }).catchError((Object e) {
+      _logger.warning('TransferKit: sendFiles error: $e');
+    });
+
+    // Wait briefly for the runtime to create the real session and emit initial event
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    // Find the real session from the progress listener
+    final realSession = _transfers.values
+        .where((s) =>
+            s.targetDeviceId == targetDeviceId &&
+            s.bundleId == bundleId &&
+            s.state != TransferState.completed &&
+            s.state != TransferState.cancelled)
+        .lastOrNull;
+
+    if (realSession != null) {
+      return realSession;
+    }
+
+    // Check if a session was completed/failed immediately
+    final finishedSession = _transfers.values
+        .where((s) =>
+            s.targetDeviceId == targetDeviceId && s.bundleId == bundleId)
+        .lastOrNull;
+
+    return finishedSession ?? preliminarySession;
   }
 
   /// Get transfer status.
