@@ -376,6 +376,9 @@ class DiscoveryRegistration {
 abstract class NearbyServiceLocator {
   Future<UserProfile?> getUserProfile();
 
+  /// Emits whenever the host sets a new UserProfile (or clears it).
+  Stream<UserProfile?> get userProfileChangedStream;
+
   String get deviceFingerprint;
 
   String get deviceDisplayName;
