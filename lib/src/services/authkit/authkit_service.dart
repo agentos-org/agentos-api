@@ -145,6 +145,10 @@ class AuthKitService {
   final _authRequestController = StreamController<AuthRequest>.broadcast();
   Stream<AuthRequest> get authRequestStream => _authRequestController.stream;
 
+  /// Notifies listeners whenever the grants list changes (grant/revoke/clear).
+  final _grantsChangedController = StreamController<void>.broadcast();
+  Stream<void> get grantsChangedStream => _grantsChangedController.stream;
+
   /// Inject or replace the AppKitService used for broadcasting events.
   void setAppKitService(AppKitService service) {
     _appKitService = service;
@@ -341,6 +345,7 @@ class AuthKitService {
     await box.delete(bundleId);
     _accessTokens.removeWhere((_, v) => v == bundleId);
     await _removeTokensForBundle(bundleId);
+    _grantsChangedController.add(null);
     _logger.info('AuthKit: revoked grant for $bundleId');
   }
 
@@ -360,6 +365,7 @@ class AuthKitService {
 
     await tokensBox.clear();
     _accessTokens.clear();
+    _grantsChangedController.add(null);
     _logger.info('AuthKit: all grants and tokens cleared');
   }
 
@@ -534,6 +540,7 @@ class AuthKitService {
   Future<void> _saveGrant(AuthKitGrant grant) async {
     final box = await _ensureGrantsBox();
     await box.put(grant.bundleId, grant.toJson());
+    _grantsChangedController.add(null);
   }
 
   Future<Box<Map>> _ensureGrantsBox() async {
