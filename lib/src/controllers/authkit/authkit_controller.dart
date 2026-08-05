@@ -26,7 +26,6 @@ class AuthKitController {
     router.post('/token', requireBearer()(_exchangeToken));
     router.get('/userinfo', _getUserInfo);
     router.post('/revoke', requireBearer()(_revoke));
-    router.get('/grants', requireBearer()(_listGrants));
     return router;
   }
 
@@ -199,11 +198,4 @@ class AuthKitController {
     );
   }
 
-  Future<Response> _listGrants(Request request) async {
-    final grants = await _service.listGrants();
-    return Response.ok(
-      jsonEncode(grants.map((g) => g.toJson()).toList()),
-      headers: {'content-type': 'application/json'},
-    );
-  }
 }

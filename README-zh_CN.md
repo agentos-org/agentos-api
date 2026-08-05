@@ -324,8 +324,6 @@ AuthKit 为第三方应用提供类 OAuth 的认证能力，用于访问 AgentOS
 - `POST /authkit/token` - 用授权码换取访问令牌
 - `GET /authkit/userinfo` - 获取用户资料（需使用令牌交换返回的 access token）
 - `POST /authkit/revoke` - 撤销访问令牌
-- `GET /authkit/grants` - 列出当前应用的活跃授权
-
 流程：应用调用 `/authorize` 传入所需 `scopes` 和可选 `appName`，将授权 URL
 展示给用户，轮询 `/status` 直到用户同意/拒绝，然后通过 `/token` 换取令牌。
 获取的 access token 可用于请求 `/userinfo`。用户信息发生变更时会自动刷新。
@@ -341,7 +339,7 @@ DiscoveryKit 通过 mDNS/TLS 实现附近 AgentOS 设备发现。
 - `GET /discoverykit/peers/stream` - 实时设备发现/离开事件的 SSE 流
 - `GET /discoverykit/self` - 获取本设备的发现身份
 - `POST /discoverykit/register` - 注册本设备加入发现（可选传入
-  `receivePolicy`：`auto` | `confirmation` | `reject`）
+  `receivePolicy`：`auto` | `confirmation`）
 - `POST /discoverykit/unregister` - 注销本设备退出发现
 
 设备流会在附近设备出现或消失时实时推送事件。发现状态变更会即时传播。

@@ -338,8 +338,6 @@ Supported routes:
 - `GET /authkit/userinfo` - Get user profile (requires the access token from
   token exchange)
 - `POST /authkit/revoke` - Revoke an access token
-- `GET /authkit/grants` - List active grants for the current app
-
 The flow: the app calls `/authorize` with desired `scopes` and optional
 `appName`, presents the authorization URL to the user, polls `/status` until
 approved/denied, then exchanges the code via `/token`. The resulting access
