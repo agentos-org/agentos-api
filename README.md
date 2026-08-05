@@ -8,6 +8,9 @@ This gateway provides a single entry point for all local AI services:
 - **AppKit**: Application registration and subscription
 - **ToolKit**: Tool execution through the gateway
 - **ModelKit**: Task-oriented model services (chat, embedding, ASR, TTS)
+- **AuthKit**: Third-party app OAuth-like authentication
+- **DiscoveryKit**: Nearby AgentOS device discovery
+- **TransferKit**: Cross-device file transfer
 
 Detailed HTTP API reference:
 - [API.md](API.md)
@@ -319,3 +322,72 @@ identified by `capabilities.vision` on the resolved model.
 - After provisioning, AgentOS keeps monitoring every declared tool. A daemon or
   tool-process outage emits `toolkit.tool.unavailable`; a later healthy check
   emits `toolkit.tool.available`. Repeated checks in the same state are deduped.
+
+## AuthKit API
+
+AuthKit provides OAuth-like authentication for third-party apps accessing
+AgentOS user data. All AuthKit routes require the Bearer token returned by
+`POST /appkit/register`.
+
+Supported routes:
+
+- `POST /authkit/authorize` - Initiate an authorization request (returns a
+  `requestId` and authorization URL for user consent)
+- `GET /authkit/authorize/<requestId>/status` - Poll authorization status
+- `POST /authkit/token` - Exchange an authorization code for an access token
+- `GET /authkit/userinfo` - Get user profile (requires the access token from
+  token exchange)
+- `POST /authkit/revoke` - Revoke an access token
+- `GET /authkit/grants` - List active grants for the current app
+
+The flow: the app calls `/authorize` with desired `scopes` and optional
+`appName`, presents the authorization URL to the user, polls `/status` until
+approved/denied, then exchanges the code via `/token`. The resulting access
+token can query `/userinfo`. User information is automatically refreshed when
+updates occur.
+
+## DiscoveryKit API
+
+DiscoveryKit enables nearby AgentOS device discovery via mDNS/TLS. All
+DiscoveryKit routes require the Bearer token returned by `POST /appkit/register`.
+
+Supported routes:
+
+- `GET /discoverykit/peers` - List currently discovered nearby peers
+- `GET /discoverykit/peers/stream` - SSE stream of real-time peer
+  discovery/departure events
+- `GET /discoverykit/self` - Get this device's discovery identity
+- `POST /discoverykit/register` - Register this device for discovery (accepts
+  optional `receivePolicy`: `auto` | `confirmation`)
+- `POST /discoverykit/unregister` - Unregister this device from discovery
+
+The peer stream emits events in real time as nearby devices appear or disappear.
+Discovery status refreshes are propagated immediately.
+
+## TransferKit API
+
+TransferKit provides secure cross-device file transfer between AgentOS devices.
+All TransferKit routes require the Bearer token returned by
+`POST /appkit/register`.
+
+Supported routes:
+
+- `POST /transferkit/send` - Initiate a file transfer to a discovered peer
+- `GET /transferkit/transfers` - List active/recent transfers
+- `GET /transferkit/transfers/<transferId>/status` - Get transfer status
+- `GET /transferkit/transfers/<transferId>/stream` - SSE stream of transfer
+  progress events
+- `POST /transferkit/transfers/<transferId>/cancel` - Cancel an active transfer
+- `POST /transferkit/transfers/<transferId>/respond` - Accept or reject an
+  incoming transfer request (for `confirmation` receive policy)
+- `GET /transferkit/receive/stream` - SSE stream of incoming transfer requests
+- `PUT /transferkit/receive/policy` - Set the file receive policy
+- `GET /transferkit/receive/policy` - Get the current receive policy
+- `POST /transferkit/history` - Add a transfer history record
+- `GET /transferkit/history` - List transfer history records
+- `DELETE /transferkit/history/<recordId>` - Delete a specific history record
+- `DELETE /transferkit/history` - Clear all transfer history
+
+Receive policies:
+- `auto`: automatically accept incoming transfers
+- `confirmation`: require explicit user/app confirmation per transfer

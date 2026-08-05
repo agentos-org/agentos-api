@@ -8,6 +8,9 @@
 - **AppKit**：应用注册与订阅
 - **ToolKit**：通过网关访问工具执行能力
 - **ModelKit**：基于任务的模型服务（chat、embedding、ASR、TTS）
+- **AuthKit**：第三方应用 OAuth 认证
+- **DiscoveryKit**：附近 AgentOS 设备发现
+- **TransferKit**：跨设备文件传输
 
 详细 HTTP API 文档：
 - [API.md](API.md)
@@ -307,3 +310,65 @@ $ curl http://127.0.0.1:8888/toolkit/list \
 - 拉起成功后，AgentOS 会持续监控每个已声明 tool。daemon 或 tool 进程不可用时
   推送 `toolkit.tool.unavailable`，恢复健康后推送 `toolkit.tool.available`；
   相同状态的重复检查不会重复推送。
+
+## AuthKit API
+
+AuthKit 为第三方应用提供类 OAuth 的认证能力，用于访问 AgentOS 用户数据。
+所有 AuthKit 路由都需要通过 `POST /appkit/register` 获取的 Bearer token。
+
+支持的路由：
+
+- `POST /authkit/authorize` - 发起授权请求（返回 `requestId` 和授权 URL 供用户
+  同意）
+- `GET /authkit/authorize/<requestId>/status` - 轮询授权状态
+- `POST /authkit/token` - 用授权码换取访问令牌
+- `GET /authkit/userinfo` - 获取用户资料（需使用令牌交换返回的 access token）
+- `POST /authkit/revoke` - 撤销访问令牌
+- `GET /authkit/grants` - 列出当前应用的活跃授权
+
+流程：应用调用 `/authorize` 传入所需 `scopes` 和可选 `appName`，将授权 URL
+展示给用户，轮询 `/status` 直到用户同意/拒绝，然后通过 `/token` 换取令牌。
+获取的 access token 可用于请求 `/userinfo`。用户信息发生变更时会自动刷新。
+
+## DiscoveryKit API
+
+DiscoveryKit 通过 mDNS/TLS 实现附近 AgentOS 设备发现。
+所有 DiscoveryKit 路由都需要通过 `POST /appkit/register` 获取的 Bearer token。
+
+支持的路由：
+
+- `GET /discoverykit/peers` - 列出当前已发现的附近设备
+- `GET /discoverykit/peers/stream` - 实时设备发现/离开事件的 SSE 流
+- `GET /discoverykit/self` - 获取本设备的发现身份
+- `POST /discoverykit/register` - 注册本设备加入发现（可选传入
+  `receivePolicy`：`auto` | `confirmation` | `reject`）
+- `POST /discoverykit/unregister` - 注销本设备退出发现
+
+设备流会在附近设备出现或消失时实时推送事件。发现状态变更会即时传播。
+
+## TransferKit API
+
+TransferKit 提供 AgentOS 设备间的安全文件传输能力。
+所有 TransferKit 路由都需要通过 `POST /appkit/register` 获取的 Bearer token。
+
+支持的路由：
+
+- `POST /transferkit/send` - 向已发现的设备发起文件传输
+- `GET /transferkit/transfers` - 列出活跃/最近的传输
+- `GET /transferkit/transfers/<transferId>/status` - 获取传输状态
+- `GET /transferkit/transfers/<transferId>/stream` - 传输进度事件的 SSE 流
+- `POST /transferkit/transfers/<transferId>/cancel` - 取消进行中的传输
+- `POST /transferkit/transfers/<transferId>/respond` - 接受或拒绝传入的传输请求
+  （用于 `confirmation` 接收策略）
+- `GET /transferkit/receive/stream` - 传入传输请求的 SSE 流
+- `PUT /transferkit/receive/policy` - 设置文件接收策略
+- `GET /transferkit/receive/policy` - 获取当前接收策略
+- `POST /transferkit/history` - 添加传输历史记录
+- `GET /transferkit/history` - 列出传输历史记录
+- `DELETE /transferkit/history/<recordId>` - 删除指定历史记录
+- `DELETE /transferkit/history` - 清空全部传输历史
+
+接收策略：
+- `auto`：自动接受传入的文件
+- `confirmation`：每次传输需要用户/应用明确确认
+- `reject`：拒绝所有传入的文件
