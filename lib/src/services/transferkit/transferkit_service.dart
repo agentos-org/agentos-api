@@ -63,6 +63,23 @@ class TransferKitService {
         notifyIncomingFile(event);
       }
     });
+    _syncPolicyToRuntime();
+  }
+
+  Future<void> _syncPolicyToRuntime() async {
+    final nearby = _nearby;
+    if (nearby == null) return;
+    final box = await _ensurePolicyBox();
+    for (final key in box.keys) {
+      final value = box.get(key as String);
+      if (value == null) continue;
+      final policy = FileReceivePolicy.values.firstWhere(
+        (p) => p.name == value,
+        orElse: () => FileReceivePolicy.autoAccept,
+      );
+      final bundleId = key == '_default' ? null : key;
+      nearby.setReceivePolicy(policy, bundleId: bundleId);
+    }
   }
 
   /// Send files to a target device.
@@ -199,6 +216,7 @@ class TransferKitService {
     final box = await _ensurePolicyBox();
     final key = bundleId ?? '_default';
     await box.put(key, policy.name);
+    _nearby?.setReceivePolicy(policy, bundleId: bundleId);
     _logger.info('TransferKit: policy set to ${policy.name} for ${bundleId ?? "default"}');
   }
 

@@ -427,8 +427,11 @@ abstract class NearbyServiceLocator {
   /// Returns true if the transfer was found and responded to.
   bool respondToTransfer(String transferId, bool accept);
 
-  /// Set the global file receive policy.
-  void setReceivePolicy(FileReceivePolicy policy);
+  /// Set file receive policy for a specific app (or the default).
+  void setReceivePolicy(FileReceivePolicy policy, {String? bundleId});
+
+  /// Get file receive policy for a specific app (falls back to default).
+  FileReceivePolicy getReceivePolicy({String? bundleId});
 
   /// Set the base directory for saving received files.
   void setSaveDirectory(String path);
