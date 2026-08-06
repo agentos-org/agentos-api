@@ -38,7 +38,6 @@ class TransferKitController {
     router.get('/receive/stream', requireBearer()(_receiveStream));
     router.put('/receive/policy', requireBearer()(_setPolicy));
     router.get('/receive/policy', requireBearer()(_getPolicy));
-    router.post('/history', requireBearer()(_addHistory));
     router.get('/history', requireBearer()(_getHistory));
     router.delete('/history/<recordId>', _deleteHistoryHandler);
     router.delete('/history', requireBearer()(_clearHistory));
@@ -379,54 +378,6 @@ class TransferKitController {
   }
 
   // --- History ---
-
-  Future<Response> _addHistory(Request request) async {
-    final token = bearerTokenFrom(request);
-    if (token == null) return unauthorizedResponse();
-    final bundleId = _appKitService.bundleIdForToken(token);
-    if (bundleId == null) return unauthorizedResponse('Invalid app token');
-
-    final body = await request.readAsString();
-    Map<String, dynamic> payload;
-    try {
-      payload = jsonDecode(body) as Map<String, dynamic>;
-    } catch (_) {
-      return Response(400, body: 'Invalid JSON');
-    }
-
-    final deviceId = payload['deviceId'] as String? ?? '';
-    final userId = payload['userId'] as String?;
-
-    final record = TransferHistoryRecord(
-      id: payload['id'] as String? ?? '',
-      direction: TransferDirection.values.firstWhere(
-        (d) => d.name == (payload['direction'] as String? ?? 'send'),
-        orElse: () => TransferDirection.send,
-      ),
-      peerDeviceId: payload['peerDeviceId'] as String? ?? '',
-      peerName: payload['peerName'] as String? ?? '',
-      peerAvatarUrl: payload['peerAvatarUrl'] as String?,
-      files: ((payload['files'] as List?) ?? [])
-          .map((f) => TransferHistoryFile.fromJson(f as Map<String, dynamic>))
-          .toList(),
-      totalSize: payload['totalSize'] as int? ?? 0,
-      state: TransferState.values.firstWhere(
-        (s) => s.name == (payload['state'] as String? ?? 'completed'),
-        orElse: () => TransferState.completed,
-      ),
-      timestamp: payload['timestamp'] != null
-          ? DateTime.tryParse(payload['timestamp'] as String) ?? DateTime.now()
-          : DateTime.now(),
-      savedDir: payload['savedDir'] as String?,
-    );
-
-    await _service.addHistory(record, deviceId: deviceId, userId: userId);
-
-    return Response.ok(
-      jsonEncode({'status': 'added', 'id': record.id}),
-      headers: {'content-type': 'application/json'},
-    );
-  }
 
   Future<Response> _deleteHistoryHandler(Request request, String recordId) async {
     final token = extractBearerToken(request);

@@ -381,7 +381,6 @@ Supported routes:
 - `GET /transferkit/receive/stream` - SSE stream of incoming transfer requests
 - `PUT /transferkit/receive/policy` - Set the file receive policy
 - `GET /transferkit/receive/policy` - Get the current receive policy
-- `POST /transferkit/history` - Add a transfer history record
 - `GET /transferkit/history` - List transfer history records
 - `DELETE /transferkit/history/<recordId>` - Delete a specific history record
 - `DELETE /transferkit/history` - Clear all transfer history

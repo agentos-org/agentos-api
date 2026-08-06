@@ -248,21 +248,6 @@ class TransferKitService {
   String _historyScope(String deviceId, String? userId) =>
       '$deviceId:${userId ?? ''}';
 
-  /// Add a history record.
-  Future<void> addHistory(
-    TransferHistoryRecord record, {
-    required String deviceId,
-    String? userId,
-  }) async {
-    final box = await _ensureHistoryBox();
-    final scope = _historyScope(deviceId, userId);
-    final list = _loadHistoryList(box, scope);
-    list.insert(0, record);
-    await box.put(scope, jsonEncode(list.map((r) => r.toJson()).toList()));
-    _logger.info('TransferKit: history added (${record.direction.name}) '
-        'scope=$scope id=${record.id}');
-  }
-
   /// Get all history for a scope, newest first.
   Future<List<TransferHistoryRecord>> getHistory({
     required String deviceId,

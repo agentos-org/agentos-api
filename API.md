@@ -1939,33 +1939,6 @@ Response: `200 OK`
 {"policy":"autoAccept","bundleId":"com.demo.app"}
 ```
 
-#### POST /transferkit/history
-
-Add a transfer history record.
-
-Request body:
-
-```json
-{
-  "id": "hist-1",
-  "direction": "send",
-  "peerDeviceId": "abc123",
-  "peerName": "Other Device",
-  "files": [{"fileName": "report.pdf", "size": 1048576}],
-  "totalSize": 1048576,
-  "state": "completed",
-  "timestamp": "2026-04-08T10:00:00.000Z",
-  "deviceId": "",
-  "userId": "user-1"
-}
-```
-
-Response: `200 OK`
-
-```json
-{"status":"added","id":"hist-1"}
-```
-
 #### GET /transferkit/history
 
 Get transfer history records.

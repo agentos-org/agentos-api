@@ -361,7 +361,6 @@ TransferKit 提供 AgentOS 设备间的安全文件传输能力。
 - `GET /transferkit/receive/stream` - 传入传输请求的 SSE 流
 - `PUT /transferkit/receive/policy` - 设置文件接收策略
 - `GET /transferkit/receive/policy` - 获取当前接收策略
-- `POST /transferkit/history` - 添加传输历史记录
 - `GET /transferkit/history` - 列出传输历史记录
 - `DELETE /transferkit/history/<recordId>` - 删除指定历史记录
 - `DELETE /transferkit/history` - 清空全部传输历史

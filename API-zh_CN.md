@@ -1916,33 +1916,6 @@ data: {"transferId":"tf-2","fromDeviceId":"def456","fromName":"Other Device","so
 {"policy":"autoAccept","bundleId":"com.demo.app"}
 ```
 
-#### POST /transferkit/history
-
-添加传输历史记录。
-
-请求体：
-
-```json
-{
-  "id": "hist-1",
-  "direction": "send",
-  "peerDeviceId": "abc123",
-  "peerName": "Other Device",
-  "files": [{"fileName": "report.pdf", "size": 1048576}],
-  "totalSize": 1048576,
-  "state": "completed",
-  "timestamp": "2026-04-08T10:00:00.000Z",
-  "deviceId": "",
-  "userId": "user-1"
-}
-```
-
-响应：`200 OK`
-
-```json
-{"status":"added","id":"hist-1"}
-```
-
 #### GET /transferkit/history
 
 获取传输历史记录。
