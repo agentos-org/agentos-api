@@ -4,7 +4,8 @@
 
 ## 鉴权
 
-所有 `/agentkit/*`、`/cronkit/*`、`/ragkit/*` 路由以及 `GET /appkit/subscribe`
+所有 `/agentkit/*`、`/cronkit/*`、`/ragkit/*`、`/authkit/*`、
+`/discoverykit/*`、`/transferkit/*` 路由以及 `GET /appkit/subscribe`
 都需要 Bearer token。
 
 对于 `/cronkit/*`，Bearer token 必须来自 `POST /appkit/register`。
@@ -14,6 +15,12 @@ Cron 任务权限按该 token 解析出的 app 身份控制：
 对于 `/ragkit/*`，Bearer token 也必须来自 `POST /appkit/register`。
 Rag base 的归属信息会写入 base metadata：
 写操作只允许 owner `bundleId`，读取与检索则按有效 `appGroupId` 共享。
+
+对于 `/authkit/*`，大多数端点需要 AppKit 签发的 Bearer token。例外是
+`GET /authkit/userinfo`，该端点需要通过授权流程获取的 AuthKit access token。
+
+对于 `/discoverykit/*` 和 `/transferkit/*`，Bearer token 必须来自
+`POST /appkit/register`。
 
 ```
 Authorization: Bearer <token>
@@ -1387,6 +1394,604 @@ register 返回 `starting` 的声明，App 应以 `toolkit.provision.succeeded` 
 
 如果 token 缺失或无效，直接返回 `401`。
 
+## AuthKit
+
+AuthKit 为第三方应用提供 OAuth 风格的授权服务。它允许外部 App 发起用户授权请求、
+通过授权码交换 access token，以及获取 AgentOS 用户信息。
+
+除 `GET /authkit/userinfo` 外，所有端点都需要 AppKit 签发的 Bearer token
+（`POST /appkit/register`）。`GET /authkit/userinfo` 需要通过授权流程获取的
+AuthKit access token。
+
+### 授权流程
+
+1. App 调用 `POST /authkit/authorize` 创建授权请求。
+2. 如果 App 此前已被授权，响应为 `200`，并包含 `authCode`。
+   否则响应为 `202`，`status` 为 `"pending"`。
+3. 对于待处理请求，轮询 `GET /authkit/authorize/<requestId>/status`，
+   直到 `status` 变为 `granted`（包含 `authCode`）、`denied` 或 `timeout`。
+4. 通过 `POST /authkit/token` 将 `authCode` 交换为 access token。
+5. 使用 access token 调用 `GET /authkit/userinfo` 获取用户信息。
+6. 通过 `POST /authkit/revoke` 吊销授权。
+
+待处理请求 3 分钟后过期。
+
+### Schema（数据结构）
+
+#### AuthRequestResponse
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `requestId` | `string` | 是 | 授权请求 ID。 |
+| `status` | `string` | 是 | `pending`、`granted`、`denied` 或 `timeout`。 |
+| `authCode` | `string` | 否 | 当 `status` 为 `granted` 时返回。 |
+
+#### TokenResponse
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `accessToken` | `string` | 是 | AuthKit access token（前缀 `akt-`）。 |
+| `userId` | `string` | 否 | 稳定的按 App 隔离的用户 ID（SHA-256 派生）。 |
+| `userInfo` | `object` | 是 | 用户信息对象。 |
+| `userInfo.name` | `string` | 是 | 用户显示名称。 |
+| `userInfo.avatarUrl` | `string` | 是 | 用户头像 URL（可能为空）。 |
+
+#### UserInfo
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `userId` | `string` | 否 | 稳定的按 App 隔离的用户 ID。 |
+| `name` | `string` | 是 | 用户显示名称。 |
+| `avatarUrl` | `string` | 是 | 用户头像 URL。 |
+
+### 端点
+
+#### POST /authkit/authorize
+
+发起授权请求。
+
+请求体：
+
+```json
+{
+  "scopes": ["profile"],
+  "appName": "My App"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `scopes` | `string[]` | 否 | 请求的权限范围，默认 `["profile"]`。 |
+| `appName` | `string` | 否 | 请求方 App 的显示名称。 |
+
+响应：`200 OK`（此前已授权）或 `202 Accepted`（待处理）
+
+```json
+{"requestId":"req-1","status":"granted","authCode":"ac-..."}
+```
+
+#### GET /authkit/authorize/\<requestId\>/status
+
+轮询待处理授权请求的状态。
+
+响应：`200 OK`（`AuthRequestResponse`）
+
+```json
+{"requestId":"req-1","status":"pending"}
+```
+
+请求 ID 不存在时返回 `404`。
+
+#### POST /authkit/token
+
+用授权码交换 access token。
+
+请求体：
+
+```json
+{"authCode":"ac-..."}
+```
+
+响应：`200 OK`（`TokenResponse`）
+
+```json
+{
+  "accessToken": "akt-...",
+  "userId": "a1b2c3...",
+  "userInfo": {
+    "name": "AgentOS User",
+    "avatarUrl": ""
+  }
+}
+```
+
+`authCode` 缺失、无效或过期时返回 `400`。
+
+#### GET /authkit/userinfo
+
+使用 AuthKit access token 获取用户信息。
+
+```http
+Authorization: Bearer <akt-...>
+```
+
+响应：`200 OK`（`UserInfo`）
+
+```json
+{
+  "userId": "a1b2c3...",
+  "name": "AgentOS User",
+  "avatarUrl": ""
+}
+```
+
+错误响应：
+
+| 状态码 | 错误码 | 说明 |
+| --- | --- | --- |
+| `401` | `invalid_token` | token 不被识别。 |
+| `401` | `auth_expired` | AgentOS 用户未登录。 |
+| `401` | `token_revoked` | 授权已被吊销。 |
+| `404` | `not_found` | 用户未找到。 |
+
+#### POST /authkit/revoke
+
+吊销此前已授予的授权。
+
+请求体：
+
+```json
+{"bundleId":"com.demo.app"}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `bundleId` | `string` | 否 | 默认使用 token 自身的 `bundleId`。 |
+
+响应：`200 OK`
+
+```json
+{"status":"revoked"}
+```
+
+## DiscoveryKit
+
+DiscoveryKit 提供附近 AgentOS 设备发现功能。App 可将自身注册为可被发现的节点、
+查询附近设备列表，以及通过 SSE 订阅实时的设备变化事件。
+
+所有端点都需要 AppKit 签发的 Bearer token。
+
+### Schema（数据结构）
+
+#### PeerApp
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `bundleId` | `string` | 否 | App bundle ID。 |
+| `userId` | `string` | 否 | 来自 AuthKit 的稳定按 App 隔离的用户 ID。 |
+| `username` | `string` | 否 | 用户显示名称。 |
+| `appName` | `string` | 否 | App 显示名称。 |
+| `avatarUrl` | `string` | 否 | 用户头像 URL。 |
+
+#### PeerDevice
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `deviceId` | `string` | 是 | 设备指纹。 |
+| `name` | `string` | 是 | 设备上的用户显示名称。 |
+| `avatarUrl` | `string` | 否 | 用户头像 URL。 |
+| `deviceName` | `string` | 是 | 设备名称（如主机名）。 |
+| `deviceType` | `string` | 是 | 设备类型标识。 |
+| `host` | `string` | 是 | 设备 IP 地址。 |
+| `port` | `integer` | 是 | 设备服务端口。 |
+| `online` | `boolean` | 是 | 设备是否当前可达。 |
+| `apps` | `PeerApp[]` | 是 | 设备上已注册的 App 列表。 |
+
+### 端点
+
+#### POST /discoverykit/register
+
+将当前 App 注册为可发现节点。网关会根据 token 的 `bundleId` 从 AuthKit grant
+中解析用户身份和 App 名称。
+
+请求体：
+
+```json
+{"receivePolicy":"autoAccept"}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `receivePolicy` | `string` | 否 | `autoAccept` 或 `requireConfirm`，默认 `autoAccept`。 |
+
+响应：`200 OK`
+
+```json
+{"status":"registered","bundleId":"com.demo.app"}
+```
+
+发现服务不可用时返回 `503`。
+
+#### POST /discoverykit/unregister
+
+将当前 App 从发现广播中注销。
+
+响应：`200 OK`
+
+```json
+{"status":"unregistered","bundleId":"com.demo.app"}
+```
+
+#### GET /discoverykit/peers
+
+列出已发现的附近设备。使用 AppKit token 时，只返回运行相同 `bundleId` 的设备
+（App 级扫描）。
+
+响应：`200 OK`（`PeerDevice[]`）
+
+```json
+[
+  {
+    "deviceId": "abc123",
+    "name": "AgentOS User",
+    "deviceName": "MacBook Pro",
+    "deviceType": "desktop",
+    "host": "192.168.1.100",
+    "port": 8888,
+    "online": true,
+    "apps": [
+      {
+        "bundleId": "com.demo.app",
+        "userId": "a1b2c3...",
+        "username": "AgentOS User"
+      }
+    ]
+  }
+]
+```
+
+#### GET /discoverykit/peers/stream
+
+通过 SSE 订阅实时的设备变化事件。
+
+响应：`200 OK`，`text/event-stream`
+
+事件类型：
+
+```text
+event: peer.joined
+data: {"type":"joined","device":{...}}
+
+event: peer.left
+data: {"type":"left","device":{...}}
+
+event: peer.updated
+data: {"type":"updated","device":{...}}
+```
+
+事件类型包括：`joined`、`left`、`updated`。
+
+#### GET /discoverykit/self
+
+获取当前设备自身的信息，结构与 `PeerDevice` 相同，额外包含状态字段。
+
+响应：`200 OK`
+
+```json
+{
+  "deviceId": "self-device-id",
+  "name": "AgentOS User",
+  "deviceName": "MacBook Pro",
+  "deviceType": "desktop",
+  "host": "192.168.1.50",
+  "port": 8888,
+  "online": true,
+  "apps": [],
+  "nearbyTransferEnabled": true,
+  "registered": true
+}
+```
+
+## TransferKit
+
+TransferKit 提供 AgentOS 设备之间的跨设备文件传输功能。它负责发送文件、跟踪传输
+进度、管理接收策略以及持久化传输历史记录。
+
+所有端点都需要 AppKit 签发的 Bearer token。
+
+### Schema（数据结构）
+
+#### TransferFileInfo
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `fileName` | `string` | 是 | 文件名。 |
+| `size` | `integer` | 是 | 文件大小（字节）。 |
+| `filePath` | `string` | 是 | 发送设备上的绝对路径。 |
+| `mimeType` | `string` | 否 | MIME 类型。 |
+
+#### TransferSession
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `transferId` | `string` | 是 | 传输会话 ID。 |
+| `state` | `string` | 是 | `pending`、`preparing`、`transferring`、`completed`、`failed` 或 `cancelled`。 |
+| `progress` | `number` | 是 | 总体进度 0.0–1.0。 |
+| `targetDeviceId` | `string` | 是 | 目标设备指纹。 |
+| `bundleId` | `string` | 是 | 发送方 App bundle ID。 |
+| `userId` | `string` | 否 | 发送方用户 ID。 |
+| `targetBundleId` | `string` | 否 | 目标 App bundle ID。 |
+| `files` | `TransferFileInfo[]` | 是 | 正在传输的文件列表。 |
+| `errorMessage` | `string` | 否 | `state` 为 `failed` 时的错误详情。 |
+
+#### IncomingTransferEvent
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `transferId` | `string` | 是 | 传输会话 ID。 |
+| `fromDeviceId` | `string` | 是 | 发送方设备指纹。 |
+| `fromName` | `string` | 是 | 发送方显示名称。 |
+| `sourceBundleId` | `string` | 是 | 发送方 App bundle ID。 |
+| `targetBundleId` | `string` | 否 | 目标 App bundle ID。 |
+| `autoAccepted` | `boolean` | 是 | 是否被自动接受。 |
+| `files` | `ReceivedFileInfo[]` | 是 | 接收到的文件详情。 |
+
+#### ReceivedFileInfo
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `fileName` | `string` | 是 | 文件名。 |
+| `size` | `integer` | 是 | 文件大小（字节）。 |
+| `savedPath` | `string` | 是 | 文件保存的绝对路径。 |
+| `mimeType` | `string` | 否 | MIME 类型。 |
+
+#### TransferHistoryRecord
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `string` | 是 | 记录 ID。 |
+| `direction` | `string` | 是 | `send` 或 `receive`。 |
+| `peerDeviceId` | `string` | 是 | 对方设备指纹。 |
+| `peerName` | `string` | 是 | 对方显示名称。 |
+| `peerAvatarUrl` | `string` | 否 | 对方头像 URL。 |
+| `files` | `TransferHistoryFile[]` | 是 | 传输的文件列表。 |
+| `totalSize` | `integer` | 是 | 总大小（字节）。 |
+| `state` | `string` | 是 | 最终传输状态。 |
+| `timestamp` | `string` | 是 | ISO 时间。 |
+| `savedDir` | `string` | 否 | 接收文件保存的目录。 |
+
+#### TransferHistoryFile
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `fileName` | `string` | 是 | 文件名。 |
+| `size` | `integer` | 是 | 文件大小（字节）。 |
+| `filePath` | `string` | 否 | 文件路径。 |
+
+### 端点
+
+#### POST /transferkit/send
+
+向目标设备发送文件。文件路径会按 App 的沙箱数据目录进行校验。
+
+请求体：
+
+```json
+{
+  "targetDeviceId": "abc123",
+  "targetBundleId": "com.demo.app",
+  "files": [
+    {
+      "fileName": "report.pdf",
+      "size": 1048576,
+      "filePath": "/data/com.demo.app/files/report.pdf",
+      "mimeType": "application/pdf"
+    }
+  ]
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `targetDeviceId` | `string` | 是 | 目标设备指纹。 |
+| `targetBundleId` | `string` | 否 | 目标 App bundle ID，用于 App 级传输。 |
+| `files` | `TransferFileInfo[]` | 是 | 要发送的文件列表（非空）。 |
+
+响应：`200 OK`（`TransferSession`）
+
+```json
+{
+  "transferId": "tf-1",
+  "state": "preparing",
+  "progress": 0.0,
+  "targetDeviceId": "abc123",
+  "bundleId": "com.demo.app",
+  "files": [
+    {"fileName": "report.pdf", "size": 1048576, "filePath": "/data/com.demo.app/files/report.pdf", "mimeType": "application/pdf"}
+  ]
+}
+```
+
+附近传输不可用时返回 `503`。目标设备不可达时返回 `502`。
+
+#### GET /transferkit/transfers
+
+列出当前 App 的活跃传输。
+
+响应：`200 OK`（`TransferSession[]`）
+
+#### GET /transferkit/transfers/\<transferId\>/status
+
+获取指定传输的状态。
+
+响应：`200 OK`（`TransferSession`）
+
+传输未找到时返回 `404`。
+
+#### GET /transferkit/transfers/\<transferId\>/stream
+
+通过 SSE 订阅传输的实时进度更新。
+
+响应：`200 OK`，`text/event-stream`
+
+```text
+data: {"transferId":"tf-1","state":"transferring","progress":0.5,...}
+
+data: {"transferId":"tf-1","state":"completed","progress":1.0,...}
+```
+
+传输达到 `completed` 或 `failed` 状态时流自动关闭。每 15 秒发送一条
+keep-alive 注释。
+
+#### POST /transferkit/transfers/\<transferId\>/cancel
+
+取消进行中的传输。
+
+响应：`200 OK`
+
+```json
+{"status":"cancelled"}
+```
+
+传输已完成或已取消时返回 `400`。
+
+#### POST /transferkit/transfers/\<transferId\>/respond
+
+接受或拒绝收到的传输请求（配合 `requireConfirm` 策略使用）。
+
+请求体：
+
+```json
+{"accept": true}
+```
+
+响应：`200 OK`
+
+```json
+{"status":"accepted"}
+```
+
+传输未找到或已响应时返回 `404`。
+
+#### GET /transferkit/receive/stream
+
+通过 SSE 订阅文件接收事件。事件按当前 App 的 `bundleId` 过滤。
+
+响应：`200 OK`，`text/event-stream`
+
+```text
+event: file.received
+data: {"transferId":"tf-2","fromDeviceId":"def456","fromName":"Other Device","sourceBundleId":"com.demo.app","autoAccepted":true,"files":[{"fileName":"photo.jpg","size":2097152,"savedPath":"/received/photo.jpg"}]}
+```
+
+每 15 秒发送一条 keep-alive 注释。
+
+#### PUT /transferkit/receive/policy
+
+设置当前 App 的文件接收策略。
+
+请求体：
+
+```json
+{"policy":"requireConfirm"}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `policy` | `string` | 是 | `autoAccept` 或 `requireConfirm`。 |
+
+响应：`200 OK`
+
+```json
+{"policy":"requireConfirm","bundleId":"com.demo.app"}
+```
+
+#### GET /transferkit/receive/policy
+
+获取当前文件接收策略。
+
+响应：`200 OK`
+
+```json
+{"policy":"autoAccept","bundleId":"com.demo.app"}
+```
+
+#### POST /transferkit/history
+
+添加传输历史记录。
+
+请求体：
+
+```json
+{
+  "id": "hist-1",
+  "direction": "send",
+  "peerDeviceId": "abc123",
+  "peerName": "Other Device",
+  "files": [{"fileName": "report.pdf", "size": 1048576}],
+  "totalSize": 1048576,
+  "state": "completed",
+  "timestamp": "2026-04-08T10:00:00.000Z",
+  "deviceId": "",
+  "userId": "user-1"
+}
+```
+
+响应：`200 OK`
+
+```json
+{"status":"added","id":"hist-1"}
+```
+
+#### GET /transferkit/history
+
+获取传输历史记录。
+
+Query：
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `deviceId` | `string` | 否 |
+| `userId` | `string` | 否 |
+
+响应：`200 OK`（`TransferHistoryRecord[]`）
+
+#### DELETE /transferkit/history/\<recordId\>
+
+删除单条历史记录。
+
+Query：
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `deviceId` | `string` | 否 |
+| `userId` | `string` | 否 |
+
+响应：`200 OK`
+
+```json
+{"status":"deleted"}
+```
+
+记录未找到时返回 `404`。
+
+#### DELETE /transferkit/history
+
+清空指定范围的所有历史记录。
+
+Query：
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| `deviceId` | `string` | 否 |
+| `userId` | `string` | 否 |
+
+响应：`200 OK`
+
+```json
+{"status":"cleared"}
+```
+
 ## Root
 
 ### GET /
@@ -1407,6 +2012,9 @@ register 返回 `starting` 的声明，App 应以 `toolkit.provision.succeeded` 
     "/cronkit/*": "CronKit API（定时任务管理，需要 Token）",
     "/ragkit/*": "RagKit API（RAG 知识库/检索，需要 Token）",
     "/appkit/*": "AppKit API（应用注册/订阅）",
+    "/authkit/*": "AuthKit API（OAuth 风格授权，需要 Token）",
+    "/discoverykit/*": "DiscoveryKit API（附近设备发现，需要 Token）",
+    "/transferkit/*": "TransferKit API（跨设备文件传输，需要 Token）",
     "/toolkit/*": "ToolKit API（需要 Token）",
     "/modelkit/chat/*": "文本/视觉生成",
     "/modelkit/embedding/*": "文本嵌入",

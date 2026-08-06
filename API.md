@@ -4,8 +4,9 @@ Base URL: `http://<host>:<port>` (default port: `8888`).
 
 ## Authentication
 
-Bearer token is required for all `/agentkit/*`, `/cronkit/*`, and `/ragkit/*`
-routes, and for `GET /appkit/subscribe`.
+Bearer token is required for all `/agentkit/*`, `/cronkit/*`, `/ragkit/*`,
+`/authkit/*`, `/discoverykit/*`, and `/transferkit/*` routes, and for
+`GET /appkit/subscribe`.
 
 For `/cronkit/*`, the bearer token must be an AppKit-issued token from
 `POST /appkit/register`. Cron task ownership is isolated by the token's
@@ -16,6 +17,13 @@ For `/ragkit/*`, the bearer token must also be an AppKit-issued token from
 `POST /appkit/register`. Rag base ownership is stored on the base metadata:
 write operations are restricted to the owner `bundleId`, while reads and query
 are shared within the same effective `appGroupId`.
+
+For `/authkit/*`, most endpoints require an AppKit-issued bearer token. The
+exception is `GET /authkit/userinfo`, which requires an AuthKit-issued
+access token obtained through the authorization flow.
+
+For `/discoverykit/*` and `/transferkit/*`, the bearer token must be an
+AppKit-issued token from `POST /appkit/register`.
 
 ```
 Authorization: Bearer <token>
@@ -1401,6 +1409,612 @@ The `app.command.requested` type is reserved for future commands sent to apps.
 
 If the token is missing or invalid, returns `401`.
 
+## AuthKit
+
+AuthKit provides OAuth-like authorization for third-party apps. It lets
+external apps request user consent, exchange an authorization code for an
+access token, and retrieve AgentOS user information.
+
+All endpoints except `GET /authkit/userinfo` require an AppKit-issued bearer
+token (`POST /appkit/register`). `GET /authkit/userinfo` requires an
+AuthKit-issued access token obtained through the authorization flow.
+
+### Authorization Flow
+
+1. App calls `POST /authkit/authorize` to create an authorization request.
+2. If the app was previously authorized, response is `200` with `authCode`.
+   Otherwise response is `202` with `status: "pending"`.
+3. For pending requests, poll `GET /authkit/authorize/<requestId>/status`
+   until `status` becomes `granted` (with `authCode`), `denied`, or `timeout`.
+4. Exchange the `authCode` for an access token via `POST /authkit/token`.
+5. Use the access token to call `GET /authkit/userinfo`.
+6. Revoke a grant with `POST /authkit/revoke`.
+
+Pending requests expire after 3 minutes.
+
+### Schemas
+
+#### AuthRequestResponse
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `requestId` | `string` | Yes | Authorization request ID. |
+| `status` | `string` | Yes | `pending`, `granted`, `denied`, or `timeout`. |
+| `authCode` | `string` | No | Present when `status` is `granted`. |
+
+#### TokenResponse
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `accessToken` | `string` | Yes | AuthKit access token (prefixed `akt-`). |
+| `userId` | `string` | No | Stable per-app user ID (SHA-256 derived). |
+| `userInfo` | `object` | Yes | User profile object. |
+| `userInfo.name` | `string` | Yes | User display name. |
+| `userInfo.avatarUrl` | `string` | Yes | User avatar URL (may be empty). |
+
+#### UserInfo
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `userId` | `string` | No | Stable per-app user ID. |
+| `name` | `string` | Yes | User display name. |
+| `avatarUrl` | `string` | Yes | User avatar URL. |
+
+### Endpoints
+
+#### POST /authkit/authorize
+
+Initiate an authorization request.
+
+Request body:
+
+```json
+{
+  "scopes": ["profile"],
+  "appName": "My App"
+}
+```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `scopes` | `string[]` | No | Requested scopes. Defaults to `["profile"]`. |
+| `appName` | `string` | No | Display name for the requesting app. |
+
+Response: `200 OK` (previously authorized) or `202 Accepted` (pending)
+
+```json
+{"requestId":"req-1","status":"granted","authCode":"ac-..."}
+```
+
+#### GET /authkit/authorize/\<requestId\>/status
+
+Poll the status of a pending authorization request.
+
+Response: `200 OK` (`AuthRequestResponse`)
+
+```json
+{"requestId":"req-1","status":"pending"}
+```
+
+Returns `404` if the request ID is not found.
+
+#### POST /authkit/token
+
+Exchange an authorization code for an access token.
+
+Request body:
+
+```json
+{"authCode":"ac-..."}
+```
+
+Response: `200 OK` (`TokenResponse`)
+
+```json
+{
+  "accessToken": "akt-...",
+  "userId": "a1b2c3...",
+  "userInfo": {
+    "name": "AgentOS User",
+    "avatarUrl": ""
+  }
+}
+```
+
+Returns `400` if the `authCode` is missing, invalid, or expired.
+
+#### GET /authkit/userinfo
+
+Retrieve user information using an AuthKit access token.
+
+```http
+Authorization: Bearer <akt-...>
+```
+
+Response: `200 OK` (`UserInfo`)
+
+```json
+{
+  "userId": "a1b2c3...",
+  "name": "AgentOS User",
+  "avatarUrl": ""
+}
+```
+
+Error responses:
+
+| Status | Error Code | Description |
+| --- | --- | --- |
+| `401` | `invalid_token` | Token not recognized. |
+| `401` | `auth_expired` | AgentOS user is not logged in. |
+| `401` | `token_revoked` | Authorization has been revoked. |
+| `404` | `not_found` | User not found. |
+
+#### POST /authkit/revoke
+
+Revoke a previously granted authorization.
+
+Request body:
+
+```json
+{"bundleId":"com.demo.app"}
+```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `bundleId` | `string` | No | Defaults to the token's own `bundleId`. |
+
+Response: `200 OK`
+
+```json
+{"status":"revoked"}
+```
+
+## DiscoveryKit
+
+DiscoveryKit provides nearby AgentOS device discovery. Apps register
+themselves as discoverable, query for peer devices, and subscribe to
+real-time peer events via SSE.
+
+All endpoints require an AppKit-issued bearer token.
+
+### Schemas
+
+#### PeerApp
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `bundleId` | `string` | No | App bundle ID. |
+| `userId` | `string` | No | Stable per-app user ID from AuthKit. |
+| `username` | `string` | No | User display name. |
+| `appName` | `string` | No | App display name. |
+| `avatarUrl` | `string` | No | User avatar URL. |
+
+#### PeerDevice
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `deviceId` | `string` | Yes | Device fingerprint. |
+| `name` | `string` | Yes | User display name on the device. |
+| `avatarUrl` | `string` | No | User avatar URL. |
+| `deviceName` | `string` | Yes | Device name (e.g. hostname). |
+| `deviceType` | `string` | Yes | Device type identifier. |
+| `host` | `string` | Yes | Device IP address. |
+| `port` | `integer` | Yes | Device service port. |
+| `online` | `boolean` | Yes | Whether the device is currently reachable. |
+| `apps` | `PeerApp[]` | Yes | Registered apps on the device. |
+
+### Endpoints
+
+#### POST /discoverykit/register
+
+Register the current app as discoverable. The gateway resolves user identity
+and app name from the AuthKit grant associated with the token's `bundleId`.
+
+Request body:
+
+```json
+{"receivePolicy":"autoAccept"}
+```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `receivePolicy` | `string` | No | `autoAccept` or `requireConfirm`. Defaults to `autoAccept`. |
+
+Response: `200 OK`
+
+```json
+{"status":"registered","bundleId":"com.demo.app"}
+```
+
+Returns `503` if the discovery service is not available.
+
+#### POST /discoverykit/unregister
+
+Remove the current app from discovery broadcast.
+
+Response: `200 OK`
+
+```json
+{"status":"unregistered","bundleId":"com.demo.app"}
+```
+
+#### GET /discoverykit/peers
+
+List discovered peer devices. With an AppKit token, only peers running the
+same `bundleId` are returned (app-level scan).
+
+Response: `200 OK` (`PeerDevice[]`)
+
+```json
+[
+  {
+    "deviceId": "abc123",
+    "name": "AgentOS User",
+    "deviceName": "MacBook Pro",
+    "deviceType": "desktop",
+    "host": "192.168.1.100",
+    "port": 8888,
+    "online": true,
+    "apps": [
+      {
+        "bundleId": "com.demo.app",
+        "userId": "a1b2c3...",
+        "username": "AgentOS User"
+      }
+    ]
+  }
+]
+```
+
+#### GET /discoverykit/peers/stream
+
+Subscribe to real-time peer device events via SSE.
+
+Response: `200 OK`, `text/event-stream`
+
+Events:
+
+```text
+event: peer.joined
+data: {"type":"joined","device":{...}}
+
+event: peer.left
+data: {"type":"left","device":{...}}
+
+event: peer.updated
+data: {"type":"updated","device":{...}}
+```
+
+Event types: `joined`, `left`, `updated`.
+
+#### GET /discoverykit/self
+
+Get the current device's own info in the same structure as a `PeerDevice`,
+plus status fields.
+
+Response: `200 OK`
+
+```json
+{
+  "deviceId": "self-device-id",
+  "name": "AgentOS User",
+  "deviceName": "MacBook Pro",
+  "deviceType": "desktop",
+  "host": "192.168.1.50",
+  "port": 8888,
+  "online": true,
+  "apps": [],
+  "nearbyTransferEnabled": true,
+  "registered": true
+}
+```
+
+## TransferKit
+
+TransferKit provides cross-device file transfer between AgentOS devices.
+It handles sending files, tracking progress, managing receive policies,
+and persisting transfer history.
+
+All endpoints require an AppKit-issued bearer token.
+
+### Schemas
+
+#### TransferFileInfo
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `fileName` | `string` | Yes | File name. |
+| `size` | `integer` | Yes | File size in bytes. |
+| `filePath` | `string` | Yes | Absolute file path on the sending device. |
+| `mimeType` | `string` | No | MIME type. |
+
+#### TransferSession
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `transferId` | `string` | Yes | Transfer session ID. |
+| `state` | `string` | Yes | `pending`, `preparing`, `transferring`, `completed`, `failed`, or `cancelled`. |
+| `progress` | `number` | Yes | Overall progress 0.0–1.0. |
+| `targetDeviceId` | `string` | Yes | Target device fingerprint. |
+| `bundleId` | `string` | Yes | Sender app bundle ID. |
+| `userId` | `string` | No | Sender user ID. |
+| `targetBundleId` | `string` | No | Target app bundle ID. |
+| `files` | `TransferFileInfo[]` | Yes | Files being transferred. |
+| `errorMessage` | `string` | No | Error details when `state` is `failed`. |
+
+#### IncomingTransferEvent
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `transferId` | `string` | Yes | Transfer session ID. |
+| `fromDeviceId` | `string` | Yes | Sender device fingerprint. |
+| `fromName` | `string` | Yes | Sender display name. |
+| `sourceBundleId` | `string` | Yes | Sender app bundle ID. |
+| `targetBundleId` | `string` | No | Target app bundle ID. |
+| `autoAccepted` | `boolean` | Yes | Whether the transfer was auto-accepted. |
+| `files` | `ReceivedFileInfo[]` | Yes | Received file details. |
+
+#### ReceivedFileInfo
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `fileName` | `string` | Yes | File name. |
+| `size` | `integer` | Yes | File size in bytes. |
+| `savedPath` | `string` | Yes | Absolute path where the file was saved. |
+| `mimeType` | `string` | No | MIME type. |
+
+#### TransferHistoryRecord
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Record ID. |
+| `direction` | `string` | Yes | `send` or `receive`. |
+| `peerDeviceId` | `string` | Yes | Peer device fingerprint. |
+| `peerName` | `string` | Yes | Peer display name. |
+| `peerAvatarUrl` | `string` | No | Peer avatar URL. |
+| `files` | `TransferHistoryFile[]` | Yes | Transferred files. |
+| `totalSize` | `integer` | Yes | Total size in bytes. |
+| `state` | `string` | Yes | Final transfer state. |
+| `timestamp` | `string` | Yes | ISO timestamp. |
+| `savedDir` | `string` | No | Directory where received files were saved. |
+
+#### TransferHistoryFile
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `fileName` | `string` | Yes | File name. |
+| `size` | `integer` | Yes | File size in bytes. |
+| `filePath` | `string` | No | File path. |
+
+### Endpoints
+
+#### POST /transferkit/send
+
+Send files to a target device. File paths are validated against the app's
+sandboxed data directory.
+
+Request body:
+
+```json
+{
+  "targetDeviceId": "abc123",
+  "targetBundleId": "com.demo.app",
+  "files": [
+    {
+      "fileName": "report.pdf",
+      "size": 1048576,
+      "filePath": "/data/com.demo.app/files/report.pdf",
+      "mimeType": "application/pdf"
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `targetDeviceId` | `string` | Yes | Target device fingerprint. |
+| `targetBundleId` | `string` | No | Target app bundle ID for app-level transfer. |
+| `files` | `TransferFileInfo[]` | Yes | Files to send (non-empty). |
+
+Response: `200 OK` (`TransferSession`)
+
+```json
+{
+  "transferId": "tf-1",
+  "state": "preparing",
+  "progress": 0.0,
+  "targetDeviceId": "abc123",
+  "bundleId": "com.demo.app",
+  "files": [
+    {"fileName": "report.pdf", "size": 1048576, "filePath": "/data/com.demo.app/files/report.pdf", "mimeType": "application/pdf"}
+  ]
+}
+```
+
+Returns `503` if nearby transfer is not available. Returns `502` if the
+target device is unreachable.
+
+#### GET /transferkit/transfers
+
+List active transfers for the current app.
+
+Response: `200 OK` (`TransferSession[]`)
+
+#### GET /transferkit/transfers/\<transferId\>/status
+
+Get the status of a specific transfer.
+
+Response: `200 OK` (`TransferSession`)
+
+Returns `404` if the transfer is not found.
+
+#### GET /transferkit/transfers/\<transferId\>/stream
+
+Subscribe to real-time progress updates for a transfer via SSE.
+
+Response: `200 OK`, `text/event-stream`
+
+```text
+data: {"transferId":"tf-1","state":"transferring","progress":0.5,...}
+
+data: {"transferId":"tf-1","state":"completed","progress":1.0,...}
+```
+
+The stream closes automatically when the transfer reaches `completed` or
+`failed` state. A keep-alive comment is sent every 15 seconds.
+
+#### POST /transferkit/transfers/\<transferId\>/cancel
+
+Cancel an in-progress transfer.
+
+Response: `200 OK`
+
+```json
+{"status":"cancelled"}
+```
+
+Returns `400` if the transfer cannot be cancelled (already completed or
+cancelled).
+
+#### POST /transferkit/transfers/\<transferId\>/respond
+
+Accept or decline an incoming transfer (used with `requireConfirm` policy).
+
+Request body:
+
+```json
+{"accept": true}
+```
+
+Response: `200 OK`
+
+```json
+{"status":"accepted"}
+```
+
+Returns `404` if the transfer is not found or was already responded to.
+
+#### GET /transferkit/receive/stream
+
+Subscribe to incoming file transfer events via SSE. Events are filtered to
+the current app's `bundleId`.
+
+Response: `200 OK`, `text/event-stream`
+
+```text
+event: file.received
+data: {"transferId":"tf-2","fromDeviceId":"def456","fromName":"Other Device","sourceBundleId":"com.demo.app","autoAccepted":true,"files":[{"fileName":"photo.jpg","size":2097152,"savedPath":"/received/photo.jpg"}]}
+```
+
+A keep-alive comment is sent every 15 seconds.
+
+#### PUT /transferkit/receive/policy
+
+Set the file receive policy for the current app.
+
+Request body:
+
+```json
+{"policy":"requireConfirm"}
+```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `policy` | `string` | Yes | `autoAccept` or `requireConfirm`. |
+
+Response: `200 OK`
+
+```json
+{"policy":"requireConfirm","bundleId":"com.demo.app"}
+```
+
+#### GET /transferkit/receive/policy
+
+Get the current file receive policy.
+
+Response: `200 OK`
+
+```json
+{"policy":"autoAccept","bundleId":"com.demo.app"}
+```
+
+#### POST /transferkit/history
+
+Add a transfer history record.
+
+Request body:
+
+```json
+{
+  "id": "hist-1",
+  "direction": "send",
+  "peerDeviceId": "abc123",
+  "peerName": "Other Device",
+  "files": [{"fileName": "report.pdf", "size": 1048576}],
+  "totalSize": 1048576,
+  "state": "completed",
+  "timestamp": "2026-04-08T10:00:00.000Z",
+  "deviceId": "",
+  "userId": "user-1"
+}
+```
+
+Response: `200 OK`
+
+```json
+{"status":"added","id":"hist-1"}
+```
+
+#### GET /transferkit/history
+
+Get transfer history records.
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `deviceId` | `string` | No |
+| `userId` | `string` | No |
+
+Response: `200 OK` (`TransferHistoryRecord[]`)
+
+#### DELETE /transferkit/history/\<recordId\>
+
+Delete a specific history record.
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `deviceId` | `string` | No |
+| `userId` | `string` | No |
+
+Response: `200 OK`
+
+```json
+{"status":"deleted"}
+```
+
+Returns `404` if the record is not found.
+
+#### DELETE /transferkit/history
+
+Clear all history records for a scope.
+
+Query:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `deviceId` | `string` | No |
+| `userId` | `string` | No |
+
+Response: `200 OK`
+
+```json
+{"status":"cleared"}
+```
+
 ## Root
 
 ### GET /
@@ -1421,6 +2035,9 @@ Response: `200 OK`
     "/cronkit/*": "CronKit API (cron task management, requires Token)",
     "/ragkit/*": "RagKit API (RAG knowledge/query, requires Token)",
     "/appkit/*": "AppKit API (app registration/subscription)",
+    "/authkit/*": "AuthKit API (OAuth-like authorization, requires Token)",
+    "/discoverykit/*": "DiscoveryKit API (nearby device discovery, requires Token)",
+    "/transferkit/*": "TransferKit API (cross-device file transfer, requires Token)",
     "/toolkit/*": "ToolKit API (requires Token)",
     "/modelkit/chat/*": "Chat/vision generation",
     "/modelkit/embedding/*": "Text embedding",
