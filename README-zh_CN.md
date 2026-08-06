@@ -366,6 +366,5 @@ TransferKit 提供 AgentOS 设备间的安全文件传输能力。
 - `DELETE /transferkit/history` - 清空全部传输历史
 
 接收策略：
-- `auto`：自动接受传入的文件
-- `confirmation`：每次传输需要用户/应用明确确认
-- `reject`：拒绝所有传入的文件
+- `autoAccept`：自动接受传入的文件
+- `requireConfirm`：每次传输需要用户/应用明确确认

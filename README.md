@@ -386,5 +386,5 @@ Supported routes:
 - `DELETE /transferkit/history` - Clear all transfer history
 
 Receive policies:
-- `auto`: automatically accept incoming transfers
-- `confirmation`: require explicit user/app confirmation per transfer
+- `autoAccept`: automatically accept incoming transfers
+- `requireConfirm`: require explicit user/app confirmation per transfer
