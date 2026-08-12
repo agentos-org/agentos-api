@@ -71,9 +71,7 @@ abstract interface class OpenToolDaemonGateway {
 
   Future<bool> isReady(String toolId);
 
-  Future<String> waitUntilReady(String toolId);
-
-  Future<String> startAndWait(String toolId);
+  Future<String> startTool(String toolId);
 
   Future<String> createAndWait(String serverId);
 }
@@ -173,7 +171,7 @@ class OpenToolProvisioningService implements OpenToolProvisioner {
           : (matchingTools.isEmpty ? null : matchingTools.first);
       final action = existingTool == null
           ? () => gateway!.createAndWait(server.id)
-          : () => gateway!.startAndWait(existingTool.id);
+          : () => gateway!.startTool(existingTool.id);
       final failureCode = existingTool == null ? 'createFailed' : 'startFailed';
 
       final provisionKey = server.id;
@@ -297,9 +295,9 @@ class OpenToolProvisioningService implements OpenToolProvisioner {
     final versioned = <({OpenToolServerDto server, Version version})>[];
     for (final server in matching) {
       try {
-        versioned.add((server: server, version: Version.parse(server.tag)));
+        versioned.add((server: server, version: Version.parse(server.version)));
       } on FormatException {
-        // Non-semver tags keep the daemon's existing ordering fallback.
+        // Non-semver versions keep the daemon's existing ordering fallback.
       }
     }
     if (versioned.isEmpty) return matching.first;
@@ -312,16 +310,16 @@ class OpenToolProvisioningService implements OpenToolProvisioner {
     if (tool.serverId == server.id) return true;
     final source = tool.server;
     return source != null &&
-        source.repo == server.repo &&
+        source.namespace == server.namespace &&
         source.name == server.name &&
-        source.tag == server.tag;
+        source.version == server.version;
   }
 
   OpenToolResolvedServerDto _resolvedServer(OpenToolServerDto server) {
     return OpenToolResolvedServerDto(
-      repo: server.repo,
+      namespace: server.namespace,
       name: server.name,
-      tag: server.tag,
+      version: server.version,
     );
   }
 }
@@ -351,20 +349,41 @@ class DaemonOpenToolGateway implements OpenToolDaemonGateway {
   DaemonOpenToolGateway(
     this._client, {
     this.readinessTimeout = const Duration(seconds: 90),
-    this.pollInterval = const Duration(seconds: 1),
-    this.startupGracePeriod = const Duration(seconds: 5),
   });
 
   final DaemonClient _client;
   final Duration readinessTimeout;
-  final Duration pollInterval;
-  final Duration startupGracePeriod;
 
   @override
-  Future<List<OpenToolServerDto>> listServers() => _client.listServer();
+  Future<List<OpenToolServerDto>> listServers() async {
+    await _ensureCompatible();
+    return _client.listServer();
+  }
 
   @override
-  Future<List<ToolDto>> listTools() => _client.listTool('1');
+  Future<List<ToolDto>> listTools() async {
+    await _ensureCompatible();
+    return _client.listTool('1');
+  }
+
+  Future<void>? _compatibilityCheck;
+
+  Future<void> _ensureCompatible() {
+    return _compatibilityCheck ??= _checkCompatibility();
+  }
+
+  Future<void> _checkCompatibility() async {
+    final version = await _client.getVersion();
+    if (version.apiVersion < 2 ||
+        !version.capabilities.contains('artifactRegistryV2') ||
+        !version.capabilities.contains('startToolTerminalV1')) {
+      throw StateError(
+        'Incompatible OpenTool daemon ${version.version}: '
+        'apiVersion >= 2, artifactRegistryV2, and startToolTerminalV1 '
+        'are required',
+      );
+    }
+  }
 
   @override
   Future<bool> isReady(String toolId) async {
@@ -403,70 +422,23 @@ class DaemonOpenToolGateway implements OpenToolDaemonGateway {
   }
 
   @override
-  Future<String> startAndWait(String toolId) async {
-    Object? streamFailure;
-    StackTrace? streamFailureStack;
-    await _client.startTool(
-      toolId,
-      timeoutSeconds: 0,
-      onData: (_) {},
-      onError: (result) {
-        streamFailure = StateError(result.error ?? 'OpenTool start failed');
-      },
-      onStreamError: (error, stackTrace) {
-        streamFailure = error;
-        streamFailureStack = stackTrace;
-      },
-    );
-    if (streamFailure != null) {
-      Error.throwWithStackTrace(
-        streamFailure!,
-        streamFailureStack ?? StackTrace.current,
-      );
-    }
-    return waitUntilReady(toolId);
-  }
-
-  @override
-  Future<String> waitUntilReady(String toolId) async {
-    final deadline = DateTime.now().add(readinessTimeout);
-    final startupDeadline = DateTime.now().add(startupGracePeriod);
-    var observedRunning = false;
-    while (DateTime.now().isBefore(deadline)) {
-      if (await isReady(toolId)) {
-        return toolId;
-      }
-      final tools = await listTools();
-      final tool = _toolWithId(tools, toolId);
-      if (tool == null) {
-        throw StateError('OpenTool $toolId was removed before becoming ready');
-      }
-      if (tool.status == _runningToolStatus) {
-        observedRunning = true;
-      } else if (observedRunning || !DateTime.now().isBefore(startupDeadline)) {
-        throw StateError('OpenTool $toolId stopped before becoming ready');
-      }
-      await Future<void>.delayed(pollInterval);
-    }
-    throw TimeoutException(
-      'OpenTool $toolId did not become ready',
-      readinessTimeout,
-    );
+  Future<String> startTool(String toolId) async {
+    await _ensureCompatible();
+    await _client
+        .startTool(
+          toolId,
+          onData: (_) {},
+          onError: (_) {},
+          timeoutSeconds: readinessTimeout.inSeconds,
+        )
+        .timeout(readinessTimeout + const Duration(seconds: 1));
+    return toolId;
   }
 
   Future<String?> _firstReadyToolId(Iterable<ToolDto> tools) async {
     for (final tool in tools) {
       if (tool.status == _runningToolStatus && await isReady(tool.id)) {
         return tool.id;
-      }
-    }
-    return null;
-  }
-
-  ToolDto? _toolWithId(List<ToolDto> tools, String toolId) {
-    for (final tool in tools) {
-      if (tool.id == toolId) {
-        return tool;
       }
     }
     return null;

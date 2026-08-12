@@ -1299,7 +1299,11 @@ App 也可以通过稳定的 `ref` 和 server `name` 声明本地 OpenTool Serve
 ```
 
 注册始终选择同名 server 中已安装的最高语义版本，App 不能固定具体版本。如果同名
-server 的 tag 都不是语义版本，则为保持兼容性继续采用 daemon 返回的顺序。
+server 的 version 都不是语义版本，则继续采用 daemon 返回的顺序。
+
+该集成要求 OpenTool daemon API v2 且具备 `artifactRegistryV2` 与
+`startToolTerminalV1` capability（daemon 0.5.0 或更高版本）。读取 Server 或
+Tool 数据前会拒绝旧版 daemon 契约。
 
 网关会在返回前快速检查本地 OpenTool daemon。已经可用的工具返回可调用的
 `id`；正在拉起或本地没有找到的工具不返回 `id`：
@@ -1313,9 +1317,9 @@ server 的 tag 都不是语义版本，则为保持兼容性继续采用 daemon 
     {
       "ref": "websearch",
       "server": {
-        "repo": "native",
+        "namespace": "local",
         "name": "opentool-server-websearch",
-        "tag": "1.2.0"
+        "version": "1.2.0"
       },
       "status": "running",
       "id": "tool-..."
@@ -1348,7 +1352,7 @@ data: {"bundleId":"com.demo.app"}
 ```text
 id: evt-...
 event: appEvent
-data: {"version":1,"id":"evt-...","type":"toolkit.provision.succeeded","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"running","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"},"id":"tool-..."}}
+data: {"version":1,"id":"evt-...","type":"toolkit.provision.succeeded","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"running","server":{"namespace":"local","name":"opentool-server-websearch","version":"1.2.0"},"id":"tool-..."}}
 
 ```
 
@@ -1357,7 +1361,7 @@ data: {"version":1,"id":"evt-...","type":"toolkit.provision.succeeded","source":
 ```text
 id: evt-...
 event: appEvent
-data: {"version":1,"id":"evt-...","type":"toolkit.provision.failed","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"failed","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"},"error":{"code":"startFailed","message":"..."}}}
+data: {"version":1,"id":"evt-...","type":"toolkit.provision.failed","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"failed","server":{"namespace":"local","name":"opentool-server-websearch","version":"1.2.0"},"error":{"code":"startFailed","message":"..."}}}
 
 ```
 
@@ -1367,7 +1371,7 @@ data: {"version":1,"id":"evt-...","type":"toolkit.provision.failed","source":"to
 ```text
 id: evt-...
 event: appEvent
-data: {"version":1,"id":"evt-...","type":"toolkit.tool.unavailable","source":"toolkit","time":"2026-07-15T10:35:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"unavailable","scope":"tool","reason":"healthcheckFailed","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"}}}
+data: {"version":1,"id":"evt-...","type":"toolkit.tool.unavailable","source":"toolkit","time":"2026-07-15T10:35:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"unavailable","scope":"tool","reason":"healthcheckFailed","server":{"namespace":"local","name":"opentool-server-websearch","version":"1.2.0"}}}
 
 ```
 
@@ -1380,7 +1384,7 @@ daemon 停止、报错或无法连接时，`scope` 为 `daemon`；否则为 `too
 ```text
 id: evt-...
 event: appEvent
-data: {"version":1,"id":"evt-...","type":"toolkit.tool.available","source":"toolkit","time":"2026-07-15T10:35:05.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"running","scope":"tool","reason":"recovered","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"}}}
+data: {"version":1,"id":"evt-...","type":"toolkit.tool.available","source":"toolkit","time":"2026-07-15T10:35:05.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"running","scope":"tool","reason":"recovered","server":{"namespace":"local","name":"opentool-server-websearch","version":"1.2.0"}}}
 
 ```
 
@@ -2071,9 +2075,9 @@ Authorization: Bearer <POST /appkit/register 返回的 token>
   "status": "running",
   "serverId": "srv-1",
   "server": {
-    "repo": "demo-repo",
+    "namespace": "demo",
     "name": "demo",
-    "tag": "1.0.0"
+    "version": "1.0.0"
   }
 }
 ```
@@ -2143,9 +2147,9 @@ data:{"json":"payload"}
     "status": "running",
     "serverId": "srv-1",
     "server": {
-      "repo": "demo-repo",
+      "namespace": "demo",
       "name": "demo",
-      "tag": "1.0.0"
+      "version": "1.0.0"
     }
   }
 ]

@@ -1295,7 +1295,7 @@ Notes:
 - `appGroupId` is optional.
 - If omitted, the server uses `bundleId` as the effective group ID.
 
-An app may also declare native OpenTool server dependencies by stable `ref`
+An app may also declare local OpenTool server dependencies by stable `ref`
 and server `name`:
 
 ```json
@@ -1308,11 +1308,16 @@ and server `name`:
 ```
 
 Registration always selects the highest semantic version installed for the
-name. Apps cannot pin a specific server version. If none of the matching tags
-are semantic versions, daemon list order is retained for backward compatibility.
+name. Apps cannot pin a specific server version. If none of the matching
+versions are semantic versions, daemon list order is retained as the fallback.
+
+This integration requires OpenTool daemon API v2 with the
+`artifactRegistryV2` and `startToolTerminalV1` capabilities (daemon 0.5.0 or
+newer). Older daemon contracts are rejected before Server or Tool payloads are
+read.
 
 The gateway checks the local OpenTool daemon before returning. A ready tool
-returns its callable `id`; a tool being launched and a missing native server do
+returns its callable `id`; a tool being launched and a missing local server do
 not return an `id`:
 
 ```json
@@ -1324,9 +1329,9 @@ not return an `id`:
     {
       "ref": "websearch",
       "server": {
-        "repo": "native",
+        "namespace": "local",
         "name": "opentool-server-websearch",
-        "tag": "1.2.0"
+        "version": "1.2.0"
       },
       "status": "running",
       "id": "tool-..."
@@ -1360,7 +1365,7 @@ emits the ready tool ID:
 ```text
 id: evt-...
 event: appEvent
-data: {"version":1,"id":"evt-...","type":"toolkit.provision.succeeded","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"running","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"},"id":"tool-..."}}
+data: {"version":1,"id":"evt-...","type":"toolkit.provision.succeeded","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"running","server":{"namespace":"local","name":"opentool-server-websearch","version":"1.2.0"},"id":"tool-..."}}
 
 ```
 
@@ -1369,7 +1374,7 @@ If provisioning fails instead, it emits:
 ```text
 id: evt-...
 event: appEvent
-data: {"version":1,"id":"evt-...","type":"toolkit.provision.failed","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"failed","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"},"error":{"code":"startFailed","message":"..."}}}
+data: {"version":1,"id":"evt-...","type":"toolkit.provision.failed","source":"toolkit","time":"2026-07-15T10:30:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","status":"failed","server":{"namespace":"local","name":"opentool-server-websearch","version":"1.2.0"},"error":{"code":"startFailed","message":"..."}}}
 
 ```
 
@@ -1379,7 +1384,7 @@ and the concrete tool process. If either becomes unavailable, it emits:
 ```text
 id: evt-...
 event: appEvent
-data: {"version":1,"id":"evt-...","type":"toolkit.tool.unavailable","source":"toolkit","time":"2026-07-15T10:35:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"unavailable","scope":"tool","reason":"healthcheckFailed","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"}}}
+data: {"version":1,"id":"evt-...","type":"toolkit.tool.unavailable","source":"toolkit","time":"2026-07-15T10:35:00.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"unavailable","scope":"tool","reason":"healthcheckFailed","server":{"namespace":"local","name":"opentool-server-websearch","version":"1.2.0"}}}
 
 ```
 
@@ -1393,7 +1398,7 @@ When the same tool is healthy again, AgentOS emits the symmetric transition:
 ```text
 id: evt-...
 event: appEvent
-data: {"version":1,"id":"evt-...","type":"toolkit.tool.available","source":"toolkit","time":"2026-07-15T10:35:05.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"running","scope":"tool","reason":"recovered","server":{"repo":"native","name":"opentool-server-websearch","tag":"1.2.0"}}}
+data: {"version":1,"id":"evt-...","type":"toolkit.tool.available","source":"toolkit","time":"2026-07-15T10:35:05.000Z","subject":"websearch","data":{"ref":"websearch","name":"opentool-server-websearch","id":"tool-...","status":"running","scope":"tool","reason":"recovered","server":{"namespace":"local","name":"opentool-server-websearch","version":"1.2.0"}}}
 
 ```
 
@@ -2095,9 +2100,9 @@ Missing or invalid tokens return `401`.
   "status": "running",
   "serverId": "srv-1",
   "server": {
-    "repo": "demo-repo",
+    "namespace": "demo",
     "name": "demo",
-    "tag": "1.0.0"
+    "version": "1.0.0"
   }
 }
 ```
@@ -2167,9 +2172,9 @@ Response:
     "status": "running",
     "serverId": "srv-1",
     "server": {
-      "repo": "demo-repo",
+      "namespace": "demo",
       "name": "demo",
-      "tag": "1.0.0"
+      "version": "1.0.0"
     }
   }
 ]

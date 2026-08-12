@@ -283,7 +283,7 @@ Common endpoints:
 
 - `GET /toolkit/list?all=0` - list running tools. Use `all=1` to include
   stopped tools. Returns `[{ "id", "alias", "host", "port", "status",
-  "serverId", "server": { "repo", "name", "tag" } }]`.
+  "serverId", "server": { "namespace", "name", "version" } }]`.
 - `GET /toolkit/{toolId}/load` - return the tool's OpenTool JSON
   description, including available functions and parameter schemas.
 - `POST /toolkit/{toolId}/call` - call one function:
@@ -311,6 +311,8 @@ identified by `capabilities.vision` on the resolved model.
 - The request may include
   `"opentoolServers":[{"ref":"websearch","name":"opentool-server-websearch"}]`.
   Registration always selects the highest installed semantic version.
+  This requires OpenTool daemon 0.5.0+ with the `artifactRegistryV2` and
+  `startToolTerminalV1` capabilities.
   Registration returns `running` with an `id`, `starting` without an `id`, or
   `notFound` without an `id` for each declaration.
 - If `appGroupId` is omitted, the server uses `bundleId` as the effective group.

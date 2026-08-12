@@ -1,2 +1,2 @@
 // Keep this in sync with pubspec.yaml version.
-const String packageVersion = '1.0.0';
+const String packageVersion = '0.4.0';

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:agentos_api/agentos_api.dart';
 import 'package:opentool_daemon/opentool_daemon_client.dart';
 import 'package:shelf/shelf.dart';
+import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:test/test.dart';
 
 void main() {
@@ -17,9 +18,9 @@ void main() {
             ref: 'running',
             name: 'opentool-server-running',
             server: OpenToolResolvedServerDto(
-              repo: 'native',
+              namespace: 'local',
               name: 'opentool-server-running',
-              tag: '1.2.0',
+              version: '1.2.0',
             ),
             status: OpenToolRegistrationStatus.running,
             id: 'tool-running',
@@ -28,9 +29,9 @@ void main() {
             ref: 'starting',
             name: 'opentool-server-starting',
             server: OpenToolResolvedServerDto(
-              repo: 'native',
+              namespace: 'local',
               name: 'opentool-server-starting',
-              tag: '2.0.0',
+              version: '2.0.0',
             ),
             status: OpenToolRegistrationStatus.starting,
           ),
@@ -69,9 +70,9 @@ void main() {
         expect(servers[0], {
           'ref': 'running',
           'server': {
-            'repo': 'native',
+            'namespace': 'local',
             'name': 'opentool-server-running',
-            'tag': '1.2.0',
+            'version': '1.2.0',
           },
           'status': 'running',
           'id': 'tool-running',
@@ -79,9 +80,9 @@ void main() {
         expect(servers[1], {
           'ref': 'starting',
           'server': {
-            'repo': 'native',
+            'namespace': 'local',
             'name': 'opentool-server-starting',
-            'tag': '2.0.0',
+            'version': '2.0.0',
           },
           'status': 'starting',
         });
@@ -123,7 +124,7 @@ void main() {
       expect(await response.readAsString(), contains('must be unique'));
     });
 
-    test('rejects attempts to pin a server tag', () async {
+    test('rejects attempts to pin a server version', () async {
       final controller = AppKitController(
         service: AppKitService(),
         openToolProvisioner: _FakeProvisioner(const {}),
@@ -139,7 +140,7 @@ void main() {
               {
                 'ref': 'websearch',
                 'name': 'opentool-server-websearch',
-                'tag': '1.2.0',
+                'version': '1.2.0',
               },
             ],
           }),
@@ -147,7 +148,10 @@ void main() {
       );
 
       expect(response.statusCode, 400);
-      expect(await response.readAsString(), contains('tag is not supported'));
+      expect(
+        await response.readAsString(),
+        contains('version is not supported'),
+      );
     });
 
     test('queues provisioning failures until the app subscribes', () async {
@@ -158,9 +162,9 @@ void main() {
             ref: 'websearch',
             name: 'opentool-server-websearch',
             server: OpenToolResolvedServerDto(
-              repo: 'native',
+              namespace: 'local',
               name: 'opentool-server-websearch',
-              tag: '1.2.0',
+              version: '1.2.0',
             ),
             status: OpenToolRegistrationStatus.starting,
           ),
@@ -171,9 +175,9 @@ void main() {
             name: 'opentool-server-websearch',
           ),
           server: OpenToolResolvedServerDto(
-            repo: 'native',
+            namespace: 'local',
             name: 'opentool-server-websearch',
-            tag: '1.2.0',
+            version: '1.2.0',
           ),
           code: 'startFailed',
           message: 'process exited',
@@ -230,9 +234,9 @@ void main() {
         name: 'opentool-server-websearch',
       );
       const server = OpenToolResolvedServerDto(
-        repo: 'native',
+        namespace: 'local',
         name: 'opentool-server-websearch',
-        tag: '1.2.0',
+        version: '1.2.0',
       );
       final provisioner = _FakeProvisioner(
         const {
@@ -298,15 +302,15 @@ void main() {
       () async {
         final gateway = _FakeDaemonGateway(
           servers: [
-            _server(id: 'server-old', tag: '0.1.0'),
-            _server(id: 'server-new', tag: '0.1.1'),
+            _server(id: 'server-old', version: '0.1.0'),
+            _server(id: 'server-new', version: '0.1.1'),
           ],
           tools: [
             _tool(
               status: 'running',
               id: 'tool-old',
               serverId: 'server-old',
-              serverTag: '0.1.0',
+              serverVersion: '0.1.0',
             ),
           ],
           ready: true,
@@ -325,7 +329,7 @@ void main() {
         );
 
         expect(result.status, OpenToolRegistrationStatus.starting);
-        expect(result.server?.tag, '0.1.1');
+        expect(result.server?.version, '0.1.1');
         expect((await success.future).id, 'tool-new');
         expect(gateway.createdServerIds, ['server-new']);
         expect(gateway.startCalls, 0);
@@ -378,7 +382,7 @@ void main() {
       expect(gateway.createCalls, 0);
     });
 
-    test('returns notFound when no native server matches the name', () async {
+    test('returns notFound when no local server matches the name', () async {
       final gateway = _FakeDaemonGateway(servers: const [], tools: const []);
       final service = _provisioningService(gateway);
 
@@ -524,9 +528,9 @@ void main() {
         name: 'opentool-server-websearch',
       );
       const server = OpenToolResolvedServerDto(
-        repo: 'native',
+        namespace: 'local',
         name: 'opentool-server-websearch',
-        tag: '1.2.0',
+        version: '1.2.0',
       );
       final generation = monitor.replaceBundleDeclarations(
         'com.demo.app',
@@ -615,9 +619,9 @@ void main() {
         generation: generation,
         declaration: declaration,
         server: const OpenToolResolvedServerDto(
-          repo: 'native',
+          namespace: 'local',
           name: 'opentool-server-websearch',
-          tag: '1.2.0',
+          version: '1.2.0',
         ),
         toolId: 'tool-1',
       );
@@ -664,32 +668,187 @@ void main() {
     });
   });
 
-  group('DaemonOpenToolGateway readiness', () {
-    test('allows notRunning during the startup transition', () async {
-      final gateway = _SequencedReadinessGateway(
-        readyResults: [false, true],
-        toolStatuses: ['notRunning'],
+  group('DaemonOpenToolGateway canonical contract', () {
+    test('accepts the canonical v2 server payload', () async {
+      final server = await shelf_io.serve(
+        (request) {
+          if (request.url.path == 'opentool-daemon/version') {
+            return Response.ok(
+              jsonEncode({
+                'name': 'OpenTool Daemon',
+                'version': '0.5.0',
+                'apiVersion': 2,
+                'capabilities': ['artifactRegistryV2', 'startToolTerminalV1'],
+              }),
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          if (request.url.path == 'opentool-daemon/servers/list') {
+            return Response.ok(
+              jsonEncode([
+                {
+                  'id': 'server-1',
+                  'alias': 'websearch',
+                  'registry': 'local',
+                  'namespace': 'local',
+                  'name': 'opentool-server-websearch',
+                  'version': '1.2.0',
+                },
+              ]),
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          return Response.notFound('not found');
+        },
+        '127.0.0.1',
+        0,
       );
 
-      expect(await gateway.waitUntilReady('tool-1'), 'tool-1');
+      try {
+        final gateway = DaemonOpenToolGateway(
+          DaemonClient(host: '127.0.0.1', port: server.port),
+        );
+        final servers = await gateway.listServers();
+
+        expect(servers, hasLength(1));
+        expect(servers.single.namespace, 'local');
+        expect(servers.single.version, '1.2.0');
+      } finally {
+        await server.close(force: true);
+      }
     });
 
-    test('fails after a running tool becomes stopped', () async {
-      final gateway = _SequencedReadinessGateway(
-        readyResults: [false, false],
-        toolStatuses: [OpenToolRegistrationStatus.running, 'notRunning'],
+    test('rejects a daemon without the artifact registry contract', () async {
+      var listRequests = 0;
+      final server = await shelf_io.serve(
+        (request) {
+          if (request.url.path == 'opentool-daemon/version') {
+            return Response.ok(
+              jsonEncode({
+                'name': 'OpenTool Daemon',
+                'version': '0.3.0',
+                'apiVersion': 1,
+                'capabilities': <String>[],
+              }),
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          if (request.url.path == 'opentool-daemon/servers/list') {
+            listRequests += 1;
+            return Response.ok('[]');
+          }
+          return Response.notFound('not found');
+        },
+        '127.0.0.1',
+        0,
       );
 
-      await expectLater(
-        gateway.waitUntilReady('tool-1'),
-        throwsA(
-          isA<StateError>().having(
-            (error) => error.message,
-            'message',
-            contains('stopped before becoming ready'),
+      try {
+        final gateway = DaemonOpenToolGateway(
+          DaemonClient(host: '127.0.0.1', port: server.port),
+        );
+
+        await expectLater(
+          gateway.listServers(),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('artifactRegistryV2'),
+            ),
           ),
-        ),
+        );
+        expect(listRequests, 0);
+      } finally {
+        await server.close(force: true);
+      }
+    });
+
+    test('uses terminal DONE when starting a tool', () async {
+      String? requestedTimeout;
+      final server = await shelf_io.serve(
+        (request) {
+          if (request.url.path == 'opentool-daemon/version') {
+            return Response.ok(
+              jsonEncode({
+                'name': 'OpenTool Daemon',
+                'version': '0.5.0',
+                'apiVersion': 2,
+                'capabilities': ['artifactRegistryV2', 'startToolTerminalV1'],
+              }),
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          if (request.url.path == 'opentool-daemon/tools/tool-1/start') {
+            requestedTimeout = request.url.queryParameters['timeout'];
+            return Response.ok(
+              'event:done\n'
+              'data:{"command":"startTool","output":"ready"}\n\n',
+              headers: {'content-type': 'text/event-stream'},
+            );
+          }
+          return Response.notFound('not found');
+        },
+        '127.0.0.1',
+        0,
       );
+
+      try {
+        final gateway = DaemonOpenToolGateway(
+          DaemonClient(host: '127.0.0.1', port: server.port),
+          readinessTimeout: const Duration(seconds: 3),
+        );
+
+        expect(await gateway.startTool('tool-1'), 'tool-1');
+        expect(requestedTimeout, '3');
+      } finally {
+        await server.close(force: true);
+      }
+    });
+
+    test('propagates terminal ERROR when starting a tool', () async {
+      final server = await shelf_io.serve(
+        (request) {
+          if (request.url.path == 'opentool-daemon/version') {
+            return Response.ok(
+              jsonEncode({
+                'name': 'OpenTool Daemon',
+                'version': '0.5.0',
+                'apiVersion': 2,
+                'capabilities': ['artifactRegistryV2', 'startToolTerminalV1'],
+              }),
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          if (request.url.path == 'opentool-daemon/tools/tool-1/start') {
+            return Response.ok(
+              'event:error\n'
+              'data:{"command":"startTool","error":"boom"}\n\n',
+              headers: {'content-type': 'text/event-stream'},
+            );
+          }
+          return Response.notFound('not found');
+        },
+        '127.0.0.1',
+        0,
+      );
+
+      try {
+        final gateway = DaemonOpenToolGateway(
+          DaemonClient(host: '127.0.0.1', port: server.port),
+        );
+
+        await expectLater(
+          gateway.startTool('tool-1'),
+          throwsA(
+            isA<DaemonApiException>()
+                .having((error) => error.code, 'code', 'TOOL_START_FAILED')
+                .having((error) => error.message, 'message', 'boom'),
+          ),
+        );
+      } finally {
+        await server.close(force: true);
+      }
     });
   });
 }
@@ -716,14 +875,14 @@ OpenToolProvisioningService _provisioningService(
   );
 }
 
-OpenToolServerDto _server({String id = 'server-1', String tag = '1.2.0'}) {
+OpenToolServerDto _server({String id = 'server-1', String version = '1.2.0'}) {
   return OpenToolServerDto(
     id: id,
     alias: 'websearch',
-    registry: 'native',
-    repo: 'native',
+    registry: 'local',
+    namespace: 'local',
     name: 'opentool-server-websearch',
-    tag: tag,
+    version: version,
   );
 }
 
@@ -731,7 +890,7 @@ ToolDto _tool({
   required String status,
   String id = 'tool-1',
   String serverId = 'server-1',
-  String serverTag = '1.2.0',
+  String serverVersion = '1.2.0',
 }) {
   return ToolDto(
     id: id,
@@ -741,9 +900,9 @@ ToolDto _tool({
     status: status,
     serverId: serverId,
     server: ToolServerDto(
-      repo: 'native',
+      namespace: 'local',
       name: 'opentool-server-websearch',
-      tag: serverTag,
+      version: serverVersion,
     ),
   );
 }
@@ -811,45 +970,9 @@ class _FakeDaemonGateway implements OpenToolDaemonGateway {
   Future<List<ToolDto>> listTools() async => tools;
 
   @override
-  Future<String> startAndWait(String toolId) async {
+  Future<String> startTool(String toolId) async {
     startCalls += 1;
     return toolId;
-  }
-
-  @override
-  Future<String> waitUntilReady(String toolId) async => toolId;
-}
-
-class _SequencedReadinessGateway extends DaemonOpenToolGateway {
-  _SequencedReadinessGateway({
-    required List<bool> readyResults,
-    required List<String> toolStatuses,
-  }) : _readyResults = List.of(readyResults),
-       _toolStatuses = List.of(toolStatuses),
-       super(
-         DaemonClient(host: '127.0.0.1', port: 1),
-         readinessTimeout: const Duration(seconds: 1),
-         pollInterval: Duration.zero,
-         startupGracePeriod: const Duration(seconds: 1),
-       );
-
-  final List<bool> _readyResults;
-  final List<String> _toolStatuses;
-
-  @override
-  Future<bool> isReady(String toolId) async {
-    if (_readyResults.length == 1) {
-      return _readyResults.first;
-    }
-    return _readyResults.removeAt(0);
-  }
-
-  @override
-  Future<List<ToolDto>> listTools() async {
-    final status = _toolStatuses.length == 1
-        ? _toolStatuses.first
-        : _toolStatuses.removeAt(0);
-    return [_tool(status: status)];
   }
 }
 

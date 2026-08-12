@@ -271,7 +271,7 @@ $ curl http://127.0.0.1:8888/toolkit/list \
 
 - `GET /toolkit/list?all=0` - 列出运行中的工具。`all=1` 会包含已停止工具。
   返回 `[{ "id", "alias", "host", "port", "status", "serverId",
-  "server": { "repo", "name", "tag" } }]`。
+  "server": { "namespace", "name", "version" } }]`。
 - `GET /toolkit/{toolId}/load` - 返回工具的 OpenTool JSON 描述，包含可用函数
   和参数 schema。
 - `POST /toolkit/{toolId}/call` - 调用一个函数：
@@ -299,6 +299,8 @@ $ curl http://127.0.0.1:8888/toolkit/list \
 - 请求可包含
   `"opentoolServers":[{"ref":"websearch","name":"opentool-server-websearch"}]`。
   注册始终选择已安装的最高语义版本。
+  该能力要求 OpenTool daemon 0.5.0+ 且具备 `artifactRegistryV2` 与
+  `startToolTerminalV1` capability。
   每个声明会返回：带 `id` 的 `running`、不带 `id` 的 `starting`，或者不带
   `id` 的 `notFound`。
 - 如果不传 `appGroupId`，服务端会默认以 `bundleId` 作为有效 group。

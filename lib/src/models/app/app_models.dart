@@ -24,9 +24,10 @@ class AppBundleDto {
           'opentoolServers entries must be JSON objects',
         );
       }
-      if (rawDeclaration.containsKey('tag')) {
+      if (rawDeclaration.containsKey('tag') ||
+          rawDeclaration.containsKey('version')) {
         throw const FormatException(
-          'opentoolServers.tag is not supported; the latest version is always selected',
+          'opentoolServers.version is not supported; the latest version is always selected',
         );
       }
       final declaration = OpenToolServerDeclarationDto.fromJson(
@@ -72,16 +73,20 @@ class OpenToolServerDeclarationDto {
 
 class OpenToolResolvedServerDto {
   const OpenToolResolvedServerDto({
-    required this.repo,
+    required this.namespace,
     required this.name,
-    required this.tag,
+    required this.version,
   });
 
-  final String repo;
+  final String namespace;
   final String name;
-  final String tag;
+  final String version;
 
-  Map<String, dynamic> toJson() => {'repo': repo, 'name': name, 'tag': tag};
+  Map<String, dynamic> toJson() => {
+    'namespace': namespace,
+    'name': name,
+    'version': version,
+  };
 }
 
 class OpenToolRegistrationDto {
