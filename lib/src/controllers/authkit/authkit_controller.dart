@@ -1,201 +1,140 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
 import '../../middleware.dart';
+import '../../services/authkit/authkit_bridge.dart';
 import '../../services/appkit/appkit_service.dart';
-import '../../services/authkit/authkit_service.dart';
 
-/// AuthKit controller providing OAuth-like authentication for third-party apps.
+/// 新 AuthKit 流程的本机投递入口。
+///
+/// 只有一个职责：把第三方 Client 通过 SDK 传来的 `launchUri` 交给 Desktop 展示。
+/// 不实现任何 OAuth 端点 —— token 兑换、ID Token 验证都在第三方 Server 与
+/// AgentOS Server 之间完成。
+///
+/// 挂载在 [ApiConfig.authkitPath] 下，与登录态 [AuthKitService] 共用 AuthKit 命名。
 class AuthKitController {
   AuthKitController({
-    required AuthKitService authKitService,
+    required AuthKitBridge bridge,
     required AppKitService appKitService,
-  }) : _service = authKitService,
-       _appKitService = appKitService;
+  })  : _bridge = bridge,
+        _appKitService = appKitService;
 
-  final AuthKitService _service;
+  final AuthKitBridge _bridge;
   final AppKitService _appKitService;
+
+  /// 等待用户决定的上限，同时也是响应的兜底时限。
+  static const Duration maxDecisionWait = Duration(minutes: 3);
 
   Router get router {
     final router = Router();
-    router.post('/authorize', requireBearer()(_authorize));
-    router.get('/authorize/<requestId>/status', _getStatusHandler);
-    router.post('/token', requireBearer()(_exchangeToken));
-    router.get('/userinfo', _getUserInfo);
-    router.post('/revoke', requireBearer()(_revoke));
+    final guard = requireBearer();
+    router.post('/open', guard(_open));
+    router.get('/status', guard(_status));
     return router;
   }
 
-  Future<Response> _getStatusHandler(Request request, String requestId) async {
-    final token = extractBearerToken(request);
-    if (token == null || token.isEmpty) return unauthorizedResponse();
-    if (!_appKitService.isTokenValid(token)) return unauthorizedResponse();
-    return _getStatus(request, requestId);
-  }
-
-  Future<Response> _authorize(Request request) async {
+  Future<Response> _open(Request request) async {
     final token = bearerTokenFrom(request);
-    if (token == null) return unauthorizedResponse();
-
-    final bundleId = _appKitService.bundleIdForToken(token);
-    if (bundleId == null) return unauthorizedResponse('Invalid app token');
-
-    final body = await request.readAsString();
-    Map<String, dynamic> payload = {};
-    if (body.isNotEmpty) {
-      try {
-        payload = jsonDecode(body) as Map<String, dynamic>;
-      } catch (_) {}
+    if (token == null || !_appKitService.isTokenValid(token)) {
+      return unauthorizedResponse('Invalid app token');
     }
 
-    final scopes = (payload['scopes'] as List?)?.cast<String>() ?? ['profile'];
-    final appName = (payload['appName'] as String?)?.trim();
-
-    final authRequest = await _service.authorize(
-      bundleId: bundleId,
-      appName: (appName != null && appName.isNotEmpty) ? appName : null,
-      scopes: scopes,
-    );
-
-    final responseData = <String, dynamic>{
-      'requestId': authRequest.requestId,
-      'status': authRequest.status.name,
-    };
-    if (authRequest.authCode != null) {
-      responseData['authCode'] = authRequest.authCode;
-    }
-
-    final statusCode = authRequest.status == AuthRequestStatus.granted ? 200 : 202;
-    return Response(statusCode,
-      body: jsonEncode(responseData),
-      headers: {'content-type': 'application/json'},
-    );
-  }
-
-  Future<Response> _getStatus(Request request, String requestId) async {
-    final authRequest = _service.getRequestStatus(requestId);
-    if (authRequest == null) {
-      return Response.notFound(jsonEncode({'error': 'Request not found'}),
-        headers: {'content-type': 'application/json'},
-      );
-    }
-
-    final responseData = <String, dynamic>{
-      'requestId': authRequest.requestId,
-      'status': authRequest.status.name,
-    };
-    if (authRequest.authCode != null) {
-      responseData['authCode'] = authRequest.authCode;
-    }
-
-    return Response.ok(
-      jsonEncode(responseData),
-      headers: {'content-type': 'application/json'},
-    );
-  }
-
-  Future<Response> _exchangeToken(Request request) async {
-    final body = await request.readAsString();
-    if (body.isEmpty) {
-      return Response(400, body: 'Missing request body');
-    }
-
-    Map<String, dynamic> payload;
+    final Map<String, dynamic> body;
     try {
-      payload = jsonDecode(body) as Map<String, dynamic>;
+      final raw = await request.readAsString();
+      body = raw.trim().isEmpty
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(jsonDecode(raw) as Map);
     } catch (_) {
-      return Response(400, body: 'Invalid JSON');
-    }
-
-    final authCode = payload['authCode'] as String?;
-    if (authCode == null || authCode.isEmpty) {
-      return Response(400, body: 'authCode is required');
-    }
-
-    final result = await _service.exchangeToken(authCode);
-    if (result == null) {
-      return Response(400,
-        body: jsonEncode({'error': 'Invalid or expired authCode'}),
-        headers: {'content-type': 'application/json'},
+      return _errorResponse(
+        400,
+        AuthKitErrorCodes.invalidLaunchUri,
+        'Request body must be a JSON object',
       );
     }
 
-    return Response.ok(
-      jsonEncode(result),
-      headers: {'content-type': 'application/json'},
-    );
-  }
-
-  Future<Response> _getUserInfo(Request request) async {
-    final authHeader = request.headers['authorization'] ?? '';
-    final accessToken = authHeader.startsWith('Bearer ')
-        ? authHeader.substring(7).trim()
-        : null;
-
-    if (accessToken == null) {
-      return _errorResponse(401, 'invalid_token', 'Missing access token');
-    }
-
-    final validation = await _service.validateAccessToken(accessToken);
-    switch (validation) {
-      case TokenValidationResult.valid:
-        break;
-      case TokenValidationResult.authExpired:
-        return _errorResponse(401, 'auth_expired', 'AgentOS user logged out');
-      case TokenValidationResult.tokenRevoked:
-        return _errorResponse(401, 'token_revoked', 'Authorization revoked');
-      case TokenValidationResult.invalidToken:
-        return _errorResponse(401, 'invalid_token', 'Invalid access token');
-    }
-
-    final userInfo = await _service.getUserInfo(accessToken);
-    if (userInfo == null) {
-      return Response.notFound(
-        jsonEncode({'error': 'not_found', 'message': 'User not found'}),
-        headers: {'content-type': 'application/json'},
+    final launchUriRaw = body['launchUri'];
+    if (launchUriRaw is! String || launchUriRaw.trim().isEmpty) {
+      return _errorResponse(
+        400,
+        AuthKitErrorCodes.invalidLaunchUri,
+        'launchUri is required',
       );
     }
 
-    return Response.ok(
-      jsonEncode(userInfo.toJson()),
-      headers: {'content-type': 'application/json'},
+    // 只信任 AgentOS Server 生成的形状；原样透传，不重写 query。
+    final launchUri = AuthKitLaunchUri.tryParse(launchUriRaw);
+    if (launchUri == null) {
+      return _errorResponse(
+        400,
+        AuthKitErrorCodes.invalidLaunchUri,
+        'launchUri must look like '
+        '${AuthKitLaunchUri.scheme}://'
+        '${AuthKitLaunchUri.host}'
+        '${AuthKitLaunchUri.path}'
+        '?${AuthKitLaunchUri.requestIdParam}=...',
+      );
+    }
+
+    final waitForDecision = body['waitForDecision'] == true;
+    final decisionTimeout = _parseTimeout(body['timeoutMs']);
+
+    final presentation = await _bridge.deliver(
+      AuthKitDelivery(
+        launchUri: launchUri.raw,
+        requestId: launchUri.requestId,
+        bundleId: _appKitService.bundleIdForToken(token),
+      ),
+      waitForDecision: waitForDecision,
+      decisionTimeout: decisionTimeout,
+    );
+
+    final statusCode = presentation.errorCode ==
+            AuthKitErrorCodes.desktopNotReady
+        ? 503
+        : 200;
+    return Response(
+      statusCode,
+      body: jsonEncode(presentation.toJson()),
+      headers: _jsonHeaders,
     );
   }
 
-  Response _errorResponse(int statusCode, String error, String message) {
-    return Response(statusCode,
-      body: jsonEncode({'error': error, 'message': message}),
-      headers: {'content-type': 'application/json'},
-    );
-  }
-
-  Future<Response> _revoke(Request request) async {
+  /// 供 SDK 探测本机是否已具备承载授权界面的能力。
+  Future<Response> _status(Request request) async {
     final token = bearerTokenFrom(request);
-    if (token == null) return unauthorizedResponse();
-
-    final body = await request.readAsString();
-    Map<String, dynamic> payload = {};
-    if (body.isNotEmpty) {
-      try {
-        payload = jsonDecode(body) as Map<String, dynamic>;
-      } catch (_) {
-        return Response(400, body: 'Invalid JSON');
-      }
+    if (token == null || !_appKitService.isTokenValid(token)) {
+      return unauthorizedResponse('Invalid app token');
     }
-
-    final bundleId = payload['bundleId'] as String? ??
-        _appKitService.bundleIdForToken(token);
-    if (bundleId == null) {
-      return Response(400, body: 'bundleId is required');
-    }
-
-    await _service.revokeGrant(bundleId);
-    return Response.ok(jsonEncode({'status': 'revoked'}),
-      headers: {'content-type': 'application/json'},
+    return Response.ok(
+      jsonEncode(<String, dynamic>{'ready': _bridge.hasHandler}),
+      headers: _jsonHeaders,
     );
   }
 
+  Duration _parseTimeout(Object? raw) {
+    final ms = raw is int ? raw : int.tryParse('${raw ?? ''}');
+    if (ms == null || ms <= 0) return maxDecisionWait;
+    final requested = Duration(milliseconds: ms);
+    return requested > maxDecisionWait ? maxDecisionWait : requested;
+  }
+
+  Response _errorResponse(int statusCode, String errorCode, String message) {
+    return Response(
+      statusCode,
+      body: jsonEncode(
+        AuthKitPresentation.failed(
+          errorCode: errorCode,
+          message: message,
+        ).toJson(),
+      ),
+      headers: _jsonHeaders,
+    );
+  }
+
+  static const Map<String, String> _jsonHeaders = {
+    'content-type': 'application/json',
+  };
 }

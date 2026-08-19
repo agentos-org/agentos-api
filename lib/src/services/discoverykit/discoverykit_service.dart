@@ -11,7 +11,7 @@ final Logger _logger = Logger('DiscoveryKitService');
 /// DiscoveryKit service for discovering nearby AgentOS devices.
 ///
 /// Supports per-app registration: each app on this device can register itself
-/// via [registerApp] after obtaining a userId from AuthKit. The registered
+/// via [registerApp] while AgentOS Desktop is logged in. The registered
 /// apps are broadcast to peers as part of the multicast announcement.
 class DiscoveryKitService {
   DiscoveryKitService({
@@ -59,8 +59,8 @@ class DiscoveryKitService {
   /// Register an app into discovery broadcast.
   ///
   /// [bundleId] identifies the app.
-  /// username, appName, avatarUrl are resolved internally from AuthKit grant
-  /// and user profile, not from external input.
+  /// username and avatarUrl are resolved from the logged-in user profile;
+  /// userId is derived from loginId + bundleId.
   Future<bool> registerApp({
     required String bundleId,
     FileReceivePolicy? receivePolicy,
@@ -77,12 +77,16 @@ class DiscoveryKitService {
       return false;
     }
 
-    final grant = await authKit.getGrantForBundle(bundleId);
-    final profile = await authKit.getUserProfile();
+    final userId = authKit.resolveUserIdForBundle(bundleId);
+    if (userId == null) {
+      _logger.warning(
+        'DiscoveryKit: registerApp failed — AgentOS not logged in',
+      );
+      return false;
+    }
 
-    final userId = grant?.userId;
+    final profile = await authKit.getUserProfile();
     final username = profile?.name;
-    final appName = grant?.appName;
     final avatarUrl = profile?.avatarUrl;
 
     final policy = receivePolicy ?? FileReceivePolicy.autoAccept;
@@ -91,12 +95,11 @@ class DiscoveryKitService {
       bundleId: bundleId,
       userId: userId,
       username: username,
-      appName: appName,
       avatarUrl: avatarUrl,
       receivePolicy: policy,
     ));
 
-    _logger.info('DiscoveryKit: registered app $bundleId (userId=${userId ?? 'null'}, receivePolicy=${policy.name})');
+    _logger.info('DiscoveryKit: registered app $bundleId (userId=$userId, receivePolicy=${policy.name})');
     return true;
   }
 

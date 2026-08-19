@@ -111,9 +111,7 @@ class TransferKitController {
 
     final dataDir = _dataDirResolver?.call(bundleId);
 
-    // Resolve userId from the app grant for this bundleId
-    final grant = await _authKitService?.getGrantForBundle(bundleId);
-    final userId = grant?.userId;
+    final userId = _authKitService?.resolveUserIdForBundle(bundleId);
 
     final session = await _service.sendFiles(
       targetDeviceId: targetDeviceId,

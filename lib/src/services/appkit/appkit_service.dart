@@ -27,6 +27,9 @@ class AppKitService {
 
   List<String> listApps() => List.unmodifiable(_apps);
 
+  /// Bundle IDs of apps that have registered via [registerBundle].
+  Iterable<String> get registeredBundleIds => _bundleTokens.keys;
+
   bool isTokenValid(String token) => _registeredAppForToken(token) != null;
 
   String? bundleIdForToken(String token) =>

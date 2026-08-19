@@ -38,7 +38,7 @@ class ApiConfig {
   /// RagKit API path (RAG knowledge management and query)
   static const String ragkitPath = '/ragkit';
 
-  /// AuthKit API path (third-party app authentication)
+  /// AuthKit API path (launchUri delivery to Desktop; login session is internal).
   static const String authkitPath = '/authkit';
 
   /// DiscoveryKit API path (nearby device discovery)

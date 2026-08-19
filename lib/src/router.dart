@@ -1,11 +1,13 @@
+import 'dart:convert';
+
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:agentos_kernel/agentos_kernel.dart';
 import 'package:liteagent_sdk_dart/liteagent_sdk_dart.dart';
 import 'locator.dart';
 import 'controllers/agentkit/agentkit_controller.dart';
-import 'controllers/appkit/appkit_controller.dart';
 import 'controllers/authkit/authkit_controller.dart';
+import 'controllers/appkit/appkit_controller.dart';
 import 'controllers/cronkit/cronkit_controller.dart';
 import 'controllers/discoverykit/discoverykit_controller.dart';
 import 'controllers/modelkit/modelkit_controller.dart';
@@ -15,6 +17,7 @@ import 'controllers/toolkit/toolkit_controller.dart';
 import 'controllers/transferkit/transferkit_controller.dart';
 import 'config.dart';
 import 'middleware.dart';
+import 'services/authkit/authkit_bridge.dart';
 import 'services/appkit/appkit_service.dart';
 import 'services/appkit/opentool_availability_service.dart';
 import 'services/appkit/opentool_provisioning_service.dart';
@@ -49,6 +52,7 @@ Handler createGatewayHandler({
   OpenToolProvisioner? openToolProvisioner,
   OpenToolAvailabilityTracker? openToolAvailabilityTracker,
   void Function(AuthKitService authKitService)? onAuthKitReady,
+  void Function(AuthKitBridge bridge)? onAuthKitBridgeReady,
 }) {
   final router = createGatewayRouter(
     serviceLocator: serviceLocator,
@@ -58,6 +62,7 @@ Handler createGatewayHandler({
     openToolProvisioner: openToolProvisioner,
     openToolAvailabilityTracker: openToolAvailabilityTracker,
     onAuthKitReady: onAuthKitReady,
+    onAuthKitBridgeReady: onAuthKitBridgeReady,
   );
 
   var pipeline = const Pipeline();
@@ -94,6 +99,7 @@ Router createGatewayRouter({
   OpenToolProvisioner? openToolProvisioner,
   OpenToolAvailabilityTracker? openToolAvailabilityTracker,
   void Function(AuthKitService authKitService)? onAuthKitReady,
+  void Function(AuthKitBridge bridge)? onAuthKitBridgeReady,
 }) {
   final instanceId = _createGatewayInstanceId();
   requestLogger.info('Creating gateway router instanceId=$instanceId');
@@ -174,17 +180,22 @@ Router createGatewayRouter({
     modelKitController.router.call,
   );
 
-  // AuthKit API (third-party app authentication)
+  // AuthKit API (Server OAuth delivery + login session for other Kits)
   final authKitService = AuthKitService(
     serviceLocator: serviceLocator,
     appKitService: appKitService,
   );
+  final authKitBridge = AuthKitBridge();
   final authKitController = AuthKitController(
-    authKitService: authKitService,
+    bridge: authKitBridge,
     appKitService: appKitService,
   );
-  router.mount('${ApiConfig.authkitPath}/', authKitController.router.call);
+  router.mount(
+    '${ApiConfig.authkitPath}/',
+    authKitController.router.call,
+  );
   onAuthKitReady?.call(authKitService);
+  onAuthKitBridgeReady?.call(authKitBridge);
 
   // DiscoveryKit API (nearby device discovery)
   final discoveryKitService = DiscoveryKitService(
