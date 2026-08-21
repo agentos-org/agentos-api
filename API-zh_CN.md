@@ -1318,8 +1318,10 @@ Tool 数据前会拒绝旧版 daemon 契约。
       "ref": "websearch",
       "server": {
         "namespace": "local",
+        "repo": "local",
         "name": "opentool-server-websearch",
-        "version": "1.2.0"
+        "version": "1.2.0",
+        "tag": "1.2.0"
       },
       "status": "running",
       "id": "tool-..."
@@ -1331,6 +1333,11 @@ Tool 数据前会拒绝旧版 daemon 契约。
 注册状态包括 `running`、`starting`、`notFound`。只有 `running` 返回 `id`。
 `starting` 会在后台继续执行；最终成功或失败都会通过 `GET /appkit/subscribe`
 通知 App。
+
+OpenTool V2 客户端应使用 `namespace` 和 `version`。为兼容已经发布且编译了旧版
+SDK 的 App，AppKit 会在注册响应和订阅事件的 `server` 对象中同时返回值相同的
+弃用别名 `repo` 和 `tag`。这些别名仅属于 AppKit 响应兼容层，daemon 契约仍保持
+纯 V2。
 
 ### GET /appkit/subscribe
 

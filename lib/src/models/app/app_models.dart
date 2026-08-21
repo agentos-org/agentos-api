@@ -84,8 +84,13 @@ class OpenToolResolvedServerDto {
 
   Map<String, dynamic> toJson() => {
     'namespace': namespace,
+    // Deprecated AppKit aliases retained for clients compiled against the
+    // pre-OpenTool-V2 response shape. Keep these at the public API boundary;
+    // daemon-facing code continues to use namespace/version exclusively.
+    'repo': namespace,
     'name': name,
     'version': version,
+    'tag': version,
   };
 }
 

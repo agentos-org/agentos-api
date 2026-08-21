@@ -1330,8 +1330,10 @@ not return an `id`:
       "ref": "websearch",
       "server": {
         "namespace": "local",
+        "repo": "local",
         "name": "opentool-server-websearch",
-        "version": "1.2.0"
+        "version": "1.2.0",
+        "tag": "1.2.0"
       },
       "status": "running",
       "id": "tool-..."
@@ -1343,6 +1345,12 @@ not return an `id`:
 Possible registration statuses are `running`, `starting`, and `notFound`.
 `id` is present only for `running`. Starting continues asynchronously; its
 eventual success or failure is delivered by `GET /appkit/subscribe`.
+
+OpenTool V2 clients should use `namespace` and `version`. AppKit also emits the
+deprecated aliases `repo` and `tag` with identical values in registration and
+subscription event `server` objects so already-distributed legacy SDK clients
+remain compatible. The aliases are an AppKit response compatibility layer;
+the daemon contract remains V2-only.
 
 ### GET /appkit/subscribe
 

@@ -71,8 +71,10 @@ void main() {
           'ref': 'running',
           'server': {
             'namespace': 'local',
+            'repo': 'local',
             'name': 'opentool-server-running',
             'version': '1.2.0',
+            'tag': '1.2.0',
           },
           'status': 'running',
           'id': 'tool-running',
@@ -81,8 +83,10 @@ void main() {
           'ref': 'starting',
           'server': {
             'namespace': 'local',
+            'repo': 'local',
             'name': 'opentool-server-starting',
             'version': '2.0.0',
+            'tag': '2.0.0',
           },
           'status': 'starting',
         });
@@ -223,6 +227,14 @@ void main() {
       expect(body, contains('"type":"toolkit.provision.failed"'));
       expect(body, contains('"source":"toolkit"'));
       expect(body, contains('"subject":"websearch"'));
+      expect(
+        body,
+        contains(
+          '"server":{"namespace":"local","repo":"local",'
+          '"name":"opentool-server-websearch","version":"1.2.0",'
+          '"tag":"1.2.0"}',
+        ),
+      );
       expect(body, contains('"code":"startFailed"'));
       expect(body, isNot(contains('event: callApp')));
     });
@@ -292,6 +304,14 @@ void main() {
       expect(body, contains('"source":"toolkit"'));
       expect(body, contains('"subject":"websearch"'));
       expect(body, contains('"status":"running"'));
+      expect(
+        body,
+        contains(
+          '"server":{"namespace":"local","repo":"local",'
+          '"name":"opentool-server-websearch","version":"1.2.0",'
+          '"tag":"1.2.0"}',
+        ),
+      );
       expect(body, contains('"id":"tool-websearch"'));
     });
   });
@@ -563,6 +583,13 @@ void main() {
       expect(unavailable['data'], containsPair('id', 'tool-1'));
       expect(unavailable['data'], containsPair('scope', 'tool'));
       expect(unavailable['data'], containsPair('reason', 'healthcheckFailed'));
+      expect(unavailable['data']['server'], {
+        'namespace': 'local',
+        'repo': 'local',
+        'name': 'opentool-server-websearch',
+        'version': '1.2.0',
+        'tag': '1.2.0',
+      });
 
       await monitor.checkNow();
       await Future<void>.delayed(Duration.zero);
