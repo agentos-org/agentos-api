@@ -2,7 +2,7 @@ A server app built using [Shelf](https://pub.dev/packages/shelf),
 configured to enable running with [Docker](https://www.docker.com/).
 
 This gateway provides a single entry point for all local AI services:
-- **AgentKit**: Agent management and chat (implemented via LiteAgent SDK)
+- **AgentKit**: Session initialization and chat (implemented via LiteAgent SDK)
 - **CronKit**: Cron task management (powered by agentos_kernel)
 - **RagKit**: RAG knowledge base management and query (powered by agentos_kernel)
 - **AppKit**: Application registration and subscription
@@ -89,10 +89,6 @@ routes require a Bearer token.
 Supported routes:
 
 - `GET /agentkit/version`
-- `GET /agentkit/agent`
-- `POST /agentkit/agent/create`
-- `POST /agentkit/agent/update`
-- `GET /agentkit/agent/delete`
 - `POST /agentkit/initSession`
 - `POST /agentkit/initSimple`
 - `POST /agentkit/chat` (SSE stream)
@@ -190,8 +186,7 @@ YAML frontmatter first, then Markdown instructions. Example:
 
 `Capability` execution limits (`maxLlmRequests`, `maxToolRounds`,
 `maxToolCalls`, `maxConsecutiveIdenticalToolRounds`, and
-`maxTaskDurationSeconds`) are also forwarded by `/agentkit/initSession`,
-`/agentkit/agent/create`, and `/agentkit/agent/update`.
+`maxTaskDurationSeconds`) are also forwarded by `/agentkit/initSession`.
 
 ## CronKit API
 

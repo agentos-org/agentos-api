@@ -49,10 +49,6 @@ class AgentKitController {
     final router = Router();
     final guard = requireBearer();
     router.get('/version', guard(_handleVersion));
-    router.get('/agent', guard(_handleGetAgent));
-    router.post('/agent/create', guard(_handleCreateAgent));
-    router.post('/agent/update', guard(_handleUpdateAgent));
-    router.get('/agent/delete', guard(_handleDeleteAgent));
     router.post('/initSession', guard(_handleInitSession));
     router.post('/initSimple', guard(_handleInitSimple));
     router.post('/chat', guard(_handleChat));
@@ -77,109 +73,24 @@ class AgentKitController {
     }
   }
 
-  // GET /agent?agentId=xxx
-  Future<Response> _handleGetAgent(Request request) async {
-    try {
-      final agentId = request.url.queryParameters['agentId'];
-      if (agentId == null || agentId.isEmpty) {
-        return Response(
-          400,
-          body: jsonEncode({'error': 'agentId is required'}),
-        );
-      }
-      final agent = await _sdk.getAgent(agentId);
-      return _jsonResponse(agent.toJson());
-    } catch (e) {
-      return _errorResponse(e, 'getAgent');
-    }
-  }
-
-  // POST /agent/create
-  Future<Response> _handleCreateAgent(Request request) async {
-    try {
-      final body = await _readJsonBody(request);
-      await _injectLlmConfigForAgentBody(body);
-      final agent = Agent.fromJson(body);
-      final result = await _sdk.createAgent(agent);
-      return _jsonResponse(result.toJson());
-    } catch (e) {
-      return _errorResponse(e, 'createAgent');
-    }
-  }
-
-  // POST /agent/update?agentId=xxx
-  Future<Response> _handleUpdateAgent(Request request) async {
-    try {
-      final agentId = request.url.queryParameters['agentId'];
-      if (agentId == null || agentId.isEmpty) {
-        return Response(
-          400,
-          body: jsonEncode({'error': 'agentId is required'}),
-        );
-      }
-      final body = await _readJsonBody(request);
-      await _injectLlmConfigForAgentBody(body);
-      final agent = Agent.fromJson(body);
-      final result = await _sdk.updateAgent(agentId, agent);
-      return _jsonResponse(result.toJson());
-    } catch (e) {
-      return _errorResponse(e, 'updateAgent');
-    }
-  }
-
-  // GET /agent/delete?agentId=xxx
-  Future<Response> _handleDeleteAgent(Request request) async {
-    try {
-      final agentId = request.url.queryParameters['agentId'];
-      if (agentId == null || agentId.isEmpty) {
-        return Response(
-          400,
-          body: jsonEncode({'error': 'agentId is required'}),
-        );
-      }
-      final result = await _sdk.deleteAgent(agentId);
-      return _jsonResponse(result.toJson());
-    } catch (e) {
-      return _errorResponse(e, 'deleteAgent');
-    }
-  }
-
   // POST /initSession
   Future<Response> _handleInitSession(Request request) async {
     Capability? capability;
-    Map<String, dynamic>? liteAgentBody;
-    Map<String, dynamic>? agentCapabilityBody;
     var callbackTimeout = _defaultFunctionCallTimeout;
     try {
-      final agentId = request.url.queryParameters['agentId'];
-      if (agentId == null || agentId.isEmpty) {
-        final body = await _readJsonBody(request);
-        liteAgentBody = await _buildLiteAgentCapabilityFromAgentKitBody(body);
-        _sanitizeCallbackTimeout(liteAgentBody);
-        capability = Capability.fromJson(liteAgentBody);
-        callbackTimeout = _callbackTimeoutFromCapability(capability);
-      } else {
-        try {
-          final agent = await _sdk.getAgent(agentId);
-          agentCapabilityBody = agent.capability.toJson();
-          callbackTimeout = _callbackTimeoutFromCapability(agent.capability);
-        } catch (e) {
-          requestLogger.warning(
-            'AgentKit could not read capability for agentId=$agentId; '
-            'using gateway callback timeout default '
-            '${_defaultFunctionCallTimeout.inSeconds}s. Error: $e',
-          );
-        }
+      if (request.url.queryParameters.containsKey('agentId')) {
+        return Response.badRequest(body: 'agentId is no longer supported');
       }
-      final session = await _sdk.initSession(
-        capability: capability,
-        agentId: agentId,
+      final body = await _readJsonBody(request);
+      final liteAgentBody = await _buildLiteAgentCapabilityFromAgentKitBody(
+        body,
       );
+      _sanitizeCallbackTimeout(liteAgentBody);
+      capability = Capability.fromJson(liteAgentBody);
+      callbackTimeout = _callbackTimeoutFromCapability(capability);
+      final session = await _sdk.initSession(capability: capability);
       _functionCallTimeoutsBySession[session.sessionId] = callbackTimeout;
-      final finalCapabilityBody = liteAgentBody ?? agentCapabilityBody;
-      if (finalCapabilityBody != null) {
-        _rememberSessionStreamFunctions(session.sessionId, finalCapabilityBody);
-      }
+      _rememberSessionStreamFunctions(session.sessionId, liteAgentBody);
       return _jsonResponse(session.toJson());
     } catch (e) {
       return _errorResponse(e, 'initSession', llmConfig: capability?.llmConfig);
@@ -1157,33 +1068,6 @@ class AgentKitController {
       return;
     }
     body['systemPrompt'] = '';
-  }
-
-  /// Injects llmConfig fallback into agent body
-  /// (for /agent/create, /agent/update).
-  ///
-  /// Only injects when capability.llmConfig is not present.
-  Future<void> _injectLlmConfigForAgentBody(Map<String, dynamic> body) async {
-    final capability = body['capability'];
-    if (capability is Map<String, dynamic>) {
-      if (capability['llmConfig'] != null) return;
-
-      final llmConfig = await _getAvailableLlmConfigJson();
-      if (llmConfig == null || llmConfig.isEmpty) return;
-
-      capability['llmConfig'] = llmConfig;
-      requestLogger.info('AgentKit injected llmConfig fallback for agent');
-    } else if (capability is Map) {
-      final mapped = Map<String, dynamic>.from(capability);
-      if (mapped['llmConfig'] != null) return;
-
-      final llmConfig = await _getAvailableLlmConfigJson();
-      if (llmConfig == null || llmConfig.isEmpty) return;
-
-      mapped['llmConfig'] = llmConfig;
-      body['capability'] = mapped;
-      requestLogger.info('AgentKit injected llmConfig fallback for agent');
-    }
   }
 
   Map<String, dynamic>? _readLlmConfig(Map<String, dynamic> body) {

@@ -2,7 +2,7 @@
 支持通过 [Docker](https://www.docker.com/) 运行。
 
 该网关为所有本地 AI 服务提供统一入口：
-- **AgentKit**：智能体管理与对话（基于 LiteAgent SDK）
+- **AgentKit**：Session 初始化与对话（基于 LiteAgent SDK）
 - **CronKit**：定时任务管理（基于 agentos_kernel）
 - **RagKit**：RAG 知识库管理与检索（基于 agentos_kernel）
 - **AppKit**：应用注册与订阅
@@ -82,10 +82,6 @@ AgentKit 在 `/agentkit/` 下提供 LiteAgent 兼容接口，并通过 LiteAgent
 支持的路由：
 
 - `GET /agentkit/version`
-- `GET /agentkit/agent`
-- `POST /agentkit/agent/create`
-- `POST /agentkit/agent/update`
-- `GET /agentkit/agent/delete`
 - `POST /agentkit/initSession`
 - `POST /agentkit/initSimple`
 - `POST /agentkit/chat`（SSE 流式）
@@ -179,8 +175,7 @@ LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown
 
 `Capability` 的执行限制字段（`maxLlmRequests`、`maxToolRounds`、
 `maxToolCalls`、`maxConsecutiveIdenticalToolRounds` 和
-`maxTaskDurationSeconds`）也会通过 `/agentkit/initSession`、
-`/agentkit/agent/create` 和 `/agentkit/agent/update` 原样转发。
+`maxTaskDurationSeconds`）也会通过 `/agentkit/initSession` 原样转发。
 
 ## CronKit API
 

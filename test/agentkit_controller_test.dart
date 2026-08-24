@@ -20,9 +20,6 @@ class _FakeLiteAgentSDK extends LiteAgentSDK {
 
   SimpleCapability? capturedSimpleCapability;
   Capability? capturedCapability;
-  Agent? capturedAgent;
-  String? capturedUpdatedAgentId;
-  String? capturedInitSessionAgentId;
   Session? capturedHistorySession;
   int? capturedHistoryPage;
   int? capturedHistoryPageSize;
@@ -41,23 +38,9 @@ class _FakeLiteAgentSDK extends LiteAgentSDK {
   }
 
   @override
-  Future<Session> initSession({Capability? capability, String? agentId}) async {
+  Future<Session> initSession({Capability? capability}) async {
     capturedCapability = capability;
-    capturedInitSessionAgentId = agentId;
     return Session(sessionId: 'test-session');
-  }
-
-  @override
-  Future<AgentId> createAgent(Agent agent) async {
-    capturedAgent = agent;
-    return AgentId(agentId: 'agent-1');
-  }
-
-  @override
-  Future<AgentId> updateAgent(String agentId, Agent agent) async {
-    capturedUpdatedAgentId = agentId;
-    capturedAgent = agent;
-    return AgentId(agentId: agentId);
   }
 
   @override
@@ -139,7 +122,7 @@ class _ThrowingLiteAgentSDK extends LiteAgentSDK {
   _ThrowingLiteAgentSDK() : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
 
   @override
-  Future<Session> initSession({Capability? capability, String? agentId}) async {
+  Future<Session> initSession({Capability? capability}) async {
     throw const SocketException('Connection refused');
   }
 
@@ -154,15 +137,11 @@ class _FunctionCallLiteAgentSDK extends LiteAgentSDK {
     this.callbackSessionId,
     this.functionName = 'external_tool',
     this.initSessionId = 'test-session',
-    this.agent,
-    this.failAgentLookup = false,
   }) : super(baseUrl: 'http://127.0.0.1:9527/api/v1');
 
   final String? callbackSessionId;
   final String functionName;
   final String initSessionId;
-  final Agent? agent;
-  final bool failAgentLookup;
 
   ToolReturn? forwardedCallback;
   UserTask? capturedUserTask;
@@ -171,17 +150,7 @@ class _FunctionCallLiteAgentSDK extends LiteAgentSDK {
   final Completer<ToolReturn> functionReturnCompleter = Completer<ToolReturn>();
 
   @override
-  Future<Agent> getAgent(String agentId) async {
-    if (failAgentLookup) throw Exception('agent lookup unavailable');
-    return agent ??
-        Agent(
-          name: 'test-agent',
-          capability: Capability(systemPrompt: 'test'),
-        );
-  }
-
-  @override
-  Future<Session> initSession({Capability? capability, String? agentId}) async {
+  Future<Session> initSession({Capability? capability}) async {
     capturedCapability = capability;
     return Session(sessionId: initSessionId);
   }
@@ -236,7 +205,7 @@ class _StreamFunctionCallLiteAgentSDK extends LiteAgentSDK {
       Completer<EventToolReturn>();
 
   @override
-  Future<Session> initSession({Capability? capability, String? agentId}) async {
+  Future<Session> initSession({Capability? capability}) async {
     return Session(sessionId: initSessionId);
   }
 
@@ -279,7 +248,7 @@ class _RawSseLiteAgentSDK extends LiteAgentSDK {
   _RawSseLiteAgentSDK(String baseUrl) : super(baseUrl: baseUrl);
 
   @override
-  Future<Session> initSession({Capability? capability, String? agentId}) async {
+  Future<Session> initSession({Capability? capability}) async {
     return Session(sessionId: 'root-session');
   }
 }
@@ -922,119 +891,6 @@ Always produce a short plan before tool use.
     expect(response.statusCode, 200);
     expect(fakeSdk.capturedSimpleCapability, isNotNull);
     expect(fakeSdk.capturedSimpleCapability!.skills, const [plannerSkill]);
-  });
-
-  test('forwards skills for /agent/create', () async {
-    final fakeSdk = _FakeLiteAgentSDK();
-    final controller = AgentKitController(
-      sdk: fakeSdk,
-      kernelFuture: Future.value(null),
-    );
-
-    final response = await controller.router.call(
-      Request(
-        'POST',
-        Uri.parse('http://localhost/agent/create'),
-        headers: <String, String>{
-          'authorization': 'Bearer user-token',
-          'content-type': 'application/json',
-        },
-        body: jsonEncode(<String, dynamic>{
-          'name': 'planner-agent',
-          'capability': <String, dynamic>{
-            'systemPrompt': 'hello',
-            'skills': const [plannerSkill],
-            'llmConfig': <String, dynamic>{
-              'baseUrl': 'http://127.0.0.1:52010',
-              'model': 'qwen3-8b',
-            },
-          },
-        }),
-      ),
-    );
-
-    expect(response.statusCode, 200);
-    expect(fakeSdk.capturedAgent, isNotNull);
-    expect(fakeSdk.capturedAgent!.capability.skills, const [plannerSkill]);
-  });
-
-  test('forwards skills for /agent/update', () async {
-    final fakeSdk = _FakeLiteAgentSDK();
-    final controller = AgentKitController(
-      sdk: fakeSdk,
-      kernelFuture: Future.value(null),
-    );
-
-    final response = await controller.router.call(
-      Request(
-        'POST',
-        Uri.parse('http://localhost/agent/update?agentId=agent-1'),
-        headers: <String, String>{
-          'authorization': 'Bearer user-token',
-          'content-type': 'application/json',
-        },
-        body: jsonEncode(<String, dynamic>{
-          'name': 'planner-agent',
-          'capability': <String, dynamic>{
-            'systemPrompt': 'hello',
-            'skills': const [plannerSkill],
-            'llmConfig': <String, dynamic>{
-              'baseUrl': 'http://127.0.0.1:52010',
-              'model': 'qwen3-8b',
-            },
-          },
-        }),
-      ),
-    );
-
-    expect(response.statusCode, 200);
-    expect(fakeSdk.capturedUpdatedAgentId, 'agent-1');
-    expect(fakeSdk.capturedAgent, isNotNull);
-    expect(fakeSdk.capturedAgent!.capability.skills, const [plannerSkill]);
-  });
-
-  test('forwards execution limits for agent create and update', () async {
-    for (final endpoint in <String>[
-      '/agent/create',
-      '/agent/update?agentId=agent-1',
-    ]) {
-      final fakeSdk = _FakeLiteAgentSDK();
-      final controller = AgentKitController(
-        sdk: fakeSdk,
-        kernelFuture: Future.value(null),
-      );
-
-      final response = await controller.router.call(
-        Request(
-          'POST',
-          Uri.parse('http://localhost$endpoint'),
-          headers: <String, String>{
-            'authorization': 'Bearer user-token',
-            'content-type': 'application/json',
-          },
-          body: jsonEncode(<String, dynamic>{
-            'name': 'limited-agent',
-            'capability': <String, dynamic>{
-              'systemPrompt': 'hello',
-              'maxLlmRequests': 32,
-              'maxToolRounds': 8,
-              'maxToolCalls': 20,
-              'maxConsecutiveIdenticalToolRounds': 2,
-              'maxTaskDurationSeconds': 120,
-            },
-          }),
-        ),
-      );
-
-      expect(response.statusCode, 200, reason: endpoint);
-      final capability = fakeSdk.capturedAgent?.capability;
-      expect(capability, isNotNull, reason: endpoint);
-      expect(capability!.maxLlmRequests, 32, reason: endpoint);
-      expect(capability.maxToolRounds, 8, reason: endpoint);
-      expect(capability.maxToolCalls, 20, reason: endpoint);
-      expect(capability.maxConsecutiveIdenticalToolRounds, 2, reason: endpoint);
-      expect(capability.maxTaskDurationSeconds, 120, reason: endpoint);
-    }
   });
 
   test('fills empty systemPrompt when missing for /initSession', () async {
@@ -2698,59 +2554,9 @@ Always produce a short plan before tool use.
     },
   );
 
-  test(
-    'reads callback timeout from agent capability when using agentId',
-    () async {
-      final fakeSdk = _FunctionCallLiteAgentSDK(
-        agent: Agent(
-          name: 'configured-agent',
-          capability: Capability(
-            systemPrompt: 'agent',
-            callbackOpenTool: CallbackOpenTool(opentool: '{}', timeout: 1),
-          ),
-        ),
-      );
-      final controller = AgentKitController(
-        sdk: fakeSdk,
-        kernelFuture: Future.value(null),
-      );
-
-      final initResponse = await controller.router.call(
-        Request(
-          'POST',
-          Uri.parse('http://localhost/initSession?agentId=agent-1'),
-          headers: const <String, String>{'authorization': 'Bearer user-token'},
-        ),
-      );
-      expect(initResponse.statusCode, 200);
-
-      final chatResponse = await controller.router.call(
-        Request(
-          'POST',
-          Uri.parse('http://localhost/chat?sessionId=test-session'),
-          headers: <String, String>{
-            'authorization': 'Bearer user-token',
-            'content-type': 'application/json',
-          },
-          body: jsonEncode(<String, dynamic>{
-            'content': <Map<String, dynamic>>[
-              <String, dynamic>{'type': 'text', 'message': 'hi'},
-            ],
-          }),
-        ),
-      );
-      final streamDone = chatResponse.read().toList();
-      final timedOut = await fakeSdk.functionReturnCompleter.future.timeout(
-        const Duration(seconds: 3),
-      );
-      expect(timedOut.result['error']['message'], contains('1s'));
-      await streamDone;
-    },
-  );
-
-  test('falls back when agent capability cannot be read', () async {
+  test('rejects the removed agentId initSession query', () async {
     final controller = AgentKitController(
-      sdk: _FunctionCallLiteAgentSDK(failAgentLookup: true),
+      sdk: _FunctionCallLiteAgentSDK(),
       kernelFuture: Future.value(null),
     );
 
@@ -2761,7 +2567,9 @@ Always produce a short plan before tool use.
         headers: const <String, String>{'authorization': 'Bearer user-token'},
       ),
     );
-    expect(response.statusCode, 200);
+
+    expect(response.statusCode, 400);
+    expect(await response.readAsString(), 'agentId is no longer supported');
   });
 
   test('sanitizes invalid callbackOpenTool.timeout values', () async {

@@ -104,13 +104,16 @@ void main() {
     expect(payload['reasons'], isNotEmpty);
   });
 
-  test('AgentKit create agent requires bearer', () async {
-    final unauthorized = await post(
+  test('AgentKit removed agent management endpoint is unavailable', () async {
+    final response = await post(
       Uri.parse('$host/agentkit/agent/create'),
-      headers: {'content-type': 'application/json'},
+      headers: {
+        'authorization': 'Bearer user-token',
+        'content-type': 'application/json',
+      },
       body: jsonEncode(<String, dynamic>{'name': 'demo-agent'}),
     );
-    expect(unauthorized.statusCode, 401);
+    expect(response.statusCode, 404);
   });
 
   test('AgentKit endpoints require bearer', () async {

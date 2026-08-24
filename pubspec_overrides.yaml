@@ -1,0 +1,5 @@
+# Local-only dependency override for debugging liteagent_sdk_dart 0.4.0.
+# Remove this file to use the hosted dependency declared in pubspec.yaml.
+dependency_overrides:
+  liteagent_sdk_dart:
+    path: ../liteagent_sdk_dart

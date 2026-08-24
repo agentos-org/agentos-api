@@ -73,21 +73,6 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | `opentool` | `string` | 是 | OpenTool JSON。 |
 | `timeout` | 正整数 | 否 | 外部回调超时秒数。AgentKit 按 session 保存；未提供或值非法时使用网关兼容默认值 300 秒。 |
 
-#### SessionName
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `sessionId` | `string` | 是 | Session ID。 |
-| `name` | `string` | 否 | 子 Agent 名称（`[a-zA-Z0-9_-]{1,64}`）。 |
-| `description` | `string` | 否 | 子 Agent 描述。 |
-
-#### ReflectPrompt
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `llmConfig` | `LLMConfig` | 是 | 反思用 LLM 配置。 |
-| `prompt` | `string` | 是 | 反思提示词。 |
-
 #### Capability
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -96,8 +81,7 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | `systemPrompt` | `string` | 是 | 系统提示词。 |
 | `openSpecList` | `OpenSpec[]` | 否 | 工具规范列表。 |
 | `callbackOpenTool` | `CallbackOpenTool` | 否 | 客户端回调工具。 |
-| `sessionList` | `SessionName[]` | 否 | 子 session 列表。 |
-| `reflectPromptList` | `ReflectPrompt[]` | 否 | 反思提示列表。 |
+| `subAgentList` | `Agent[]` | 否 | 内联子 Agent 列表。每项可递归包含 `Capability`；运行时 session ID 由服务端生成。 |
 | `timeoutSeconds` | `number` | 否 | 默认 `3600`。 |
 | `taskPipelineStrategy` | `string` | 否 | `parallel`、`serial`、`reject`。 |
 | `toolPipelineStrategy` | `string` | 否 | `parallel`、`serial`、`reject`。 |
@@ -122,14 +106,8 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `name` | `string` | 是 | Agent 名称。 |
-| `capability` | `Capability` | 是 | Agent 能力配置。 |
-
-#### AgentId
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `agentId` | `string` | 是 | Agent ID。 |
+| `name` | `string` | 是 | 内联 Agent 名称。 |
+| `capability` | `Capability` | 是 | 内联 Agent 能力配置。 |
 
 #### Session
 
@@ -179,13 +157,12 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `sessionId` | `string` | 是 | Session ID。 |
-| `agentId` | `string` | 否 | Agent ID。 |
 | `originalTaskId` | `string` | 是 | 根任务 ID。对于旧版 LiteAgent 响应，该字段回退为 `taskId`。 |
 | `parentTaskId` | `string` | 否 | 父 task ID。 |
 | `taskId` | `string` | 是 | Task ID。 |
 | `role` | `string` | 是 | `system`、`user`、`agent`、`llm`、`tool`。 |
 | `to` | `string` | 是 | `user`、`agent`、`llm`、`tool`、`client`。 |
-| `type` | `string` | 是 | `text`、`imageUrl`、`dispatch`、`contentList`、`functionCall`、`toolCalls`、`toolReturn`、`reflection`、`taskStatus`、`reasoning`、`reasoningContent`、`planning`。 |
+| `type` | `string` | 是 | `text`、`imageUrl`、`dispatch`、`contentList`、`functionCall`、`toolCalls`、`toolReturn`、`taskStatus`、`reasoning`、`reasoningContent`、`planning`。 |
 | `content` | `any` | 是 | 内容，随 `type` 变化。 |
 | `reasoningContent` | `string` | 否 | 推理文本。 |
 | `completions` | `object` | 否 | Token 使用情况。 |
@@ -219,12 +196,11 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `sessionId` | `string` | 是 | Session ID。 |
-| `agentId` | `string` | 否 | Agent ID。 |
 | `parentTaskId` | `string` | 否 | 父 task ID。 |
 | `taskId` | `string` | 是 | Task ID。 |
 | `role` | `string` | 是 | `system`、`user`、`agent`、`llm`、`tool`。 |
 | `to` | `string` | 是 | `user`、`agent`、`llm`、`tool`、`client`。 |
-| `type` | `string` | 是 | `text`、`imageUrl`、`dispatch`、`contentList`、`functionCall`、`toolCalls`、`toolReturn`、`reflection`、`taskStatus`、`reasoning`、`reasoningContent`、`planning`。 |
+| `type` | `string` | 是 | `text`、`imageUrl`、`dispatch`、`contentList`、`functionCall`、`toolCalls`、`toolReturn`、`taskStatus`、`reasoning`、`reasoningContent`、`planning`。 |
 | `part` | `any` | 是 | 分片内容，随 `type` 变化。 |
 | `createTime` | `string` | 是 | ISO 时间。 |
 
@@ -238,77 +214,15 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 {"version":"<string>"}
 ```
 
-#### GET /agentkit/agent
-
-Query:
-
-| 字段 | 类型 | 必填 |
-| --- | --- | --- |
-| `agentId` | `string` | 是 |
-
-响应：`200 OK`（`Agent`）
-
-#### POST /agentkit/agent/create
-
-请求体：`Agent`
-
-响应：`200 OK`（`AgentId`）
-
-示例请求：
-
-```json
-{
-  "name": "planner",
-  "capability": {
-    "systemPrompt": "You are a helpful planner.",
-    "timeoutSeconds": 3600
-  }
-}
-```
-
-示例响应：
-
-```json
-{"agentId":"agent-1"}
-```
-
-#### POST /agentkit/agent/update
-
-Query:
-
-| 字段 | 类型 | 必填 |
-| --- | --- | --- |
-| `agentId` | `string` | 是 |
-
-请求体：`Agent`
-
-响应：`200 OK`（`AgentId`）
-
-#### GET /agentkit/agent/delete
-
-Query:
-
-| 字段 | 类型 | 必填 |
-| --- | --- | --- |
-| `agentId` | `string` | 是 |
-
-响应：`200 OK`（`AgentId`）
-
 #### POST /agentkit/initSession
 
-Query（可选）：
-
-| 字段 | 类型 | 必填 |
-| --- | --- | --- |
-| `agentId` | `string` | 否 |
-
-请求体（未传 `agentId` 时）：`Capability`
+请求体：`Capability`
 
 说明：
 - 支持 `Capability.skills`，并会原样转发给 LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown 文档。
 - 每个 skill 文档的规范来源为 [agentskills.io/specification](https://agentskills.io/specification)，重点遵循其中 `SKILL.md` 的格式要求：YAML frontmatter 加 Markdown 正文。
 - 也支持 `Capability.llmConfig.modelId`。AgentKit 会先用 `modelId` 在内部模型注册表中做反查，再展开成 LiteAgent 可用的具体 `llmConfig`。其中解析出的模型名会写入 `llmConfig.model`；同时网关还会在可用时补齐 `baseUrl`、`apiKey`、`provider`、`adapter`、`contextWindowSize` 等字段。
-- 网关使用 `callbackOpenTool.timeout` 等待外部 function call 回调。通过 `agentId` 初始化时，会在可获取的情况下读取已保存的 Agent capability；无法获取时使用兼容默认值 300 秒。
+- 网关使用 `callbackOpenTool.timeout` 等待外部 function call 回调。未提供或值非法时使用兼容默认值 300 秒。
 
 响应：`200 OK`（`Session`）
 

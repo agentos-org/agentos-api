@@ -35,6 +35,7 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /pubspec.lock
+/pubspec_overrides.yaml
 /build/
 /coverage/
 
