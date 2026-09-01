@@ -71,7 +71,6 @@ class CronKitController {
         schedule: parsed.schedule,
         spec: spec,
         source: _encodeSource(scope),
-        userId: parsed.userId,
         sessionId: parsed.sessionId,
         timezone: parsed.timezone,
         concurrency: parsed.concurrency,

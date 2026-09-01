@@ -12,6 +12,8 @@ import 'package:test/test.dart';
 
 class _FakeKernelService implements KernelService {
   String? createdSource;
+  String? createdSessionId;
+  String? createdTimezone;
   AgentCronSpecDto? createdSpec;
   final Map<String, CronTaskDto> tasksById = <String, CronTaskDto>{};
   final Map<String, CronRunDto> runsById = <String, CronRunDto>{};
@@ -25,20 +27,20 @@ class _FakeKernelService implements KernelService {
     required String schedule,
     required AgentCronSpecDto spec,
     String source = KernelSources.api,
-    String? userId,
     String? sessionId,
     String? timezone,
     CronTaskConcurrencyDto concurrency = CronTaskConcurrencyDto.skipIfRunning,
     bool enabled = true,
   }) async {
     createdSource = source;
+    createdSessionId = sessionId;
+    createdTimezone = timezone;
     createdSpec = spec;
     final task = CronTaskDto(
       cronId: 'cron-1',
       name: name,
       schedule: schedule,
       source: source,
-      userId: userId,
       sessionId: sessionId,
       timezone: timezone,
       enabled: enabled,
@@ -109,7 +111,6 @@ class _FakeKernelService implements KernelService {
       name: name ?? existing.name,
       schedule: schedule ?? existing.schedule,
       source: existing.source,
-      userId: existing.userId,
       sessionId: existing.sessionId,
       timezone: timezone ?? existing.timezone,
       enabled: enabled ?? existing.enabled,
@@ -331,6 +332,8 @@ void main() {
               ],
               'modelId': 'gpt-4o',
             },
+            'sessionId': 'session-cron-1',
+            'timezone': 'Asia/Shanghai',
           }),
         ),
       );
@@ -339,6 +342,8 @@ void main() {
       final payload =
           jsonDecode(await response.readAsString()) as Map<String, dynamic>;
       expect(kernel.createdSpec, isNotNull);
+      expect(kernel.createdSessionId, 'session-cron-1');
+      expect(kernel.createdTimezone, 'Asia/Shanghai');
       expect(kernel.createdSpec!.llmConfig, isNotNull);
       expect(
         kernel.createdSpec!.llmConfig!.baseUrl,
@@ -350,6 +355,9 @@ void main() {
       expect(payload['spec']['modelName'], 'gpt-4o');
       expect(payload['spec']['modelId'], 'gpt-4o');
       expect(payload['spec'].containsKey('llmConfig'), isFalse);
+      expect(payload.containsKey('userId'), isFalse);
+      expect(payload['sessionId'], 'session-cron-1');
+      expect(payload['timezone'], 'Asia/Shanghai');
       expect(jsonEncode(payload), isNot(contains('secret-key')));
       expect(
         kernel.createdSource,

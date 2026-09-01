@@ -152,6 +152,10 @@ $ cp example/.env.example example/.env
 大模型；完整示例中的大模型调用发生在 `chat` 阶段，`streamCallback` 负责把工具
 流式结果送回 LiteAgent。
 
+`/agentkit/chat` 与 `/agentkit/chat/simple` 也支持在 `UserTask` 请求体中传入
+`llmConfig`。它只覆盖本次请求使用的配置，不会修改 session 默认配置。直接覆盖
+时应传入完整的 LiteAgent 兼容配置；同时支持 AgentKit 扩展的 `modelId` 反查。
+
 `POST /agentkit/initSession` 与 `POST /agentkit/initSimple` 也支持在
 `Capability` / `SimpleCapability` 中传入 `skills`。AgentKit 会原样转发给
 LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown
@@ -208,6 +212,11 @@ CronKit 的任务 `spec` 请求体已对齐 kernel 新 schema：
   "timeoutSeconds": 3600
 }
 ```
+
+`sessionId` 是可选字段。创建任务时传入后，定时执行会复用该 LiteAgent
+session；未传入时，kernel 会在任务执行时初始化 session。`timezone` 接受
+IANA 时区名称，例如 `Asia/Shanghai`；Cron 会按该时区计算，计划时间以 UTC
+返回。
 
 `GET /cronkit/run` 用于读取单条 run 详情，响应里包含 `trigger` 字段，
 用于标识该次 run 的触发方式（如 `manual` 或 `scheduler`）。

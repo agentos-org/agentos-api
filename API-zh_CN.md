@@ -39,10 +39,12 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `modelId` | `string` | 否 | AgentKit 网关扩展字段。`/agentkit/initSession`、`/agentkit/initSimple` 以及 `/agentkit/chat` 这类按任务覆盖 `llmConfig` 的接口均支持。传入后，网关会在内部模型注册表中查找并展开成一份具体的 `llmConfig`。 |
+| `modelId` | `string` | 否 | AgentKit 专有的模型注册表 ID。`/agentkit/initSession`、`/agentkit/initSimple`、`/agentkit/chat` 和 `/agentkit/chat/simple` 均支持。传入后，AgentKit 会解析为具体的 `llmConfig`，将解析出的模型名称写入 `model`，并在可用时补齐 `baseUrl`、`apiKey`、`provider`、`adapter` 和 `contextWindowSize`；它可以替代直接传入的 `baseUrl`/`model` 字段。 |
+| `provider` | `string` | 否 | LLM provider，支持 `openai` 和 `lite_oneapi`；省略时使用 LiteAgent 默认 provider。 |
 | `baseUrl` | `string` | 是 | LLM 接口 base URL。 |
 | `apiKey` | `string` | 是 | LLM API key。 |
 | `model` | `string` | 是 | 模型名称。 |
+| `adapter` | `string` | 否 | `provider=lite_oneapi` 时使用的上游协议/厂商适配器，例如 `openai`、`deepseek`、`glm`、`kimi`、`mimo`、`minimax` 或 `qwen`。 |
 | `temperature` | `number` | 否 | 采样温度。 |
 | `maxTokens` | `number` | 否 | 最大 token 数。 |
 | `contextWindowSize` | `number` | 否 | 上下文窗口大小。 |
@@ -79,6 +81,7 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | --- | --- | --- | --- |
 | `llmConfig` | `LLMConfig` | 否 | LLM 配置。缺省时网关可能从 kernel 注入可用配置。 |
 | `systemPrompt` | `string` | 是 | 系统提示词。 |
+| `skills` | `string[]` | 否 | 转发给 LiteAgent 的完整 Agent Skills Markdown 文档列表，每项应遵循 `SKILL.md` 格式。 |
 | `openSpecList` | `OpenSpec[]` | 否 | 工具规范列表。 |
 | `callbackOpenTool` | `CallbackOpenTool` | 否 | 客户端回调工具。 |
 | `subAgentList` | `Agent[]` | 否 | 内联子 Agent 列表。每项可递归包含 `Capability`；运行时 session ID 由服务端生成。 |
@@ -101,6 +104,7 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 | --- | --- | --- | --- |
 | `llmConfig` | `LLMConfig` | 否 | LLM 配置。缺省时网关可能从 kernel 注入可用配置。 |
 | `systemPrompt` | `string` | 是 | 系统提示词。 |
+| `skills` | `string[]` | 否 | 转发给 LiteAgent 的完整 Agent Skills Markdown 文档列表，每项应遵循 `SKILL.md` 格式。 |
 
 #### Agent
 
@@ -277,14 +281,36 @@ Query:
 | --- | --- | --- |
 | `sessionId` | `string` | 是 |
 
-请求体：`UserTask`
+请求体：`UserTask`。
+
+`llmConfig` 为可选字段。传入后只覆盖本次请求使用的 LLM 配置，不会修改
+当前 session 的默认配置。直接覆盖时请传入完整的 LiteAgent 兼容配置，而不是
+只传需要修改的字段。AgentKit 还支持网关扩展字段 `llmConfig.modelId`，会通过
+内部模型注册表进行解析。
+
+本次请求的 `llmConfig` 字段如下：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `llmConfig.modelId` | `string` | 否 | AgentKit 专有的模型注册表 ID。传入后，AgentKit 会将其解析为具体模型配置，并在可用时补齐 `baseUrl`、`model`、`apiKey`、`provider`、`adapter` 和 `contextWindowSize`。它可以替代直接传入的 `baseUrl`/`model` 字段，同时仍可传入本次请求的调节字段。 |
+| `llmConfig.provider` | `string` | 否 | `openai` 或 `lite_oneapi`。 |
+| `llmConfig.baseUrl` | `string` | 是 | LLM 厂商 API 入口。 |
+| `llmConfig.apiKey` | `string` | 是 | LLM 厂商 API Key。 |
+| `llmConfig.model` | `string` | 是 | 本次请求使用的模型名称。 |
+| `llmConfig.adapter` | `string` | 否 | `provider=lite_oneapi` 时使用的上游协议/厂商适配器。 |
+| `llmConfig.temperature` | `number` | 否 | 温度值，LiteAgent 默认 `0`。 |
+| `llmConfig.maxTokens` | `number` | 否 | 最大 token 数，LiteAgent 默认 `4096`。 |
+| `llmConfig.contextWindowSize` | `number` | 否 | 上下文窗口大小。 |
+| `llmConfig.topP` | `number` | 否 | 概率抽样的 p 值，LiteAgent 默认 `1`。 |
+| `llmConfig.supportsToolCall` | `boolean` | 否 | 是否支持工具调用，LiteAgent 默认 `true`。 |
+| `llmConfig.supportsReasoning` | `boolean` | 否 | 是否支持推理，LiteAgent 默认 `false`。 |
 
 响应：`200 OK`，`text/event-stream`
 
 事件类型：
 - `message`：`AgentMessage`
 - `chunk`：`AgentMessageChunk`
-- `functionCall`：`{"sessionId":"<string>","functionCall":FunctionCall}`
+- `functionCall`：`{"sessionId":"<string>","functionCall":FunctionCall}`。对于支持流式回调的函数调用，网关还会附带 `"stream":true`。
 
 示例请求：
 
@@ -293,7 +319,14 @@ Query:
   "content": [
     {"type": "text", "message": "Summarize this repository."}
   ],
-  "isChunk": true
+  "isChunk": true,
+  "llmConfig": {
+    "provider": "lite_oneapi",
+    "baseUrl": "https://your-oneapi-server/v1",
+    "apiKey": "sk-xxxxxxxxxx",
+    "model": "qwen-plus",
+    "adapter": "qwen"
+  }
 }
 ```
 
@@ -305,7 +338,32 @@ Query:
 | --- | --- | --- |
 | `sessionId` | `string` | 是 |
 
-请求体：`UserTask`
+请求体：`UserTask`。
+
+`llmConfig` 与 `/agentkit/chat` 具有相同的“仅本次请求覆盖”语义：只覆盖本次
+请求，不更新 session 默认配置。直接覆盖时请传入完整配置；同时支持网关扩展的
+`llmConfig.modelId` 反查。
+
+本次请求的 `llmConfig` 字段与 `/agentkit/chat` 相同：`provider`、`baseUrl`、
+`modelId`、`apiKey`、`model`、`adapter`、`temperature`、`maxTokens`、
+`contextWindowSize`、`topP`、`supportsToolCall` 和 `supportsReasoning`。
+
+示例请求：
+
+```json
+{
+  "content": [
+    {"type": "text", "message": "Give me a random number."}
+  ],
+  "llmConfig": {
+    "provider": "lite_oneapi",
+    "baseUrl": "https://your-oneapi-server/v1",
+    "apiKey": "sk-xxxxxxxxxx",
+    "model": "qwen-plus",
+    "adapter": "qwen"
+  }
+}
+```
 
 响应：`200 OK`（`AgentMessage`）
 
@@ -485,6 +543,12 @@ Query:
 - 适用于客户端保留了原始流事件上下文，并希望带着事件类型回传工具结果的场景。
 - 已超时或完成的网关代理调用，其迟到流事件同样返回 `200 OK` 的 ignored 响应，并且不会再次转发到下游。
 
+### LiteAgent 兼容边界
+
+AgentKit 暴露了上面列出的 LiteAgent 兼容端点。LiteAgent 服务端独有的
+`/presetOpenSpecList` 和 `/session/subscribe` 当前不会通过 `/agentkit` 代理；
+需要时请直接访问 LiteAgent 服务。
+
 ## CronKit
 
 CronKit 提供基于 kernel 的定时任务管理与历史读取接口。
@@ -512,9 +576,8 @@ CronKit 提供基于 kernel 的定时任务管理与历史读取接口。
 | `name` | `string` | 是 | 任务名称。 |
 | `schedule` | `string` | 是 | Cron 表达式。 |
 | `source` | `string` | 是 | 内部来源/归属标记。 |
-| `userId` | `string` | 否 | 可选用户 ID。 |
-| `sessionId` | `string` | 否 | 可选 session ID。 |
-| `timezone` | `string` | 否 | 任务时区。 |
+| `sessionId` | `string` | 否 | 可选 LiteAgent session ID；定时执行时复用该 session。 |
+| `timezone` | `string` | 否 | 可选 IANA 任务时区；调度按该时区计算，计划时间以 UTC 序列化。 |
 | `enabled` | `boolean` | 是 | 是否启用。 |
 | `status` | `string` | 是 | 当前任务状态。 |
 | `concurrency` | `string` | 是 | 并发策略。 |

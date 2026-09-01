@@ -163,6 +163,12 @@ tool returns and does not call the LLM. In the full example, the LLM call
 happens during `chat`; `streamCallback` carries streamed tool results back to
 LiteAgent.
 
+Both `/agentkit/chat` and `/agentkit/chat/simple` also accept `llmConfig` in
+the `UserTask` body. It overrides the session default for that request only
+and does not update the session. Direct overrides should include the complete
+LiteAgent-compatible config; the AgentKit-only `modelId` lookup is supported as
+well.
+
 `POST /agentkit/initSession` and `POST /agentkit/initSimple` also support a
 `skills` field on `Capability` / `SimpleCapability`. AgentKit forwards it
 as-is to LiteAgent SDK. Each entry should be a complete Agent Skills markdown
@@ -219,6 +225,12 @@ CronKit request bodies use the kernel cron schema. Task `spec` now uses:
   "timeoutSeconds": 3600
 }
 ```
+
+`sessionId` is optional. When provided on task creation, scheduled runs reuse
+that LiteAgent session; when omitted, the kernel initializes a session when the
+task runs. `timezone` accepts an IANA timezone name such as `Asia/Shanghai`;
+the scheduler evaluates the cron expression in that timezone while scheduling
+timestamps are returned in UTC.
 
 `GET /cronkit/run` returns one run record. The response includes `trigger`
 to indicate how the run was started (for example, `manual` or `scheduler`).

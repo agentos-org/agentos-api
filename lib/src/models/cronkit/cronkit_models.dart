@@ -30,7 +30,6 @@ class CronKitCreateTaskRequest {
     required this.schedule,
     required this.spec,
     required this.source,
-    this.userId,
     this.sessionId,
     this.timezone,
     this.concurrency = CronTaskConcurrencyDto.skipIfRunning,
@@ -41,7 +40,6 @@ class CronKitCreateTaskRequest {
   final String schedule;
   final CronKitAgentCronSpecInput spec;
   final String source;
-  final String? userId;
   final String? sessionId;
   final String? timezone;
   final CronTaskConcurrencyDto concurrency;
@@ -57,7 +55,6 @@ class CronKitCreateTaskRequest {
       schedule: schedule,
       spec: spec,
       source: source,
-      userId: _optionalString(json['userId']),
       sessionId: _optionalString(json['sessionId']),
       timezone: _optionalString(json['timezone']),
       concurrency: _parseConcurrency(
@@ -172,7 +169,6 @@ class CronKitTaskDto {
     required this.createdAt,
     required this.updatedAt,
     required this.spec,
-    this.userId,
     this.sessionId,
     this.timezone,
     this.lastRunAt,
@@ -183,7 +179,6 @@ class CronKitTaskDto {
   final String name;
   final String schedule;
   final String source;
-  final String? userId;
   final String? sessionId;
   final String? timezone;
   final bool enabled;
@@ -205,7 +200,6 @@ class CronKitTaskDto {
       name: dto.name,
       schedule: dto.schedule,
       source: dto.source,
-      userId: dto.userId,
       sessionId: dto.sessionId,
       timezone: dto.timezone,
       enabled: dto.enabled,
@@ -224,7 +218,6 @@ class CronKitTaskDto {
     'name': name,
     'schedule': schedule,
     'source': source,
-    'userId': userId,
     'sessionId': sessionId,
     'timezone': timezone,
     'enabled': enabled,
