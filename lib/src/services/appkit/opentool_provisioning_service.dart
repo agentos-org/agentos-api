@@ -150,9 +150,13 @@ class OpenToolProvisioningService implements OpenToolProvisioner {
       ];
       ToolDto? readyTool;
       for (final tool in candidateTools) {
-        if (await gateway.isReady(tool.id).timeout(lookupTimeout)) {
-          readyTool = tool;
-          break;
+        try {
+          if (await gateway.isReady(tool.id).timeout(lookupTimeout)) {
+            readyTool = tool;
+            break;
+          }
+        } catch (_) {
+          // 超时或其他异常视为该 tool 未就绪，继续检查下一个
         }
       }
 
@@ -400,7 +404,13 @@ class DaemonOpenToolGateway implements OpenToolDaemonGateway {
         .where((tool) => tool.serverId == serverId)
         .map((tool) => tool.id)
         .toSet();
-    await _client.runServer(serverId, null).timeout(readinessTimeout);
+    await _client
+        .runServer(
+          serverId,
+          '127.0.0.1',
+          timeoutSeconds: readinessTimeout.inSeconds,
+        )
+        .timeout(readinessTimeout + const Duration(seconds: 5));
     final tools = await listTools();
     final createdId = await _firstReadyToolId(
       tools.where(
@@ -437,7 +447,7 @@ class DaemonOpenToolGateway implements OpenToolDaemonGateway {
 
   Future<String?> _firstReadyToolId(Iterable<ToolDto> tools) async {
     for (final tool in tools) {
-      if (tool.status == _runningToolStatus && await isReady(tool.id)) {
+      if (tool.status == _runningToolStatus) {
         return tool.id;
       }
     }
