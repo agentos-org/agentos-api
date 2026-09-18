@@ -415,6 +415,8 @@ abstract class NearbyServiceLocator {
     required List<TransferFileInfo> files,
     String? userId,
     String? targetBundleId,
+    String? targetHost,
+    int? targetPort,
   });
 
   /// Stream of file transfer progress updates.
