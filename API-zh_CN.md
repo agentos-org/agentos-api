@@ -5,8 +5,8 @@
 ## 鉴权
 
 所有 `/agentkit/*`、`/cronkit/*`、`/ragkit/*`、`/authkit/*`、
-`/discoverykit/*`、`/transferkit/*` 路由以及 `GET /appkit/subscribe`
-都需要 Bearer token。
+`/discoverykit/*`、`/transferkit/*`、`/notifykit/*` 路由以及
+`GET /appkit/subscribe` 都需要 Bearer token。
 
 对于 `/cronkit/*`，Bearer token 必须来自 `POST /appkit/register`。
 Cron 任务权限按该 token 解析出的 app 身份控制：
@@ -1381,6 +1381,35 @@ register 返回 `starting` 的声明，App 应以 `toolkit.provision.succeeded` 
 `toolkit.tool.available`。`app.command.requested` 类型预留给未来发送到 App 的指令。
 
 如果 token 缺失或无效，直接返回 `401`。
+
+## NotifyKit
+
+NotifyKit 允许 App 将面向用户的事件提交到 AgentOS 通知中心。它只接受事件内容；
+App 不能传入优先级、分组 ID、去重 key 或展示策略。
+
+### POST /notifykit/notifications
+
+需要 `POST /appkit/register` 返回的 Bearer token。
+
+请求体：
+
+```json
+{
+  "eventType": "task.completed",
+  "subjectId": "job-123",
+  "title": "任务完成",
+  "message": "导出文件已准备好。"
+}
+```
+
+`eventType` 必须是小写的点分名称。平台只会对平台定义的事件名称计算非中性的级别，
+并统一执行 App 级别的限流、可见分类数量上限以及重复事件合并。已知分类包括 `auth`、`chat`、
+`download`、`model`、`service`、`sync`、`task`、`transfer` 和 `update`；未知或
+超出上限的分类会归入 `other`。
+
+带有相同 `subjectId` 的重复事件会合并为一条。没有 subject 的事件在短去重窗口内
+内容重复时也会合并。响应中的通知记录和累计次数均由平台生成；`429` 表示该 App
+超过了通知速率限制。
 
 ## AuthKit
 

@@ -5,8 +5,8 @@ Base URL: `http://<host>:<port>` (default port: `8888`).
 ## Authentication
 
 Bearer token is required for all `/agentkit/*`, `/cronkit/*`, `/ragkit/*`,
-`/authkit/*`, `/discoverykit/*`, and `/transferkit/*` routes, and for
-`GET /appkit/subscribe`.
+`/authkit/*`, `/discoverykit/*`, `/transferkit/*`, and `/notifykit/*` routes,
+and for `GET /appkit/subscribe`.
 
 For `/cronkit/*`, the bearer token must be an AppKit-issued token from
 `POST /appkit/register`. Cron task ownership is isolated by the token's
@@ -1403,6 +1403,39 @@ tool after `toolkit.tool.unavailable` until `toolkit.tool.available` arrives.
 The `app.command.requested` type is reserved for future commands sent to apps.
 
 If the token is missing or invalid, returns `401`.
+
+## NotifyKit
+
+NotifyKit lets an App submit a user-facing event to the AgentOS notification
+center. It is intentionally content-only: the App cannot provide a priority,
+group ID, deduplication key, or presentation policy.
+
+### POST /notifykit/notifications
+
+Requires the Bearer token returned by `POST /appkit/register`.
+
+Request body:
+
+```json
+{
+  "eventType": "task.completed",
+  "subjectId": "job-123",
+  "title": "Task complete",
+  "message": "The export is ready."
+}
+```
+
+`eventType` is a lowercase dotted name. The platform derives the category and
+level only for platform-defined event names, limits each App's event rate, bounds the number of visible
+categories, and deduplicates repeated events. Known categories include
+`auth`, `chat`, `download`, `model`, `service`, `sync`, `task`, `transfer`, and
+`update`; unknown or overflow categories are grouped as `other`.
+
+Repeated events with the same `subjectId` are collapsed into one item. Events
+without a subject are collapsed when their content repeats within the short
+deduplication window. The response contains the platform-owned notification
+record and its aggregate count. `429` means the App source exceeded its rate
+limit.
 
 ## AuthKit
 

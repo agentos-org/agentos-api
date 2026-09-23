@@ -6,6 +6,7 @@ import 'locator.dart';
 import 'controllers/agentkit/agentkit_controller.dart';
 import 'controllers/authkit/authkit_controller.dart';
 import 'controllers/appkit/appkit_controller.dart';
+import 'controllers/notifykit/notifykit_controller.dart';
 import 'controllers/cronkit/cronkit_controller.dart';
 import 'controllers/discoverykit/discoverykit_controller.dart';
 import 'controllers/modelkit/modelkit_controller.dart';
@@ -18,6 +19,7 @@ import 'config.dart';
 import 'middleware.dart';
 import 'services/authkit/authkit_bridge.dart';
 import 'services/appkit/appkit_service.dart';
+import 'services/notifykit/notifykit_service.dart';
 import 'services/appkit/opentool_availability_service.dart';
 import 'services/appkit/opentool_provisioning_service.dart';
 import 'services/authkit/authkit_service.dart';
@@ -56,6 +58,8 @@ Handler createGatewayHandler({
   void Function(AuthKitBridge bridge)? onAuthKitBridgeReady,
   HarnessKitClient? harnessKitClient,
   void Function(String token)? onHarnessKitReady,
+  NotifyKitService? notifyKitService,
+  void Function(NotifyKitService service)? onNotifyKitReady,
 }) {
   final router = createGatewayRouter(
     serviceLocator: serviceLocator,
@@ -68,6 +72,8 @@ Handler createGatewayHandler({
     onAuthKitBridgeReady: onAuthKitBridgeReady,
     harnessKitClient: harnessKitClient,
     onHarnessKitReady: onHarnessKitReady,
+    notifyKitService: notifyKitService,
+    onNotifyKitReady: onNotifyKitReady,
   );
 
   var pipeline = const Pipeline();
@@ -107,6 +113,8 @@ Router createGatewayRouter({
   void Function(AuthKitBridge bridge)? onAuthKitBridgeReady,
   HarnessKitClient? harnessKitClient,
   void Function(String token)? onHarnessKitReady,
+  NotifyKitService? notifyKitService,
+  void Function(NotifyKitService service)? onNotifyKitReady,
 }) {
   final instanceId = _createGatewayInstanceId();
   requestLogger.info('Creating gateway router instanceId=$instanceId');
@@ -147,6 +155,16 @@ Router createGatewayRouter({
     openToolAvailabilityTracker: resolvedOpenToolAvailabilityTracker,
   );
   router.mount('${ApiConfig.appkitPath}/', appKitController.router.call);
+
+  // NotifyKit API. App source identity comes from the AppKit bearer token;
+  // the service owns grouping, deduplication and presentation policy.
+  final resolvedNotifyKitService = notifyKitService ?? NotifyKitService();
+  final notifyKitController = NotifyKitController(
+    service: resolvedNotifyKitService,
+    appKitService: appKitService,
+  );
+  router.mount('${ApiConfig.notifykitPath}/', notifyKitController.router.call);
+  onNotifyKitReady?.call(resolvedNotifyKitService);
 
   // CronKit API (cron task management, requires Token)
   final cronKitModelRefStore = HiveCronKitModelRefStore();

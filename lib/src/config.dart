@@ -23,6 +23,9 @@ class ApiConfig {
   /// AppKit API path (app registration/subscription)
   static const String appkitPath = '/appkit';
 
+  /// NotifyKit API path (App notification publishing).
+  static const String notifykitPath = '/notifykit';
+
   /// ToolKit API path (proxy to OpenTool)
   static const String toolkitPath = '/toolkit';
 
