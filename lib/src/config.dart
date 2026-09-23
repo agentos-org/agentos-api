@@ -47,6 +47,13 @@ class ApiConfig {
   /// TransferKit API path (file transfer between devices)
   static const String transferkitPath = '/transferkit';
 
+  /// HarnessKit API path (internal Harness WebApp bridge).
+  ///
+  /// This route is intentionally a server-side integration point rather than
+  /// part of the public SDK surface. The built-in Harness WebApp reaches it
+  /// with the AppKit token issued during its AgentOS connection.
+  static const String harnesskitPath = '/harnesskit';
+
   // ============ ModelKit Sub-paths ============
 
   /// Chat task path — unified entry for text and vision chat completions.
@@ -91,6 +98,9 @@ class ApiConfig {
 
   /// Embeddings server default port
   static const int defaultEmbeddingsPort = 9537;
+
+  /// Harness sidecar default port.
+  static const int defaultHarnessPort = 9538;
 
   /// LLM chat service default port
   static const int defaultLlmChatPort = 52010;
