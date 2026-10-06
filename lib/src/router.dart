@@ -188,6 +188,7 @@ Router createGatewayRouter({
   final toolKitController = ToolKitController(
     client: openToolClient,
     appKitService: appKitService,
+    serviceLocator: serviceLocator,
   );
   router.mount('${ApiConfig.toolkitPath}/', toolKitController.router.call);
 

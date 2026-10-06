@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'services/toolkit/app_open_tool_provider.dart';
+
 /// Unified service state across all service types
 enum ServiceState { stopped, starting, running, error }
 
@@ -267,6 +269,21 @@ extension AgentOSServiceLocatorOpenToolConfig on AgentOSServiceLocator {
       }
     } catch (_) {}
     return '127.0.0.1';
+  }
+}
+
+extension AgentOSServiceLocatorAppOpenToolProvider on AgentOSServiceLocator {
+  /// Optional host bridge for process App OpenTool providers.
+  ///
+  /// Kept optional so existing external service locators remain compatible.
+  AppOpenToolProvider? get appOpenToolProvider {
+    final dynamic self = this;
+    try {
+      final value = self.appOpenToolProvider;
+      return value is AppOpenToolProvider ? value : null;
+    } catch (_) {
+      return null;
+    }
   }
 }
 

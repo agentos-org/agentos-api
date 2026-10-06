@@ -2105,10 +2105,27 @@ Missing or invalid tokens return `401`.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/toolkit/list` | List running tools, or all tools with `all=1`. |
+| GET | `/toolkit/list` | List callable tools; `all=1` also includes stopped `opentool-server` tools. |
 | POST | `/toolkit/{toolId}/call` | Call a tool function. |
 | POST | `/toolkit/{toolId}/streamCall` | Call a tool function with SSE results. |
 | GET | `/toolkit/{toolId}/load` | Return the tool description and function schemas. |
+
+ToolKit also lists process Apps that opt in with `rpc.discovery: "runtime"`
+(or the supported legacy `rpc.systemMethods` declaration) as
+`app:{bundleId}` tools after the user enables at least one currently declared
+function. Their schemas are fetched dynamically from the App backend when
+`/load` is requested; the backend is not started for Apps without an explicit
+opt-in. Users enable each function in Settings → App before it appears in
+`/load` or can be called. App-owned tools are proxied by AgentOS
+and are independent from `opentool-server` tools managed by OpenTool Daemon.
+Opted-in App providers are listed even while their dedicated backend is
+stopped; their `status: "running"` means the ToolKit route can start the
+backend on demand. App entries omit `host` and `port` because AgentOS proxies
+their calls.
+For App tools, ToolKit translates its `FunctionCall` body (`id`, `name`, and
+`arguments`) to the App's JSON-RPC request and adapts the JSON-RPC response and
+SSE frames back to ToolKit result shapes. The App backend does not need to
+implement the AgentOS `FunctionCall` wire format.
 
 ### Common Schemas
 

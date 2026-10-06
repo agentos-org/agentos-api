@@ -2070,10 +2070,22 @@ Authorization: Bearer <POST /appkit/register 返回的 token>
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/toolkit/list` | 列出运行中的工具，`all=1` 时列出全部工具。 |
+| GET | `/toolkit/list` | 列出可调用工具；`all=1` 还会包含已停止的 `opentool-server` 工具。 |
 | POST | `/toolkit/{toolId}/call` | 调用工具函数。 |
 | POST | `/toolkit/{toolId}/streamCall` | 调用工具函数并通过 SSE 返回结果。 |
 | GET | `/toolkit/{toolId}/load` | 返回工具描述和函数 schema。 |
+
+ToolKit 还会将声明 `rpc.discovery: "runtime"`（或使用受支持的旧版
+`rpc.systemMethods` 声明）的进程 App 列为 `app:{bundleId}` 工具，但需用户至少启用一个当前 schema 中的函数。请求 `/load` 时会从 App
+后端动态获取 schema；未显式 opt-in 的 App 不会为此启动。用户必须先在“设置 → 应用”中启用
+单个函数，它才会出现在 `/load` 响应中并允许调用。App 自有工具由 AgentOS 代理，与 OpenTool
+Daemon 管理的 `opentool-server` 工具相互独立。
+已 opt-in 的 App provider 即使专用后端尚未启动也会出现在列表中；App 条目的
+`status: "running"` 表示 ToolKit 路由可按需启动后端。App 条目不含 `host` 和 `port`，因为调用由
+AgentOS 代理。
+对于 App 工具，ToolKit 会将 `FunctionCall` 请求体（`id`、`name` 和 `arguments`）转换为 App 的
+JSON-RPC 请求，并把 JSON-RPC 响应与 SSE 帧转换回 ToolKit 结果格式。App 后端无需实现 AgentOS
+`FunctionCall` 请求格式。
 
 ### 常用 Schema
 

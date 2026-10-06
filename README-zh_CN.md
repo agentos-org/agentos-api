@@ -273,9 +273,9 @@ $ curl http://127.0.0.1:8888/toolkit/list \
 
 常用端点：
 
-- `GET /toolkit/list?all=0` - 列出运行中的工具。`all=1` 会包含已停止工具。
-  返回 `[{ "id", "alias", "host", "port", "status", "serverId",
-  "server": { "namespace", "name", "version" } }]`。
+- `GET /toolkit/list?all=0` - 列出可调用工具；`all=1` 还会包含已停止的
+  `opentool-server` 工具。`opentool-server` 条目包含 `host`、`port`、`status` 和可选的来源信息；App
+  条目使用相同的 `id`、`alias`、`status` 字段，但不含 `host` 和 `port`，因为调用由 AgentOS 代理。
 - `GET /toolkit/{toolId}/load` - 返回工具的 OpenTool JSON 描述，包含可用函数
   和参数 schema。
 - `POST /toolkit/{toolId}/call` - 调用一个函数：
@@ -283,6 +283,14 @@ $ curl http://127.0.0.1:8888/toolkit/list \
   `{"id":"call-001","result":{...}}`。
 - `POST /toolkit/{toolId}/streamCall` - 调用一个函数，并通过 SSE 接收长耗时或
   增量结果。
+
+ToolKit 还会将显式 opt-in 的进程 App 列为 `app:{bundleId}` 工具，但需用户至少启用一个当前 schema 中的函数。通过 `/load`
+获取 App 当前 schema；只有请求 schema 或函数时才会启动 App 后端。每个函数都必须由用户在
+“设置 → 应用”中启用，才会出现在 `/load` 响应中并允许 `/call` 调用。没有声明
+`rpc.discovery: "runtime"`（或旧版 `rpc.systemMethods` opt-in）的 App 不会列出。
+App 工具由 AgentOS 代理，与 OpenTool Daemon 管理的 `opentool-server` 工具相互独立。
+App 条目的 `status: "running"` 表示 ToolKit provider 可用；App 专用后端在首次 `/load` 或函数调用前仍可处于停止状态。
+对于 App 工具，Gateway 会将 ToolKit `FunctionCall` 请求转换为 App 的 JSON-RPC wire format，并将调用响应和 SSE 帧转换回 ToolKit 结果格式。
 
 ## ModelKit API
 

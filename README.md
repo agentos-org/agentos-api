@@ -288,9 +288,11 @@ $ curl http://127.0.0.1:8888/toolkit/list \
 
 Common endpoints:
 
-- `GET /toolkit/list?all=0` - list running tools. Use `all=1` to include
-  stopped tools. Returns `[{ "id", "alias", "host", "port", "status",
-  "serverId", "server": { "namespace", "name", "version" } }]`.
+- `GET /toolkit/list?all=0` - list callable tools. `all=1` also includes
+  stopped `opentool-server` tools. `opentool-server` entries include `host`,
+  `port`, `status`, and optional server metadata. App entries use the same
+  `id`/`alias`/`status` shape but omit `host` and `port` because AgentOS
+  proxies their calls.
 - `GET /toolkit/{toolId}/load` - return the tool's OpenTool JSON
   description, including available functions and parameter schemas.
 - `POST /toolkit/{toolId}/call` - call one function:
@@ -298,6 +300,21 @@ Common endpoints:
   `{"id":"call-001","result":{...}}`.
 - `POST /toolkit/{toolId}/streamCall` - call one function and receive an
   SSE stream for long-running or incremental results.
+
+ToolKit also lists explicitly opted-in process Apps as `app:{bundleId}` tools
+after the user enables at least one currently declared function. Use `/load` to
+fetch the App's current schema; the App backend is started only
+when its schema or a function is requested. Each function must be enabled by
+the user in Settings → App before `/load` includes it or `/call` accepts
+it. Apps without `rpc.discovery: "runtime"` (or the legacy `rpc.systemMethods`
+opt-in) are not listed. These App tools are proxied by AgentOS and are separate
+from `opentool-server` tools managed by OpenTool Daemon.
+An App entry's `status: "running"` means its ToolKit provider is available;
+the App's dedicated backend can still be stopped until the first `/load` or
+function call.
+For App tools, the gateway converts ToolKit `FunctionCall` requests to the
+App's JSON-RPC wire format and adapts call responses and SSE frames back to
+ToolKit result shapes.
 
 ## ModelKit API
 

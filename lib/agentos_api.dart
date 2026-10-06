@@ -38,6 +38,7 @@ export 'src/services/authkit/authkit_service.dart';
 export 'src/services/discoverykit/discoverykit_service.dart';
 export 'src/services/transferkit/transferkit_service.dart';
 export 'src/services/toolkit/opentool_client.dart';
+export 'src/services/toolkit/app_open_tool_provider.dart';
 export 'src/services/harnesskit/harnesskit_client.dart';
 export 'src/services/modelkit/model_client.dart';
 export 'src/services/kernel/kernel_bootstrap.dart';
