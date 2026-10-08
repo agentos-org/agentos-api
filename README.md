@@ -304,11 +304,17 @@ Common endpoints:
 Task-oriented model proxy. Vision models live behind `/modelkit/chat` and are
 identified by `capabilities.vision` on the resolved model.
 
+- `GET /modelkit/models` - Task-oriented model listing
+- `GET /modelkit/chat/models` - OpenAI-compatible chat model listing
 - `ALL /modelkit/chat/*` - Text/vision generation (chat completions)
 - `ALL /modelkit/embedding/*` - Text embeddings
 - `ALL /modelkit/asr/*` - Speech-to-text
 - `ALL /modelkit/tts/*` - Text-to-speech
-- `GET /modelkit/models` - Task-oriented model listing
+- `GET /modelkit/app-models` - List app-registered models
+- `POST /modelkit/app-models` - Register a model from a third-party app
+- `PUT /modelkit/app-models/<id>` - Update an app-registered model
+- `DELETE /modelkit/app-models/<id>` - Unregister an app-registered model
+- `POST /modelkit/app-models/<id>/toggle` - Toggle an app-registered model's disabled state
 
 ## AppKit API
 

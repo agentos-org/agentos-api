@@ -289,11 +289,17 @@ $ curl http://127.0.0.1:8888/toolkit/list \
 基于任务的模型代理。视觉模型归于 `/modelkit/chat`，通过模型的
 `capabilities.vision` 标识。
 
+- `GET /modelkit/models` - 基于任务的模型列表
+- `GET /modelkit/chat/models` - OpenAI 兼容的 chat 模型列表
 - `ALL /modelkit/chat/*` - 文本/视觉生成（chat completions）
 - `ALL /modelkit/embedding/*` - 文本嵌入
 - `ALL /modelkit/asr/*` - 语音转文本
 - `ALL /modelkit/tts/*` - 文本转语音
-- `GET /modelkit/models` - 基于任务的模型列表
+- `GET /modelkit/app-models` - 列出应用注册的模型
+- `POST /modelkit/app-models` - 第三方应用注册模型
+- `PUT /modelkit/app-models/<id>` - 更新应用注册的模型
+- `DELETE /modelkit/app-models/<id>` - 注销应用注册的模型
+- `POST /modelkit/app-models/<id>/toggle` - 切换应用注册模型的启用/禁用状态
 
 ## AppKit API
 

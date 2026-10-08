@@ -98,6 +98,13 @@ class LlmModelInfo {
   /// Whether this model is a user-defined custom remote model.
   final bool isCustom;
 
+  /// Whether this model is registered by a third-party app.
+  final bool isAppModel;
+
+  /// The bundle ID of the third-party app that registered this model.
+  /// Null for non-app models.
+  final String? appBundleId;
+
   /// Task-oriented identifier (`chat` / `embedding` / `asr` / `tts`).
   ///
   /// Optional to preserve binary compatibility with locators that still emit
@@ -157,6 +164,8 @@ class LlmModelInfo {
     this.baseUrl,
     this.apiKey,
     this.isCustom = false,
+    this.isAppModel = false,
+    this.appBundleId,
     this.task,
     this.inputModalities = const [],
     this.outputModalities = const [],
@@ -188,6 +197,8 @@ class LlmModelInfo {
     if (baseUrl != null) 'baseUrl': baseUrl,
     if (apiKey != null) 'apiKey': apiKey,
     if (isCustom) 'isCustom': true,
+    if (isAppModel) 'isAppModel': true,
+    if (appBundleId != null) 'appBundleId': appBundleId,
     if (task != null) 'task': task,
     'provider': provider,
     if (inputModalities.isNotEmpty) 'input': inputModalities,
@@ -248,6 +259,95 @@ abstract class AgentOSServiceLocator {
   /// Returns LLM models registered by external implementations.
   /// Default implementation returns empty list.
   Future<List<LlmModelInfo>> getLlmModelList();
+}
+
+/// App model management mixin for [AgentOSServiceLocator].
+///
+/// Third-party applications register models through ModelKit API, and
+/// locators that support app models implement this interface.
+/// Default no-op implementations are provided via extension for backward
+/// compatibility with locators that do not yet support app models.
+abstract class AppModelStore {
+  /// Lists all app-registered models.
+  List<AppModelData> get appModels;
+
+  /// Adds an app-registered model.
+  Future<void> addAppModel(AppModelData model);
+
+  /// Updates an app-registered model.
+  Future<bool> updateAppModel(String id, AppModelData model);
+
+  /// Deletes an app-registered model.
+  Future<bool> deleteAppModel(String id);
+
+  /// Toggles an app-registered model's disabled state.
+  Future<bool> toggleAppModelDisabled(String id);
+
+  /// Removes all models registered by a specific app.
+  Future<int> removeAppModelsByBundleId(String bundleId);
+}
+
+/// App model data used at the API layer (independent of Hive persistence).
+class AppModelData {
+  final String id;
+  final String name;
+  final String alias;
+  final String description;
+  final String task;
+  final String provider;
+  final List<String> inputModalities;
+  final List<String> outputModalities;
+  final bool stream;
+  final bool toolCall;
+  final bool reasoning;
+  final String? baseUrl;
+  final String? apiKey;
+  final int? contextSize;
+  final bool isDisabled;
+  final String appBundleId;
+  final String appName;
+
+  const AppModelData({
+    required this.id,
+    required this.name,
+    this.alias = '',
+    this.description = '',
+    this.task = 'chat',
+    this.provider = 'openai_compatible',
+    this.inputModalities = const ['text'],
+    this.outputModalities = const ['text'],
+    this.stream = true,
+    this.toolCall = false,
+    this.reasoning = true,
+    this.baseUrl,
+    this.apiKey,
+    this.contextSize,
+    this.isDisabled = false,
+    required this.appBundleId,
+    this.appName = '',
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'alias': alias,
+        'description': description,
+        'task': task,
+        'provider': provider,
+        'input': inputModalities,
+        'output': outputModalities,
+        'capabilities': {
+          'stream': stream,
+          'tool_call': toolCall,
+          'reasoning': reasoning,
+        },
+        if (baseUrl != null) 'baseUrl': baseUrl,
+        'hasApiKey': (apiKey ?? '').isNotEmpty,
+        if (contextSize != null) 'contextWindowSize': contextSize,
+        'isDisabled': isDisabled,
+        'appBundleId': appBundleId,
+        'appName': appName,
+      };
 }
 
 extension AgentOSServiceLocatorOpenToolConfig on AgentOSServiceLocator {

@@ -1977,10 +1977,13 @@ Query：
     "/discoverykit/*": "DiscoveryKit API（附近设备发现，需要 Token）",
     "/transferkit/*": "TransferKit API（跨设备文件传输，需要 Token）",
     "/toolkit/*": "ToolKit API（需要 Token）",
+    "/modelkit/models": "基于任务的模型列表",
+    "/modelkit/chat/models": "OpenAI 兼容的 chat 模型列表",
     "/modelkit/chat/*": "文本/视觉生成",
     "/modelkit/embedding/*": "文本嵌入",
     "/modelkit/asr/*": "语音转文本",
-    "/modelkit/tts/*": "文本转语音"
+    "/modelkit/tts/*": "文本转语音",
+    "/modelkit/app-models": "应用模型注册 API"
   }
 }
 ```
@@ -2228,6 +2231,8 @@ metadata 或 kernel 默认 LLM 配置中解析 provider 凭证。
 | 端点 | 说明 |
 | --- | --- |
 | `GET /modelkit/models` | 以 ModelKit 面向任务的 schema 列出可用模型 |
+| `GET /modelkit/chat/models` | 以 OpenAI 兼容格式列出 chat 模型 |
+| `GET /modelkit/chat/v1/models` | `/modelkit/chat/models` 的别名 |
 | `ALL /modelkit/chat` | 转发到 chat 默认端点（`/chat/completions`） |
 | `ALL /modelkit/chat/*` | 转发到自定义 chat 上游路径 |
 | `ALL /modelkit/embedding` | 转发到 embedding 默认端点（`/embeddings`） |
@@ -2236,6 +2241,11 @@ metadata 或 kernel 默认 LLM 配置中解析 provider 凭证。
 | `ALL /modelkit/asr/*` | 转发到自定义 ASR 上游路径 |
 | `ALL /modelkit/tts` | 转发到 TTS 默认端点（`/audio/speech`） |
 | `ALL /modelkit/tts/*` | 转发到自定义 TTS 上游路径 |
+| `GET /modelkit/app-models` | 列出所有应用注册的模型 |
+| `POST /modelkit/app-models` | 第三方应用注册模型 |
+| `PUT /modelkit/app-models/<id>` | 更新应用注册的模型 |
+| `DELETE /modelkit/app-models/<id>` | 注销应用注册的模型 |
+| `POST /modelkit/app-models/<id>/toggle` | 切换应用注册模型的启用/禁用状态 |
 
 ### 常用 Schema
 
@@ -2254,6 +2264,8 @@ metadata 或 kernel 默认 LLM 配置中解析 provider 凭证。
 | `contextWindowSize` | `number` | 否 | 底层模型 metadata 提供时返回上下文窗口大小。 |
 | `isRemote` | `boolean` | 是 | 模型是否通过远程 provider route 提供。 |
 | `isCustom` | `boolean` | 是 | 模型是否为自定义/用户定义模型。 |
+| `isAppModel` | `boolean` | 否 | 通过应用模型注册 API 注册的模型会包含此字段且为 `true`。 |
+| `appBundleId` | `string` | 否 | 注册该模型的第三方应用 bundle ID。仅应用注册模型包含此字段。 |
 
 #### ModelCapabilities
 
@@ -2516,6 +2528,213 @@ curl -X POST http://localhost:8888/modelkit/tts \
 ```bash
 curl http://localhost:8888/modelkit/tts/audio/voices
 ```
+
+#### GET /modelkit/chat/models
+
+以 OpenAI 兼容的 wire 格式列出可用的 chat 模型。该端点聚合所有可用的 chat
+模型（远程和本地），返回 `{"object": "list", "data": [...]}` 格式，与 llama.cpp
+和 OpenAI 客户端期望的格式一致。仅包含 task 为 `chat` 的模型。
+
+`GET /modelkit/chat/v1/models` 是相同行为的别名。
+
+响应：`200 OK`
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "qwen3-8b (Qwen 3 8B)",
+      "aliases": ["Qwen 3 8B", "qwen3-8b"],
+      "tags": [],
+      "object": "model",
+      "created": 1727654400,
+      "owned_by": "openai",
+      "meta": {
+        "n_ctx": 8192
+      }
+    }
+  ]
+}
+```
+
+`id` 字段是基于模型别名和名称构建的展示标签（alias 与 name 不同时格式为
+`alias (name)`，否则直接使用 alias 或 name）。`aliases` 数组同时包含 `name` 和
+`alias`，便于灵活反查。`meta.n_ctx` 在可用时携带上下文窗口大小。
+
+#### 应用模型注册 API
+
+第三方应用可以向 ModelKit 注册自己的模型，注册后的模型将出现在统一的
+`/modelkit/models` 列表中，并可通过标准 ModelKit 代理路由访问。应用注册的模型会
+持久化存储，网关重启后不会丢失。
+
+这些端点当前不要求 bearer token。
+
+##### AppModelData Schema
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `string` | 是 | 模型唯一标识。 |
+| `name` | `string` | 是 | 模型显示名称。 |
+| `alias` | `string` | 否 | 便于展示的模型别名。 |
+| `description` | `string` | 否 | 模型描述。 |
+| `task` | `string` | 否 | 模型任务：`chat`（默认）、`embedding`、`asr` 或 `tts`。 |
+| `provider` | `string` | 否 | 提供商标识（默认：`openai_compatible`）。 |
+| `input` | `string[]` | 否 | 输入模态（例如 `["text"]`）。 |
+| `output` | `string[]` | 否 | 输出模态（例如 `["text"]`）。 |
+| `capabilities` | `object` | 否 | 能力标记：`stream`（bool，默认 true）、`tool_call`（bool，默认 false）、`reasoning`（bool，默认 true）。 |
+| `baseUrl` | `string` | 否 | 模型端点 base URL。 |
+| `apiKey` | `string` | 否 | 模型端点的 API 密钥。 |
+| `contextWindowSize` | `number` | 否 | 上下文窗口大小。 |
+| `appBundleId` | `string` | 是 | 注册应用的 bundle ID。 |
+| `appName` | `string` | 否 | 注册应用的显示名称，默认为 `appBundleId`。 |
+
+列出应用模型时，响应中会用 `hasApiKey`（boolean）替代 `apiKey`，避免暴露凭证。
+
+##### GET /modelkit/app-models
+
+列出所有第三方应用注册的模型。
+
+响应：`200 OK`（`AppModelData[]`）
+
+```json
+[
+  {
+    "id": "example-gpt4o",
+    "name": "GPT-4o",
+    "alias": "gpt-4o",
+    "description": "OpenAI GPT-4o model",
+    "task": "chat",
+    "provider": "openai_compatible",
+    "input": ["text"],
+    "output": ["text"],
+    "capabilities": {
+      "stream": true,
+      "tool_call": true,
+      "reasoning": false
+    },
+    "baseUrl": "https://api.openai.com/v1",
+    "hasApiKey": true,
+    "contextWindowSize": 128000,
+    "isDisabled": false,
+    "appBundleId": "com.example.myapp",
+    "appName": "My Example App"
+  }
+]
+```
+
+##### POST /modelkit/app-models
+
+第三方应用注册新模型。注册后的模型会出现在 `GET /modelkit/models` 中，
+并可通过标准代理路由访问。
+
+请求体：参见上方 AppModelData schema。`id`、`name` 和 `appBundleId` 为必填。
+
+请求示例：
+
+```bash
+curl -X POST http://localhost:8888/modelkit/app-models \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": "example-gpt4o",
+    "name": "GPT-4o",
+    "alias": "gpt-4o",
+    "description": "OpenAI GPT-4o model",
+    "appBundleId": "com.example.myapp",
+    "appName": "My Example App",
+    "task": "chat",
+    "provider": "openai_compatible",
+    "input": ["text"],
+    "output": ["text"],
+    "capabilities": {
+      "stream": true,
+      "tool_call": true,
+      "reasoning": false
+    },
+    "baseUrl": "https://api.openai.com/v1",
+    "apiKey": "sk-...",
+    "contextWindowSize": 128000
+  }'
+```
+
+响应：`200 OK`
+
+```json
+{
+  "success": true,
+  "id": "example-gpt4o"
+}
+```
+
+##### PUT /modelkit/app-models/\<id\>
+
+更新已注册的应用模型。仅更新请求体中提供的字段；未提供的字段保留当前值。
+`apiKey` 只在传入非空值时才会覆盖。
+
+请求示例：
+
+```bash
+curl -X PUT http://localhost:8888/modelkit/app-models/example-gpt4o \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "GPT-4o Updated",
+    "description": "Updated description",
+    "contextWindowSize": 256000
+  }'
+```
+
+响应：`200 OK`
+
+```json
+{
+  "success": true
+}
+```
+
+模型未找到时返回 `404`。
+
+##### DELETE /modelkit/app-models/\<id\>
+
+注销应用注册的模型。
+
+请求示例：
+
+```bash
+curl -X DELETE http://localhost:8888/modelkit/app-models/example-gpt4o
+```
+
+响应：`200 OK`
+
+```json
+{
+  "success": true
+}
+```
+
+模型未找到时返回 `404`。
+
+##### POST /modelkit/app-models/\<id\>/toggle
+
+切换应用注册模型的禁用状态。被禁用的模型仍保持注册，但不参与活跃模型列表和代理
+路由。
+
+请求示例：
+
+```bash
+curl -X POST http://localhost:8888/modelkit/app-models/example-gpt4o/toggle \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+响应：`200 OK`
+
+```json
+{
+  "success": true
+}
+```
+
+模型未找到时返回 `404`。
 
 ### 错误响应
 

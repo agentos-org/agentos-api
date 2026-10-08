@@ -2007,10 +2007,13 @@ Response: `200 OK`
     "/discoverykit/*": "DiscoveryKit API (nearby device discovery, requires Token)",
     "/transferkit/*": "TransferKit API (cross-device file transfer, requires Token)",
     "/toolkit/*": "ToolKit API (requires Token)",
+    "/modelkit/models": "Task-oriented model listing",
+    "/modelkit/chat/models": "OpenAI-compatible chat model listing",
     "/modelkit/chat/*": "Chat/vision generation",
     "/modelkit/embedding/*": "Text embedding",
     "/modelkit/asr/*": "Speech-to-text",
-    "/modelkit/tts/*": "Text-to-speech"
+    "/modelkit/tts/*": "Text-to-speech",
+    "/modelkit/app-models": "App model registration API"
   }
 }
 ```
@@ -2263,6 +2266,8 @@ kernel default LLM configuration.
 | Endpoint | Description |
 | --- | --- |
 | `GET /modelkit/models` | List available models in the task-oriented ModelKit schema |
+| `GET /modelkit/chat/models` | List chat models in OpenAI-compatible format |
+| `GET /modelkit/chat/v1/models` | Alias for `/modelkit/chat/models` |
 | `ALL /modelkit/chat` | Forward to the chat default endpoint (`/chat/completions`) |
 | `ALL /modelkit/chat/*` | Forward to a custom chat upstream path |
 | `ALL /modelkit/embedding` | Forward to the embedding default endpoint (`/embeddings`) |
@@ -2271,6 +2276,11 @@ kernel default LLM configuration.
 | `ALL /modelkit/asr/*` | Forward to a custom ASR upstream path |
 | `ALL /modelkit/tts` | Forward to the TTS default endpoint (`/audio/speech`) |
 | `ALL /modelkit/tts/*` | Forward to a custom TTS upstream path |
+| `GET /modelkit/app-models` | List all app-registered models |
+| `POST /modelkit/app-models` | Register a model from a third-party app |
+| `PUT /modelkit/app-models/<id>` | Update an app-registered model |
+| `DELETE /modelkit/app-models/<id>` | Unregister an app-registered model |
+| `POST /modelkit/app-models/<id>/toggle` | Toggle an app-registered model's disabled state |
 
 ### Common Schemas
 
@@ -2289,6 +2299,8 @@ kernel default LLM configuration.
 | `contextWindowSize` | `number` | No | Context window size when provided by the backing model metadata. |
 | `isRemote` | `boolean` | Yes | Whether the model is served by a remote provider route. |
 | `isCustom` | `boolean` | Yes | Whether the model is custom/user-defined. |
+| `isAppModel` | `boolean` | No | Present and `true` when the model was registered by a third-party app via the App Model Registration API. |
+| `appBundleId` | `string` | No | Bundle ID of the third-party app that registered this model. Only present for app-registered models. |
 
 #### ModelCapabilities
 
@@ -2556,6 +2568,221 @@ Voice-list example:
 ```bash
 curl http://localhost:8888/modelkit/tts/audio/voices
 ```
+
+#### GET /modelkit/chat/models
+
+Lists available chat models in the OpenAI-compatible wire format. This endpoint
+aggregates all available chat models (remote and local) into a single
+`{"object": "list", "data": [...]}` payload, matching the shape that llama.cpp
+and OpenAI clients expect. Only models whose resolved task is `chat` are
+included.
+
+`GET /modelkit/chat/v1/models` is an alias with the same behavior.
+
+Response: `200 OK`
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "qwen3-8b (Qwen 3 8B)",
+      "aliases": ["Qwen 3 8B", "qwen3-8b"],
+      "tags": [],
+      "object": "model",
+      "created": 1727654400,
+      "owned_by": "openai",
+      "meta": {
+        "n_ctx": 8192
+      }
+    }
+  ]
+}
+```
+
+The `id` field is a display-oriented label built from the model's alias and
+name (format: `alias (name)` when they differ, or just the alias/name). The
+`aliases` array contains both `name` and `alias` for lookup flexibility. The
+`meta.n_ctx` field carries the context window size when available.
+
+#### App Model Registration API
+
+Third-party applications can register their own models with ModelKit so that
+they appear in the unified `/modelkit/models` listing and can be accessed
+through the standard ModelKit proxy routes. App-registered models are
+persisted and survive gateway restarts.
+
+These endpoints do not require a bearer token.
+
+##### AppModelData Schema
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Unique model identifier. |
+| `name` | `string` | Yes | Model display name. |
+| `alias` | `string` | No | Human-friendly model alias. |
+| `description` | `string` | No | Model description. |
+| `task` | `string` | No | Model task: `chat` (default), `embedding`, `asr`, or `tts`. |
+| `provider` | `string` | No | Provider identifier (default: `openai_compatible`). |
+| `input` | `string[]` | No | Input modalities (e.g. `["text"]`). |
+| `output` | `string[]` | No | Output modalities (e.g. `["text"]`). |
+| `capabilities` | `object` | No | Capability flags: `stream` (bool, default true), `tool_call` (bool, default false), `reasoning` (bool, default true). |
+| `baseUrl` | `string` | No | Model endpoint base URL. |
+| `apiKey` | `string` | No | API key for authenticating with the model endpoint. |
+| `contextWindowSize` | `number` | No | Context window size. |
+| `appBundleId` | `string` | Yes | Bundle ID of the registering app. |
+| `appName` | `string` | No | Display name of the registering app. Defaults to `appBundleId`. |
+
+When listing app models, the response replaces `apiKey` with `hasApiKey`
+(boolean) to avoid exposing credentials.
+
+##### GET /modelkit/app-models
+
+Lists all models registered by third-party apps.
+
+Response: `200 OK` (`AppModelData[]`)
+
+```json
+[
+  {
+    "id": "example-gpt4o",
+    "name": "GPT-4o",
+    "alias": "gpt-4o",
+    "description": "OpenAI GPT-4o model",
+    "task": "chat",
+    "provider": "openai_compatible",
+    "input": ["text"],
+    "output": ["text"],
+    "capabilities": {
+      "stream": true,
+      "tool_call": true,
+      "reasoning": false
+    },
+    "baseUrl": "https://api.openai.com/v1",
+    "hasApiKey": true,
+    "contextWindowSize": 128000,
+    "isDisabled": false,
+    "appBundleId": "com.example.myapp",
+    "appName": "My Example App"
+  }
+]
+```
+
+##### POST /modelkit/app-models
+
+Registers a new model from a third-party app. The model will appear in
+`GET /modelkit/models` and can be accessed through the standard proxy routes.
+
+Request body: see AppModelData schema above. `id`, `name`, and `appBundleId`
+are required.
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8888/modelkit/app-models \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": "example-gpt4o",
+    "name": "GPT-4o",
+    "alias": "gpt-4o",
+    "description": "OpenAI GPT-4o model",
+    "appBundleId": "com.example.myapp",
+    "appName": "My Example App",
+    "task": "chat",
+    "provider": "openai_compatible",
+    "input": ["text"],
+    "output": ["text"],
+    "capabilities": {
+      "stream": true,
+      "tool_call": true,
+      "reasoning": false
+    },
+    "baseUrl": "https://api.openai.com/v1",
+    "apiKey": "sk-...",
+    "contextWindowSize": 128000
+  }'
+```
+
+Response: `200 OK`
+
+```json
+{
+  "success": true,
+  "id": "example-gpt4o"
+}
+```
+
+##### PUT /modelkit/app-models/\<id\>
+
+Updates an existing app-registered model. Only the fields provided in the
+request body are updated; omitted fields retain their current values. The
+`apiKey` field is only overwritten when a non-empty value is provided.
+
+Example request:
+
+```bash
+curl -X PUT http://localhost:8888/modelkit/app-models/example-gpt4o \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "GPT-4o Updated",
+    "description": "Updated description",
+    "contextWindowSize": 256000
+  }'
+```
+
+Response: `200 OK`
+
+```json
+{
+  "success": true
+}
+```
+
+Returns `404` if the model is not found.
+
+##### DELETE /modelkit/app-models/\<id\>
+
+Unregisters an app-registered model.
+
+Example request:
+
+```bash
+curl -X DELETE http://localhost:8888/modelkit/app-models/example-gpt4o
+```
+
+Response: `200 OK`
+
+```json
+{
+  "success": true
+}
+```
+
+Returns `404` if the model is not found.
+
+##### POST /modelkit/app-models/\<id\>/toggle
+
+Toggles the disabled state of an app-registered model. A disabled model
+remains registered but is excluded from active model listings and proxy
+routing.
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8888/modelkit/app-models/example-gpt4o/toggle \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Response: `200 OK`
+
+```json
+{
+  "success": true
+}
+```
+
+Returns `404` if the model is not found.
 
 ### Error Responses
 

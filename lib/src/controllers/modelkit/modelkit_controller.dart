@@ -6,6 +6,7 @@ import 'package:shelf_router/shelf_router.dart';
 
 import '../../locator.dart';
 import '../../services/modelkit/model_client.dart';
+import '../../services/appkit/appkit_service.dart';
 
 /// ModelKit Controller
 ///
@@ -22,6 +23,7 @@ class ModelKitController {
   ModelKitController({
     required Future<KernelService?> kernelFuture,
     ModelClient? client,
+    AppKitService? appKitService,
   }) : _client = client ?? ModelClient(kernelFuture: kernelFuture);
 
   final ModelClient _client;
@@ -38,6 +40,13 @@ class ModelKitController {
     router.get('/chat/models/', _listChatModels);
     router.get('/chat/v1/models', _listChatModels);
     router.get('/chat/v1/models/', _listChatModels);
+
+    // App model registration API
+    router.get('/app-models', _listAppModels);
+    router.post('/app-models', _registerAppModel);
+    router.put('/app-models/<id>', _updateAppModel);
+    router.delete('/app-models/<id>', _unregisterAppModel);
+    router.post('/app-models/<id>/toggle', _toggleAppModel);
 
     _registerForwardRoutes(router, ModelTask.chat);
     _registerForwardRoutes(router, ModelTask.embedding);
@@ -102,6 +111,8 @@ class ModelKitController {
             'contextWindowSize': model.contextWindowSize,
           'isRemote': model.isRemote,
           'isCustom': model.isCustom,
+          if (model.isAppModel) 'isAppModel': true,
+          if (model.appBundleId != null) 'appBundleId': model.appBundleId,
         });
       }
 
@@ -368,6 +379,244 @@ class ModelKitController {
     } catch (_) {
       return bodyBytes;
     }
+  }
+
+  // ===========================================================================
+  // App model registration API
+  // ===========================================================================
+
+  /// 列出所有第三方应用注册的模型
+  Future<Response> _listAppModels(Request request) async {
+    try {
+      final models = _getAppModelsFromStore();
+      return Response.ok(
+        jsonEncode(models.map((m) => m.toJson()).toList()),
+        headers: const {'content-type': 'application/json'},
+      );
+    } on Exception catch (error) {
+      return Response(500, body: 'App models list error: $error');
+    }
+  }
+
+  /// 第三方应用注册模型
+  Future<Response> _registerAppModel(Request request) async {
+    try {
+      final bodyBytes = await _readBodyBytes(request);
+      if (bodyBytes == null || bodyBytes.isEmpty) {
+        return Response(400, body: jsonEncode({'error': 'empty body'}),
+            headers: const {'content-type': 'application/json'});
+      }
+
+      final body = jsonDecode(String.fromCharCodes(bodyBytes));
+      if (body is! Map<String, dynamic>) {
+        return Response(400, body: jsonEncode({'error': 'invalid json body'}),
+            headers: const {'content-type': 'application/json'});
+      }
+
+      final id = (body['id'] as String?)?.trim() ?? '';
+      final name = (body['name'] as String?)?.trim() ?? '';
+      final appBundleId = (body['appBundleId'] as String?)?.trim() ?? '';
+
+      if (id.isEmpty || name.isEmpty || appBundleId.isEmpty) {
+        return Response(400,
+            body: jsonEncode({'error': 'id, name and appBundleId are required'}),
+            headers: const {'content-type': 'application/json'});
+      }
+
+      final appName = (body['appName'] as String?)?.trim() ?? appBundleId;
+
+      final taskStr = (body['task'] as String?)?.trim() ?? 'chat';
+      // Validate: must be a known task name
+      final validTask = ModelTask.values.firstWhere(
+        (t) => t.name == taskStr || t.wireName == taskStr,
+        orElse: () => ModelTask.chat,
+      );
+      final task = validTask.name;
+
+      List<String> parseStringList(dynamic raw) {
+        if (raw is! List) return const [];
+        return raw.whereType<String>().toList();
+      }
+
+      final caps = body['capabilities'];
+      final inputModalities = parseStringList(body['input']);
+      final outputModalities = parseStringList(body['output']);
+
+      final record = AppModelData(
+        id: id,
+        name: name,
+        alias: (body['alias'] as String?)?.trim() ?? '',
+        description: (body['description'] as String?)?.trim() ?? '',
+        task: task,
+        provider: (body['provider'] as String?)?.trim() ?? 'openai_compatible',
+        inputModalities: inputModalities,
+        outputModalities: outputModalities,
+        stream: caps is Map<String, dynamic> ? (caps['stream'] as bool? ?? true) : true,
+        toolCall: caps is Map<String, dynamic> ? (caps['tool_call'] as bool? ?? false) : false,
+        reasoning: caps is Map<String, dynamic> ? (caps['reasoning'] as bool? ?? true) : true,
+        baseUrl: (body['baseUrl'] as String?)?.trim(),
+        apiKey: (body['apiKey'] as String?)?.trim(),
+        contextSize: (body['contextWindowSize'] as num?)?.toInt(),
+        appBundleId: appBundleId,
+        appName: appName,
+      );
+
+      await _addAppModelToStore(record);
+
+      return Response.ok(
+        jsonEncode({'success': true, 'id': id}),
+        headers: const {'content-type': 'application/json'},
+      );
+    } on Exception catch (error) {
+      return Response(500, body: jsonEncode({'error': 'Register app model error: $error'}),
+          headers: const {'content-type': 'application/json'});
+    }
+  }
+
+  /// 更新应用模型
+  Future<Response> _updateAppModel(Request request, String id) async {
+    try {
+      final bodyBytes = await _readBodyBytes(request);
+      if (bodyBytes == null || bodyBytes.isEmpty) {
+        return Response(400, body: jsonEncode({'error': 'empty body'}),
+            headers: const {'content-type': 'application/json'});
+      }
+
+      final body = jsonDecode(String.fromCharCodes(bodyBytes));
+      if (body is! Map<String, dynamic>) {
+        return Response(400, body: jsonEncode({'error': 'invalid json body'}),
+            headers: const {'content-type': 'application/json'});
+      }
+
+      body['id'] = id;
+      final ok = await _updateAppModelInStore(id, body);
+      if (!ok) {
+        return Response.notFound(
+          jsonEncode({'error': 'app model not found: $id'}),
+          headers: const {'content-type': 'application/json'},
+        );
+      }
+
+      return Response.ok(
+        jsonEncode({'success': true}),
+        headers: const {'content-type': 'application/json'},
+      );
+    } on Exception catch (error) {
+      return Response(500, body: jsonEncode({'error': 'Update app model error: $error'}),
+          headers: const {'content-type': 'application/json'});
+    }
+  }
+
+  /// 第三方应用注销模型
+  Future<Response> _unregisterAppModel(Request request, String id) async {
+    try {
+      final ok = await _deleteAppModelFromStore(id);
+      if (!ok) {
+        return Response.notFound(
+          jsonEncode({'error': 'app model not found: $id'}),
+          headers: const {'content-type': 'application/json'},
+        );
+      }
+      return Response.ok(
+        jsonEncode({'success': true}),
+        headers: const {'content-type': 'application/json'},
+      );
+    } on Exception catch (error) {
+      return Response(500, body: jsonEncode({'error': 'Unregister app model error: $error'}),
+          headers: const {'content-type': 'application/json'});
+    }
+  }
+
+  /// 切换应用模型的禁用状态
+  Future<Response> _toggleAppModel(Request request, String id) async {
+    try {
+      final ok = await _toggleAppModelInStore(id);
+      if (!ok) {
+        return Response.notFound(
+          jsonEncode({'error': 'app model not found: $id'}),
+          headers: const {'content-type': 'application/json'},
+        );
+      }
+      return Response.ok(
+        jsonEncode({'success': true}),
+        headers: const {'content-type': 'application/json'},
+      );
+    } on Exception catch (error) {
+      return Response(500, body: jsonEncode({'error': 'Toggle app model error: $error'}),
+          headers: const {'content-type': 'application/json'});
+    }
+  }
+
+  // --- App model store helpers ---
+
+  AppModelStore? get _appModelStore {
+    final locator = _client.serviceLocator;
+    if (locator is AppModelStore) return locator as AppModelStore;
+    return null;
+  }
+
+  List<AppModelData> _getAppModelsFromStore() {
+    return _appModelStore?.appModels ?? const [];
+  }
+
+  Future<void> _addAppModelToStore(AppModelData data) async {
+    final store = _appModelStore;
+    if (store == null) return;
+    await store.addAppModel(data);
+  }
+
+  Future<bool> _updateAppModelInStore(String id, Map<String, dynamic> body) async {
+    final store = _appModelStore;
+    if (store == null) return false;
+
+    final existing = store.appModels.where((m) => m.id == id).firstOrNull;
+    if (existing == null) return false;
+
+    final newKey = (body['apiKey'] as String?)?.trim() ?? '';
+
+    final updated = AppModelData(
+      id: id,
+      name: (body['name'] as String?)?.trim() ?? existing.name,
+      alias: (body['alias'] as String?)?.trim() ?? existing.alias,
+      description: (body['description'] as String?)?.trim() ?? existing.description,
+      task: (body['task'] as String?)?.trim() ?? existing.task,
+      provider: (body['provider'] as String?)?.trim() ?? existing.provider,
+      inputModalities: body['input'] is List
+          ? (body['input'] as List).whereType<String>().toList()
+          : existing.inputModalities,
+      outputModalities: body['output'] is List
+          ? (body['output'] as List).whereType<String>().toList()
+          : existing.outputModalities,
+      stream: body['capabilities'] is Map<String, dynamic>
+          ? ((body['capabilities'] as Map<String, dynamic>)['stream'] as bool? ?? existing.stream)
+          : existing.stream,
+      toolCall: body['capabilities'] is Map<String, dynamic>
+          ? ((body['capabilities'] as Map<String, dynamic>)['tool_call'] as bool? ?? existing.toolCall)
+          : existing.toolCall,
+      reasoning: body['capabilities'] is Map<String, dynamic>
+          ? ((body['capabilities'] as Map<String, dynamic>)['reasoning'] as bool? ?? existing.reasoning)
+          : existing.reasoning,
+      baseUrl: (body['baseUrl'] as String?)?.trim() ?? existing.baseUrl,
+      apiKey: newKey.isNotEmpty ? newKey : existing.apiKey,
+      contextSize: (body['contextWindowSize'] as num?)?.toInt() ?? existing.contextSize,
+      isDisabled: existing.isDisabled,
+      appBundleId: existing.appBundleId,
+      appName: (body['appName'] as String?)?.trim() ?? existing.appName,
+    );
+
+    return store.updateAppModel(id, updated);
+  }
+
+  Future<bool> _deleteAppModelFromStore(String id) async {
+    final store = _appModelStore;
+    if (store == null) return false;
+    return store.deleteAppModel(id);
+  }
+
+  Future<bool> _toggleAppModelInStore(String id) async {
+    final store = _appModelStore;
+    if (store == null) return false;
+    return store.toggleAppModelDisabled(id);
   }
 
   Future<List<int>?> _readBodyBytes(Request request) async {

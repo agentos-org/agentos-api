@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:agentos_kernel/agentos_kernel.dart';
@@ -174,6 +172,7 @@ Router createGatewayRouter({
   final modelKitController = ModelKitController(
     kernelFuture: kernelFuture,
     client: modelClient,
+    appKitService: appKitService,
   );
   router.mount(
     '${ApiConfig.modelkitPath}/',
