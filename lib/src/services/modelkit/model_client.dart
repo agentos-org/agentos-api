@@ -174,7 +174,10 @@ class ModelClient {
       task: task,
       modelName: modelName,
     );
-    requestBody = _normalizeNullContentInToolCallMessages(requestBody, task: task);
+    requestBody = _normalizeNullContentInToolCallMessages(
+      requestBody,
+      task: task,
+    );
 
     if (kernel != null && modelName != null) {
       metrics = kernel.createLlmMetrics(
@@ -223,7 +226,14 @@ class ModelClient {
           statusCode: 503,
           headers: const {'content-type': 'application/json'},
           bodyBytes: utf8.encode(
-            jsonEncode({'error': errorMsg, 'service': task.serviceKey}),
+            jsonEncode({
+              'error': {
+                'message': errorMsg,
+                'type': 'server_error',
+                'code': 'service_unavailable',
+              },
+              'service': task.serviceKey,
+            }),
           ),
         );
       }
@@ -379,7 +389,11 @@ class ModelClient {
         headers: const {'content-type': 'application/json'},
         bodyBytes: utf8.encode(
           jsonEncode({
-            'error': 'Backend service unavailable',
+            'error': {
+              'message': e.toString(),
+              'type': 'server_error',
+              'code': 'backend_unavailable',
+            },
             'service': task.serviceKey,
             'message': e.toString(),
           }),
@@ -390,10 +404,7 @@ class ModelClient {
 
   /// Resolves a port for [task] from the service locator.
   Future<int?> _lookupServicePort(ModelTask task, String? modelId) {
-    return _serviceLocator.getServicePort(
-      task.serviceKey,
-      modelId: modelId,
-    );
+    return _serviceLocator.getServicePort(task.serviceKey, modelId: modelId);
   }
 
   /// Wraps the upstream stream with token-counting instrumentation.
