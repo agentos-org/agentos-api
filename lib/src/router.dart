@@ -57,6 +57,8 @@ Handler createGatewayHandler({
   void Function(AuthKitService authKitService)? onAuthKitReady,
   void Function(AuthKitBridge bridge)? onAuthKitBridgeReady,
   HarnessKitClient? harnessKitClient,
+  HarnessKitClientRegistry? harnessKitClientRegistry,
+  Map<String, bool>? harnessKitAppToolkits,
   void Function(String token)? onHarnessKitReady,
   NotifyKitService? notifyKitService,
   void Function(NotifyKitService service)? onNotifyKitReady,
@@ -71,6 +73,8 @@ Handler createGatewayHandler({
     onAuthKitReady: onAuthKitReady,
     onAuthKitBridgeReady: onAuthKitBridgeReady,
     harnessKitClient: harnessKitClient,
+    harnessKitClientRegistry: harnessKitClientRegistry,
+    harnessKitAppToolkits: harnessKitAppToolkits,
     onHarnessKitReady: onHarnessKitReady,
     notifyKitService: notifyKitService,
     onNotifyKitReady: onNotifyKitReady,
@@ -112,6 +116,8 @@ Router createGatewayRouter({
   void Function(AuthKitService authKitService)? onAuthKitReady,
   void Function(AuthKitBridge bridge)? onAuthKitBridgeReady,
   HarnessKitClient? harnessKitClient,
+  HarnessKitClientRegistry? harnessKitClientRegistry,
+  Map<String, bool>? harnessKitAppToolkits,
   void Function(String token)? onHarnessKitReady,
   NotifyKitService? notifyKitService,
   void Function(NotifyKitService service)? onNotifyKitReady,
@@ -192,17 +198,25 @@ Router createGatewayRouter({
   );
   router.mount('${ApiConfig.toolkitPath}/', toolKitController.router.call);
 
-  // HarnessKit API (built-in Harness WebApp only; requires registered app token)
-  if (harnessKitClient != null) {
+  // HarnessKit API forwards AppKit-authenticated requests to the shared host
+  // runtime. Opted-in App bundles retain their identity in the forwarded
+  // request; custom hosts can still provide explicit client overrides.
+  if (harnessKitClient != null ||
+      harnessKitClientRegistry != null ||
+      harnessKitAppToolkits != null) {
     // The sidecar needs a valid AppKit credential when it calls the Gateway's
     // ToolKit. This token is internal to the current Gateway process and is
     // never returned by the public SDK surface.
-    final harnessAgentosToken = appKitService
-        .registerBundle(AppBundleDto(bundleId: 'com.litevar.agentosHarness'))
-        .token;
-    onHarnessKitReady?.call(harnessAgentosToken);
+    if (harnessKitClient != null) {
+      final harnessAgentosToken = appKitService
+          .registerBundle(AppBundleDto(bundleId: defaultHarnessKitBundleId))
+          .token;
+      onHarnessKitReady?.call(harnessAgentosToken);
+    }
     final harnessKitController = HarnessKitController(
       client: harnessKitClient,
+      clientRegistry: harnessKitClientRegistry,
+      harnessKitAppToolkits: harnessKitAppToolkits,
       appKitService: appKitService,
     );
     router.mount(

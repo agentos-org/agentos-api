@@ -8,6 +8,7 @@
 - **AppKit**：应用注册与订阅
 - **ToolKit**：通过网关访问工具执行能力
 - **ModelKit**：基于任务的模型服务（chat、embedding、ASR、TTS）
+- **HarnessKit**：将 AppKit 鉴权后的请求路由到 AgentOS 唯一的 Harness runtime
 - **AuthKit**：第三方应用 OAuth 认证
 - **DiscoveryKit**：附近 AgentOS 设备发现
 - **TransferKit**：跨设备文件传输
@@ -15,6 +16,17 @@
 详细 HTTP API 文档：
 - [API.md](API.md)
 - [API-zh_CN.md](API-zh_CN.md)
+
+## HarnessKit runtime 路由
+
+AgentOS Runtime 托管唯一的 HarnessKit sidecar 和 runtime。声明 `harnessKit` 的安装型进程 App
+在健康检查通过后由 AppDaemon 登记到 Gateway；它与内置 Harness 共用同一进程和数据库，
+Gateway 会依据已认证的 AppKit `bundleId` 隔离外部 App 的线程、运行结果和事件访问；内置
+Harness 与侧边栏继续使用默认空间，共享现有记录。App 使用 AppKit token 调用 Gateway 的
+`/harnesskit/*`，不需要实现 Harness HTTP API。只有内置 Harness App 能访问全局运行时控制；
+切换共享引擎会作用于所有接入 App 的后续请求。自定义宿主仍可通过
+`HarnessKitClientRegistry` 注入 client。
+升级前没有记录 App 归属的历史线程会留在默认空间，不会自动迁移到外部 App。
 
 # 运行示例
 

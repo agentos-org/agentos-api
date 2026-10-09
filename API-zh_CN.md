@@ -4,7 +4,7 @@
 
 ## 鉴权
 
-所有 `/agentkit/*`、`/cronkit/*`、`/ragkit/*`、`/authkit/*`、
+所有 `/agentkit/*`、`/cronkit/*`、`/ragkit/*`、`/harnesskit/*`、`/authkit/*`、
 `/discoverykit/*`、`/transferkit/*`、`/notifykit/*` 路由以及
 `GET /appkit/subscribe` 都需要 Bearer token。
 
@@ -21,6 +21,16 @@ Rag base 的归属信息会写入 base metadata：
 
 对于 `/discoverykit/*` 和 `/transferkit/*`，Bearer token 必须来自
 `POST /appkit/register`。
+
+对于 `/harnesskit/*`，Bearer token 必须来自 `POST /appkit/register`。
+AgentOS 只运行一个宿主级 Harness runtime。内置 Harness 与声明 `harnessKit` 且健康检查通过的
+安装型进程 App 都由 Gateway 转发到该 runtime；Gateway 会用 sidecar 专属 token 替换 AppKit
+token，并将已验证的 AppKit `bundleId` 作为 actor 身份转发。App 只调用 Gateway API，不需要
+提供 Harness HTTP 服务。Gateway 在共享 runtime 和数据库内按 `bundleId` 为外部 App 隔离线程、
+运行记录及事件访问；内置 Harness 与侧边栏沿用默认命名空间，因此继续共享原有记录。只有内置
+Harness App 能访问 runtime 控制和全局运维快照；切换引擎会影响所有接入 App 的后续请求。
+停止或退出时，AppDaemon 只撤销该 App 的 HarnessKit 访问权限，不会停止共享 runtime。
+升级前没有记录 App 归属的历史线程会保留在默认空间，不会自动归属到某个外部 App。
 
 ```
 Authorization: Bearer <token>

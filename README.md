@@ -8,6 +8,7 @@ This gateway provides a single entry point for all local AI services:
 - **AppKit**: Application registration and subscription
 - **ToolKit**: Tool execution through the gateway
 - **ModelKit**: Task-oriented model services (chat, embedding, ASR, TTS)
+- **HarnessKit**: AppKit-authenticated routing to the AgentOS-managed Harness runtime
 - **AuthKit**: Third-party app OAuth-like authentication
 - **DiscoveryKit**: Nearby AgentOS device discovery
 - **TransferKit**: Cross-device file transfer
@@ -15,6 +16,19 @@ This gateway provides a single entry point for all local AI services:
 Detailed HTTP API reference:
 - [API.md](API.md)
 - [API-zh_CN.md](API-zh_CN.md)
+
+## HarnessKit runtime routing
+
+AgentOS Runtime manages one host-wide Harness process and runtime. Installable
+process Apps that declare `harnessKit` are registered with the Gateway after
+their backend is healthy, then share that process and database with the built-in
+Harness App. The Gateway scopes external Apps' threads, runs, and event access
+by the authenticated AppKit `bundleId`; the built-in Harness and Shell sidebar
+keep sharing their existing default namespace. Only the built-in Harness App
+may access runtime controls and the global operational snapshot. Apps call
+`/harnesskit/*` with their AppKit token and do not implement a Harness HTTP
+server. Custom hosts may still inject HarnessKit clients through
+`HarnessKitClientRegistry`.
 
 # Running the sample
 
