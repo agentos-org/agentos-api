@@ -4,9 +4,9 @@
 
 ## 鉴权
 
-所有 `/agentkit/*`、`/cronkit/*`、`/ragkit/*`、`/authkit/*`、
-`/discoverykit/*`、`/transferkit/*` 路由以及 `GET /appkit/subscribe`
-都需要 Bearer token。
+所有 `/agentkit/*`、`/cronkit/*`、`/ragkit/*`、`/harnesskit/*`、`/authkit/*`、
+`/discoverykit/*`、`/transferkit/*`、`/notifykit/*` 路由以及
+`GET /appkit/subscribe` 都需要 Bearer token。
 
 对于 `/cronkit/*`，Bearer token 必须来自 `POST /appkit/register`。
 Cron 任务权限按该 token 解析出的 app 身份控制：
@@ -21,6 +21,16 @@ Rag base 的归属信息会写入 base metadata：
 
 对于 `/discoverykit/*` 和 `/transferkit/*`，Bearer token 必须来自
 `POST /appkit/register`。
+
+对于 `/harnesskit/*`，Bearer token 必须来自 `POST /appkit/register`。
+AgentOS 只运行一个宿主级 Harness runtime。内置 Harness 与声明 `harnessKit` 且健康检查通过的
+安装型进程 App 都由 Gateway 转发到该 runtime；Gateway 会用 sidecar 专属 token 替换 AppKit
+token，并将已验证的 AppKit `bundleId` 作为 actor 身份转发。App 只调用 Gateway API，不需要
+提供 Harness HTTP 服务。Gateway 在共享 runtime 和数据库内按 `bundleId` 为外部 App 隔离线程、
+运行记录及事件访问；内置 Harness 与侧边栏沿用默认命名空间，因此继续共享原有记录。只有内置
+Harness App 能访问 runtime 控制和全局运维快照；切换引擎会影响所有接入 App 的后续请求。
+停止或退出时，AppDaemon 只撤销该 App 的 HarnessKit 访问权限，不会停止共享 runtime。
+升级前没有记录 App 归属的历史线程会保留在默认空间，不会自动归属到某个外部 App。
 
 ```
 Authorization: Bearer <token>
@@ -1382,6 +1392,35 @@ register 返回 `starting` 的声明，App 应以 `toolkit.provision.succeeded` 
 
 如果 token 缺失或无效，直接返回 `401`。
 
+## NotifyKit
+
+NotifyKit 允许 App 将面向用户的事件提交到 AgentOS 通知中心。它只接受事件内容；
+App 不能传入优先级、分组 ID、去重 key 或展示策略。
+
+### POST /notifykit/notifications
+
+需要 `POST /appkit/register` 返回的 Bearer token。
+
+请求体：
+
+```json
+{
+  "eventType": "task.completed",
+  "subjectId": "job-123",
+  "title": "任务完成",
+  "message": "导出文件已准备好。"
+}
+```
+
+`eventType` 必须是小写的点分名称。平台只会对平台定义的事件名称计算非中性的级别，
+并统一执行 App 级别的限流、可见分类数量上限以及重复事件合并。已知分类包括 `auth`、`chat`、
+`download`、`model`、`service`、`sync`、`task`、`transfer` 和 `update`；未知或
+超出上限的分类会归入 `other`。
+
+带有相同 `subjectId` 的重复事件会合并为一条。没有 subject 的事件在短去重窗口内
+内容重复时也会合并。响应中的通知记录和累计次数均由平台生成；`429` 表示该 App
+超过了通知速率限制。
+
 ## AuthKit
 
 AuthKit 为第三方应用提供 OAuth 风格的授权服务。它允许外部 App 发起用户授权请求、
@@ -2044,10 +2083,22 @@ Authorization: Bearer <POST /appkit/register 返回的 token>
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/toolkit/list` | 列出运行中的工具，`all=1` 时列出全部工具。 |
+| GET | `/toolkit/list` | 列出可调用工具；`all=1` 还会包含已停止的 `opentool-server` 工具。 |
 | POST | `/toolkit/{toolId}/call` | 调用工具函数。 |
 | POST | `/toolkit/{toolId}/streamCall` | 调用工具函数并通过 SSE 返回结果。 |
 | GET | `/toolkit/{toolId}/load` | 返回工具描述和函数 schema。 |
+
+ToolKit 还会将声明 `rpc.discovery: "runtime"`（或使用受支持的旧版
+`rpc.systemMethods` 声明）的进程 App 列为 `app:{bundleId}` 工具，但需用户至少启用一个当前 schema 中的函数。请求 `/load` 时会从 App
+后端动态获取 schema；未显式 opt-in 的 App 不会为此启动。用户必须先在“设置 → 应用”中启用
+单个函数，它才会出现在 `/load` 响应中并允许调用。App 自有工具由 AgentOS 代理，与 OpenTool
+Daemon 管理的 `opentool-server` 工具相互独立。
+已 opt-in 的 App provider 即使专用后端尚未启动也会出现在列表中；App 条目的
+`status: "running"` 表示 ToolKit 路由可按需启动后端。App 条目不含 `host` 和 `port`，因为调用由
+AgentOS 代理。
+对于 App 工具，ToolKit 会将 `FunctionCall` 请求体（`id`、`name` 和 `arguments`）转换为 App 的
+JSON-RPC 请求，并把 JSON-RPC 响应与 SSE 帧转换回 ToolKit 结果格式。App 后端无需实现 AgentOS
+`FunctionCall` 请求格式。
 
 ### 常用 Schema
 

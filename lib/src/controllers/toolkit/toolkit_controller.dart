@@ -1,20 +1,32 @@
+import 'dart:convert';
+
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
+import '../../locator.dart';
 import '../../middleware.dart';
 import '../../services/appkit/appkit_service.dart';
+import '../../services/toolkit/app_open_tool_provider.dart';
 import '../../services/toolkit/opentool_client.dart';
 
 /// ToolKit Controller
 ///
 /// Proxies requests to OpenTool service
 class ToolKitController {
-  ToolKitController({OpenToolClient? client, AppKitService? appKitService})
-    : _client = client ?? OpenToolClient(),
-      _appKitService = appKitService ?? AppKitService();
+  ToolKitController({
+    OpenToolClient? client,
+    AppKitService? appKitService,
+    AgentOSServiceLocator? serviceLocator,
+  }) : _client = client ?? OpenToolClient(),
+       _appKitService = appKitService ?? AppKitService(),
+       _serviceLocator = serviceLocator;
 
   final OpenToolClient _client;
   final AppKitService _appKitService;
+  final AgentOSServiceLocator? _serviceLocator;
+
+  AppOpenToolProvider? get _appToolProvider =>
+      _serviceLocator?.appOpenToolProvider;
 
   Router get router {
     final router = Router();
@@ -33,7 +45,33 @@ class ToolKitController {
       requestLogger.warning('ToolKit: invalid bearer token.');
       return unauthorizedResponse();
     }
-    return _proxy(request, path: '/list');
+    final daemon = await _proxy(request, path: '/list');
+    final provider = _appToolProvider;
+    if (provider == null) return daemon;
+
+    List<Object?> daemonTools = const [];
+    try {
+      final decoded = jsonDecode(await daemon.readAsString());
+      if (decoded is List) daemonTools = decoded;
+    } on Object {
+      // Keep App-owned tools discoverable while the OpenTool daemon is down.
+    }
+    List<Map<String, Object?>> appTools = const [];
+    try {
+      appTools = await provider.listTools(
+        all: request.url.queryParameters['all'] == '1',
+      );
+    } on Object {
+      // The daemon remains an independent source; an App provider outage must
+      // not hide its tools.
+    }
+    if (daemon.statusCode < 200 || daemon.statusCode >= 300) {
+      if (daemonTools.isEmpty && appTools.isEmpty) return daemon;
+    }
+    return Response.ok(
+      jsonEncode([...daemonTools, ...appTools]),
+      headers: const {'content-type': 'application/json; charset=utf-8'},
+    );
   }
 
   Future<Response> _forwardToolLoad(Request request) async {
@@ -45,7 +83,8 @@ class ToolKitController {
       requestLogger.warning('ToolKit: invalid bearer token.');
       return unauthorizedResponse();
     }
-    return _proxy(request, path: '/$toolId/load');
+    final appResponse = await _forwardAppRequest(request, toolId, 'load');
+    return appResponse ?? _proxy(request, path: '/$toolId/load');
   }
 
   Future<Response> _forwardToolCall(Request request) async {
@@ -57,7 +96,8 @@ class ToolKitController {
       requestLogger.warning('ToolKit: invalid bearer token.');
       return unauthorizedResponse();
     }
-    return _proxy(request, path: '/$toolId/call');
+    final appResponse = await _forwardAppRequest(request, toolId, 'call');
+    return appResponse ?? _proxy(request, path: '/$toolId/call');
   }
 
   Future<Response> _forwardToolStreamCall(Request request) async {
@@ -69,7 +109,23 @@ class ToolKitController {
       requestLogger.warning('ToolKit: invalid bearer token.');
       return unauthorizedResponse();
     }
-    return _proxy(request, path: '/$toolId/streamCall', stream: true);
+    final appResponse = await _forwardAppRequest(request, toolId, 'streamCall');
+    return appResponse ??
+        _proxy(request, path: '/$toolId/streamCall', stream: true);
+  }
+
+  Future<Response?> _forwardAppRequest(
+    Request request,
+    String toolId,
+    String operation,
+  ) async {
+    final provider = _appToolProvider;
+    if (provider == null) return null;
+    return provider.handleToolRequest(
+      request: request,
+      toolId: toolId,
+      operation: operation,
+    );
   }
 
   bool _isAuthorized(Request request) {

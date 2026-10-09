@@ -6,6 +6,7 @@ import 'locator.dart';
 import 'controllers/agentkit/agentkit_controller.dart';
 import 'controllers/authkit/authkit_controller.dart';
 import 'controllers/appkit/appkit_controller.dart';
+import 'controllers/notifykit/notifykit_controller.dart';
 import 'controllers/cronkit/cronkit_controller.dart';
 import 'controllers/discoverykit/discoverykit_controller.dart';
 import 'controllers/modelkit/modelkit_controller.dart';
@@ -13,10 +14,12 @@ import 'controllers/ragkit/ragkit_controller.dart';
 import 'controllers/system_controller.dart';
 import 'controllers/toolkit/toolkit_controller.dart';
 import 'controllers/transferkit/transferkit_controller.dart';
+import 'controllers/harnesskit/harnesskit_controller.dart';
 import 'config.dart';
 import 'middleware.dart';
 import 'services/authkit/authkit_bridge.dart';
 import 'services/appkit/appkit_service.dart';
+import 'services/notifykit/notifykit_service.dart';
 import 'services/appkit/opentool_availability_service.dart';
 import 'services/appkit/opentool_provisioning_service.dart';
 import 'services/authkit/authkit_service.dart';
@@ -24,7 +27,9 @@ import 'services/cronkit/cronkit_model_ref_store.dart';
 import 'services/discoverykit/discoverykit_service.dart';
 import 'services/modelkit/model_client.dart';
 import 'services/toolkit/opentool_client.dart';
+import 'services/harnesskit/harnesskit_client.dart';
 import 'services/transferkit/transferkit_service.dart';
+import 'models/app/app_models.dart';
 
 String _createGatewayInstanceId() {
   final now = DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(16);
@@ -51,6 +56,12 @@ Handler createGatewayHandler({
   OpenToolAvailabilityTracker? openToolAvailabilityTracker,
   void Function(AuthKitService authKitService)? onAuthKitReady,
   void Function(AuthKitBridge bridge)? onAuthKitBridgeReady,
+  HarnessKitClient? harnessKitClient,
+  HarnessKitClientRegistry? harnessKitClientRegistry,
+  Map<String, bool>? harnessKitAppToolkits,
+  void Function(String token)? onHarnessKitReady,
+  NotifyKitService? notifyKitService,
+  void Function(NotifyKitService service)? onNotifyKitReady,
 }) {
   final router = createGatewayRouter(
     serviceLocator: serviceLocator,
@@ -61,6 +72,12 @@ Handler createGatewayHandler({
     openToolAvailabilityTracker: openToolAvailabilityTracker,
     onAuthKitReady: onAuthKitReady,
     onAuthKitBridgeReady: onAuthKitBridgeReady,
+    harnessKitClient: harnessKitClient,
+    harnessKitClientRegistry: harnessKitClientRegistry,
+    harnessKitAppToolkits: harnessKitAppToolkits,
+    onHarnessKitReady: onHarnessKitReady,
+    notifyKitService: notifyKitService,
+    onNotifyKitReady: onNotifyKitReady,
   );
 
   var pipeline = const Pipeline();
@@ -98,6 +115,12 @@ Router createGatewayRouter({
   OpenToolAvailabilityTracker? openToolAvailabilityTracker,
   void Function(AuthKitService authKitService)? onAuthKitReady,
   void Function(AuthKitBridge bridge)? onAuthKitBridgeReady,
+  HarnessKitClient? harnessKitClient,
+  HarnessKitClientRegistry? harnessKitClientRegistry,
+  Map<String, bool>? harnessKitAppToolkits,
+  void Function(String token)? onHarnessKitReady,
+  NotifyKitService? notifyKitService,
+  void Function(NotifyKitService service)? onNotifyKitReady,
 }) {
   final instanceId = _createGatewayInstanceId();
   requestLogger.info('Creating gateway router instanceId=$instanceId');
@@ -139,6 +162,16 @@ Router createGatewayRouter({
   );
   router.mount('${ApiConfig.appkitPath}/', appKitController.router.call);
 
+  // NotifyKit API. App source identity comes from the AppKit bearer token;
+  // the service owns grouping, deduplication and presentation policy.
+  final resolvedNotifyKitService = notifyKitService ?? NotifyKitService();
+  final notifyKitController = NotifyKitController(
+    service: resolvedNotifyKitService,
+    appKitService: appKitService,
+  );
+  router.mount('${ApiConfig.notifykitPath}/', notifyKitController.router.call);
+  onNotifyKitReady?.call(resolvedNotifyKitService);
+
   // CronKit API (cron task management, requires Token)
   final cronKitModelRefStore = HiveCronKitModelRefStore();
   final cronKitController = CronKitController(
@@ -161,8 +194,36 @@ Router createGatewayRouter({
   final toolKitController = ToolKitController(
     client: openToolClient,
     appKitService: appKitService,
+    serviceLocator: serviceLocator,
   );
   router.mount('${ApiConfig.toolkitPath}/', toolKitController.router.call);
+
+  // HarnessKit API forwards AppKit-authenticated requests to the shared host
+  // runtime. Opted-in App bundles retain their identity in the forwarded
+  // request; custom hosts can still provide explicit client overrides.
+  if (harnessKitClient != null ||
+      harnessKitClientRegistry != null ||
+      harnessKitAppToolkits != null) {
+    // The sidecar needs a valid AppKit credential when it calls the Gateway's
+    // ToolKit. This token is internal to the current Gateway process and is
+    // never returned by the public SDK surface.
+    if (harnessKitClient != null) {
+      final harnessAgentosToken = appKitService
+          .registerBundle(AppBundleDto(bundleId: defaultHarnessKitBundleId))
+          .token;
+      onHarnessKitReady?.call(harnessAgentosToken);
+    }
+    final harnessKitController = HarnessKitController(
+      client: harnessKitClient,
+      clientRegistry: harnessKitClientRegistry,
+      harnessKitAppToolkits: harnessKitAppToolkits,
+      appKitService: appKitService,
+    );
+    router.mount(
+      '${ApiConfig.harnesskitPath}/',
+      harnessKitController.router.call,
+    );
+  }
 
   // ModelKit API (task-oriented model proxy: chat / embedding / asr / tts).
   final modelClient = ModelClient(
@@ -174,10 +235,7 @@ Router createGatewayRouter({
     client: modelClient,
     appKitService: appKitService,
   );
-  router.mount(
-    '${ApiConfig.modelkitPath}/',
-    modelKitController.router.call,
-  );
+  router.mount('${ApiConfig.modelkitPath}/', modelKitController.router.call);
 
   // AuthKit API (Server OAuth delivery + login session for other Kits)
   final authKitService = AuthKitService(
@@ -189,10 +247,7 @@ Router createGatewayRouter({
     bridge: authKitBridge,
     appKitService: appKitService,
   );
-  router.mount(
-    '${ApiConfig.authkitPath}/',
-    authKitController.router.call,
-  );
+  router.mount('${ApiConfig.authkitPath}/', authKitController.router.call);
   onAuthKitReady?.call(authKitService);
   onAuthKitBridgeReady?.call(authKitBridge);
 
@@ -206,7 +261,10 @@ Router createGatewayRouter({
     service: discoveryKitService,
     appKitService: appKitService,
   );
-  router.mount('${ApiConfig.discoverykitPath}/', discoveryKitController.router.call);
+  router.mount(
+    '${ApiConfig.discoverykitPath}/',
+    discoveryKitController.router.call,
+  );
 
   // TransferKit API (file transfer between devices)
   final transferKitService = TransferKitService(
@@ -218,7 +276,10 @@ Router createGatewayRouter({
     appKitService: appKitService,
     authKitService: authKitService,
   );
-  router.mount('${ApiConfig.transferkitPath}/', transferKitController.router.call);
+  router.mount(
+    '${ApiConfig.transferkitPath}/',
+    transferKitController.router.call,
+  );
 
   return router;
 }

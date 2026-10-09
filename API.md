@@ -5,8 +5,9 @@ Base URL: `http://<host>:<port>` (default port: `8888`).
 ## Authentication
 
 Bearer token is required for all `/agentkit/*`, `/cronkit/*`, `/ragkit/*`,
-`/authkit/*`, `/discoverykit/*`, and `/transferkit/*` routes, and for
-`GET /appkit/subscribe`.
+`/harnesskit/*`,
+`/authkit/*`, `/discoverykit/*`, `/transferkit/*`, and `/notifykit/*` routes,
+and for `GET /appkit/subscribe`.
 
 For `/cronkit/*`, the bearer token must be an AppKit-issued token from
 `POST /appkit/register`. Cron task ownership is isolated by the token's
@@ -24,6 +25,20 @@ access token obtained through the authorization flow.
 
 For `/discoverykit/*` and `/transferkit/*`, the bearer token must be an
 AppKit-issued token from `POST /appkit/register`.
+
+For `/harnesskit/*`, the bearer token must be an AppKit-issued token from
+`POST /appkit/register`. The built-in Harness and installable process Apps that
+declare `harnessKit` share one host runtime and database after their backend
+health check succeeds. The Gateway replaces the AppKit token with the
+sidecar-only token and logically isolates external Apps' threads, runs, and
+event access by the authenticated `bundleId`. The built-in Harness and Shell
+sidebar keep using the default namespace and share their existing history.
+Only the built-in Harness App can access runtime controls and the global
+operational snapshot. Apps call this Gateway API and do not provide a Harness
+HTTP server. AppDaemon revokes an App's access when its backend stops or exits;
+it does not stop the shared runtime. Legacy threads without recorded App
+ownership remain in the default namespace and are not automatically assigned
+to an external App.
 
 ```
 Authorization: Bearer <token>
@@ -1404,6 +1419,39 @@ The `app.command.requested` type is reserved for future commands sent to apps.
 
 If the token is missing or invalid, returns `401`.
 
+## NotifyKit
+
+NotifyKit lets an App submit a user-facing event to the AgentOS notification
+center. It is intentionally content-only: the App cannot provide a priority,
+group ID, deduplication key, or presentation policy.
+
+### POST /notifykit/notifications
+
+Requires the Bearer token returned by `POST /appkit/register`.
+
+Request body:
+
+```json
+{
+  "eventType": "task.completed",
+  "subjectId": "job-123",
+  "title": "Task complete",
+  "message": "The export is ready."
+}
+```
+
+`eventType` is a lowercase dotted name. The platform derives the category and
+level only for platform-defined event names, limits each App's event rate, bounds the number of visible
+categories, and deduplicates repeated events. Known categories include
+`auth`, `chat`, `download`, `model`, `service`, `sync`, `task`, `transfer`, and
+`update`; unknown or overflow categories are grouped as `other`.
+
+Repeated events with the same `subjectId` are collapsed into one item. Events
+without a subject are collapsed when their content repeats within the short
+deduplication window. The response contains the platform-owned notification
+record and its aggregate count. `429` means the App source exceeded its rate
+limit.
+
 ## AuthKit
 
 AuthKit provides OAuth-like authorization for third-party apps. It lets
@@ -2075,10 +2123,27 @@ Missing or invalid tokens return `401`.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/toolkit/list` | List running tools, or all tools with `all=1`. |
+| GET | `/toolkit/list` | List callable tools; `all=1` also includes stopped `opentool-server` tools. |
 | POST | `/toolkit/{toolId}/call` | Call a tool function. |
 | POST | `/toolkit/{toolId}/streamCall` | Call a tool function with SSE results. |
 | GET | `/toolkit/{toolId}/load` | Return the tool description and function schemas. |
+
+ToolKit also lists process Apps that opt in with `rpc.discovery: "runtime"`
+(or the supported legacy `rpc.systemMethods` declaration) as
+`app:{bundleId}` tools after the user enables at least one currently declared
+function. Their schemas are fetched dynamically from the App backend when
+`/load` is requested; the backend is not started for Apps without an explicit
+opt-in. Users enable each function in Settings → App before it appears in
+`/load` or can be called. App-owned tools are proxied by AgentOS
+and are independent from `opentool-server` tools managed by OpenTool Daemon.
+Opted-in App providers are listed even while their dedicated backend is
+stopped; their `status: "running"` means the ToolKit route can start the
+backend on demand. App entries omit `host` and `port` because AgentOS proxies
+their calls.
+For App tools, ToolKit translates its `FunctionCall` body (`id`, `name`, and
+`arguments`) to the App's JSON-RPC request and adapts the JSON-RPC response and
+SSE frames back to ToolKit result shapes. The App backend does not need to
+implement the AgentOS `FunctionCall` wire format.
 
 ### Common Schemas
 
