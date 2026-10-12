@@ -348,6 +348,11 @@ identified by `capabilities.vision` on the resolved model.
 - `DELETE /modelkit/app-models/<id>` - Unregister an app-registered model
 - `POST /modelkit/app-models/<id>/toggle` - Toggle an app-registered model's disabled state
 
+The `app-models` write endpoints (`POST` / `PUT` / `DELETE` / `toggle`) require
+the AppKit Bearer token from `POST /appkit/register`, and a model can only be
+modified by the bundle that registered it. `task` may be `chat`, `embedding`,
+`asr`, `tts` or `decision`.
+
 ## AppKit API
 
 - `POST /appkit/register` registers an app bundle:

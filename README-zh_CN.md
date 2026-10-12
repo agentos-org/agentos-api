@@ -322,6 +322,10 @@ App 条目的 `status: "running"` 表示 ToolKit provider 可用；App 专用后
 - `DELETE /modelkit/app-models/<id>` - 注销应用注册的模型
 - `POST /modelkit/app-models/<id>/toggle` - 切换应用注册模型的启用/禁用状态
 
+`app-models` 的写接口（`POST` / `PUT` / `DELETE` / `toggle`）需要携带
+`POST /appkit/register` 返回的 AppKit Bearer token，并且模型只能由注册它的 bundle
+修改。`task` 可取 `chat`、`embedding`、`asr`、`tts` 或 `decision`。
+
 ## AppKit API
 
 - `POST /appkit/register` 注册 app bundle：

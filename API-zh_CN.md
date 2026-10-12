@@ -2679,28 +2679,71 @@ curl -X POST http://localhost:8888/modelkit/decision \
 `/modelkit/models` 列表中，并可通过标准 ModelKit 代理路由访问。应用注册的模型会
 持久化存储，网关重启后不会丢失。
 
-这些端点当前不要求 bearer token。
+##### 认证与归属
+
+`GET /modelkit/app-models` 无需认证。**写接口**（`POST`、`PUT`、`DELETE` 以及
+`toggle`）需要携带 `POST /appkit/register` 返回的 Bearer token：
+
+```http
+Authorization: Bearer <POST /appkit/register 返回的 token>
+```
+
+每个已注册的模型都归属于 token 所对应的 `bundleId`，只有该 bundle 才能修改它：
+
+| 条件 | 状态码 |
+| --- | --- |
+| 缺少 token，或 token 不是由 `POST /appkit/register` 签发 | `401` |
+| 网关没有 app model 存储（不支持注册） | `501` |
+| 对未知 `id` 执行 `PUT` / `DELETE` / `toggle` | `404` |
+| 对其他 bundle 的模型执行 `PUT` / `DELETE` / `toggle` | `403` |
+| `POST` 请求体里的 `appBundleId` 与 token 所属 bundle 不一致 | `403` |
+| `POST` 的 `id` 已被其他 bundle 注册 | `409` |
+
+token 用于向本地网关标识应用身份；`POST /appkit/register` 本身不对调用方做身份
+认证，因此该校验的作用是让应用之间互不干扰、避免误操作，与其他 Kit 采用同一信任
+模型。
+
+所有写请求的请求体必须是 UTF-8 编码的 JSON 对象。字段类型不对（例如 `id` 不是字符串、
+`capabilities` 不是对象）会返回 `400`，而不是被静默忽略。
 
 ##### AppModelData Schema
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `id` | `string` | 是 | 模型唯一标识。 |
-| `name` | `string` | 是 | 模型显示名称。 |
+| `name` | `string` | 是 | 模型显示名称。对远程模型而言它就是上游模型名；ModelKit 会把请求里的 `model` 字段从 `id` 改写为该名称。 |
 | `alias` | `string` | 否 | 便于展示的模型别名。 |
 | `description` | `string` | 否 | 模型描述。 |
-| `task` | `string` | 否 | 模型任务：`chat`（默认）、`embedding`、`asr`、`tts` 或 `decision`。 |
+| `task` | `string` | 否 | 模型任务：`chat`（默认）、`embedding`、`asr`、`tts` 或 `decision`（大小写不敏感；`systemone`、`llm_decision` 视为 `decision` 的别名）。其他取值返回 `400`。 |
 | `provider` | `string` | 否 | 提供商标识（默认：`openai_compatible`）。 |
-| `input` | `string[]` | 否 | 输入模态（例如 `["text"]`）。 |
-| `output` | `string[]` | 否 | 输出模态（例如 `["text"]`）。 |
-| `capabilities` | `object` | 否 | 能力标记：`stream`（bool，默认 true）、`tool_call`（bool，默认 false）、`reasoning`（bool，默认 true）。 |
+| `input` | `string[]` | 否 | 输入模态（例如 `["text"]`）。缺省值随 task 变化，见 [Decision 模型](#decision-模型)。 |
+| `output` | `string[]` | 否 | 输出模态（例如 `["text"]`）。缺省值随 task 变化，见 [Decision 模型](#decision-模型)。 |
+| `capabilities` | `object` | 否 | 能力标记：`stream`（bool，默认 true）、`tool_call`（bool，默认 false）、`reasoning`（bool，默认 true）。`decision` 下一律强制为 `false`。 |
 | `baseUrl` | `string` | 否 | 模型端点 base URL。 |
 | `apiKey` | `string` | 否 | 模型端点的 API 密钥。 |
 | `contextWindowSize` | `number` | 否 | 上下文窗口大小。 |
-| `appBundleId` | `string` | 是 | 注册应用的 bundle ID。 |
+| `appBundleId` | `string` | 否 | 注册应用的 bundle ID。写入时可省略：取自 Bearer token；若提供则必须与 token 所属 bundle 一致，且注册后不可更改。 |
 | `appName` | `string` | 否 | 注册应用的显示名称，默认为 `appBundleId`。 |
 
 列出应用模型时，响应中会用 `hasApiKey`（boolean）替代 `apiKey`，避免暴露凭证。
+
+##### Decision 模型
+
+Decision 模型（`"task": "decision"`，llama.cpp `/v1/systemone`）以概率回答带类型的
+问题，从不生成文本。为了让注册表与 ModelKit 本地发现的模型保持一致，网关会对
+decision 的注册请求做归一化，无论调用方传入什么：
+
+| 字段 | 行为 |
+| --- | --- |
+| `input` | 只保留 `text`（始终包含）和 `image`（可选，用于 Clef 等多模态 decision 模型）。缺省为 `["text"]`。`decisions` 属于输出模态，会从 `input` 中剔除。 |
+| `output` | 恒为 `["decisions"]`。 |
+| `capabilities` | `stream`、`tool_call`、`reasoning` 恒为 `false`。 |
+
+反过来，`decisions` 不被其他任务接受：它会从 `chat`、`embedding`、`asr`、`tts` 模型的
+`input` / `output` 中剔除，剔除后为空时回退到该任务的默认值。
+
+注册后，通过 [`/modelkit/decision`](#all-modelkitdecision) 调用，并把 `"model"` 设为
+注册时的 `id`。
 
 ##### GET /modelkit/app-models
 
@@ -2736,22 +2779,31 @@ curl -X POST http://localhost:8888/modelkit/decision \
 
 ##### POST /modelkit/app-models
 
-第三方应用注册新模型。注册后的模型会出现在 `GET /modelkit/models` 中，
-并可通过标准代理路由访问。
+第三方应用注册模型。注册后的模型会出现在 `GET /modelkit/models` 中，
+并可通过标准代理路由访问。需要 Bearer token（见[认证与归属](#认证与归属)）。
 
-请求体：参见上方 AppModelData schema。`id`、`name` 和 `appBundleId` 为必填。
+请求体：参见上方 AppModelData schema。`id` 和 `name` 为必填。
+
+同一个 bundle 重复注册已有的 `id` 时，会**整体替换**该模型（响应带
+`"updated": true`）并保留其启用/禁用状态，因此重试注册不会产生重复条目。替换是完整的：
+未提供的可选字段（包括 `apiKey`）会被重置，需要局部更新请用 `PUT`。`id` 已被其他
+bundle 占用时返回 `409`。
 
 请求示例：
 
 ```bash
+TOKEN=$(curl -s http://localhost:8888/appkit/register \
+  -H 'Content-Type: application/json' \
+  -d '{"bundleId":"com.example.myapp"}' | jq -r .token)
+
 curl -X POST http://localhost:8888/modelkit/app-models \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "id": "example-gpt4o",
     "name": "GPT-4o",
     "alias": "gpt-4o",
     "description": "OpenAI GPT-4o model",
-    "appBundleId": "com.example.myapp",
     "appName": "My Example App",
     "task": "chat",
     "provider": "openai_compatible",
@@ -2777,16 +2829,45 @@ curl -X POST http://localhost:8888/modelkit/app-models \
 }
 ```
 
+示例：注册 decision 模型。只需提供身份与端点，`input`、`output`、`capabilities`
+会按 [Decision 模型](#decision-模型) 一节自动补全：
+
+```bash
+curl -X POST http://localhost:8888/modelkit/app-models \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "id": "example-julia",
+    "name": "Julia-1",
+    "task": "decision",
+    "baseUrl": "http://127.0.0.1:8080",
+    "apiKey": "sk-..."
+  }'
+```
+
+`GET /modelkit/app-models` 会把它报告为 `"task": "decision"`、
+`"input": ["text"]`、`"output": ["decisions"]`，且所有能力位均为 `false`。它会出现在
+`GET /modelkit/models` 中（但不会出现在 `GET /modelkit/chat/models`）；以
+`"model": "example-julia"` 调用 `POST /modelkit/decision` 时，请求会被转发到
+`http://127.0.0.1:8080/v1/systemone`，并以注册的 `apiKey` 作为上游 Bearer token，
+同时把 `model` 改写为 `Julia-1`。
+
 ##### PUT /modelkit/app-models/\<id\>
 
-更新已注册的应用模型。仅更新请求体中提供的字段；未提供的字段保留当前值。
-`apiKey` 只在传入非空值时才会覆盖。
+更新已注册的应用模型，需要携带该模型所属 bundle 的 Bearer token。仅更新请求体中提供的
+字段；未提供的字段保留当前值。`apiKey` 只在传入非空值时才会覆盖。`appBundleId` 不可更改
+（传入不同的值返回 `400`）。
+
+修改 `task` 时，请求中未提供的 `input`、`output`、`capabilities` 会重置为新 task 的默认值，
+而不是沿用旧 task 的值，同时套用新 task 的约束（例如 [decision](#decision-模型) 的约束）。
+未知的 `task` 返回 `400`。
 
 请求示例：
 
 ```bash
 curl -X PUT http://localhost:8888/modelkit/app-models/example-gpt4o \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "name": "GPT-4o Updated",
     "description": "Updated description",
@@ -2802,16 +2883,17 @@ curl -X PUT http://localhost:8888/modelkit/app-models/example-gpt4o \
 }
 ```
 
-模型未找到时返回 `404`。
+没有有效 token 时返回 `401`，模型属于其他 bundle 时返回 `403`，模型未找到时返回 `404`。
 
 ##### DELETE /modelkit/app-models/\<id\>
 
-注销应用注册的模型。
+注销应用注册的模型，需要携带该模型所属 bundle 的 Bearer token。
 
 请求示例：
 
 ```bash
-curl -X DELETE http://localhost:8888/modelkit/app-models/example-gpt4o
+curl -X DELETE http://localhost:8888/modelkit/app-models/example-gpt4o \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 响应：`200 OK`
@@ -2822,18 +2904,19 @@ curl -X DELETE http://localhost:8888/modelkit/app-models/example-gpt4o
 }
 ```
 
-模型未找到时返回 `404`。
+没有有效 token 时返回 `401`，模型属于其他 bundle 时返回 `403`，模型未找到时返回 `404`。
 
 ##### POST /modelkit/app-models/\<id\>/toggle
 
 切换应用注册模型的禁用状态。被禁用的模型仍保持注册，但不参与活跃模型列表和代理
-路由。
+路由。需要携带该模型所属 bundle 的 Bearer token。
 
 请求示例：
 
 ```bash
 curl -X POST http://localhost:8888/modelkit/app-models/example-gpt4o/toggle \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{}'
 ```
 
@@ -2845,7 +2928,7 @@ curl -X POST http://localhost:8888/modelkit/app-models/example-gpt4o/toggle \
 }
 ```
 
-模型未找到时返回 `404`。
+没有有效 token 时返回 `401`，模型属于其他 bundle 时返回 `403`，模型未找到时返回 `404`。
 
 ### 错误响应
 

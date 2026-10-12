@@ -5,8 +5,20 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
 import '../../locator.dart';
+import '../../middleware.dart';
 import '../../services/modelkit/model_client.dart';
 import '../../services/appkit/appkit_service.dart';
+
+/// App model 写接口的请求错误：携带 HTTP 状态码，由各 handler 统一转成 JSON 响应。
+class _AppModelRequestException implements Exception {
+  const _AppModelRequestException(this.status, this.message);
+
+  final int status;
+  final String message;
+
+  @override
+  String toString() => '_AppModelRequestException($status): $message';
+}
 
 /// ModelKit Controller
 ///
@@ -20,13 +32,25 @@ class ModelKitController {
   /// [kernelFuture] Future that resolves to KernelService for metrics tracking.
   /// [client] Optional [ModelClient] instance (created automatically if not
   /// provided).
+  /// [appKitService] 用于把 Bearer token 解析为调用方 bundleId，
+  /// `/app-models` 的写接口依赖它校验调用方身份与模型归属；缺省时这些写接口
+  /// 一律拒绝（fail closed）。
   ModelKitController({
     required Future<KernelService?> kernelFuture,
     ModelClient? client,
     AppKitService? appKitService,
-  }) : _client = client ?? ModelClient(kernelFuture: kernelFuture);
+  }) : _client = client ?? ModelClient(kernelFuture: kernelFuture),
+       _appKitService = appKitService;
 
   final ModelClient _client;
+  final AppKitService? _appKitService;
+
+  /// App model 写操作的串行化队尾。
+  ///
+  /// 存储层 `appModels` 读取与 `addAppModel`/`updateAppModel` 之间没有原子性，
+  /// 并发的同 id 注册会出现“都读到不存在 → 都追加”的重复条目，因此写操作
+  /// 必须在同一个 controller 内排队执行。
+  Future<void> _appModelWriteTail = Future<void>.value();
 
   /// Backing client (exposed for compatibility shims).
   ModelClient get client => _client;
@@ -409,151 +433,243 @@ class ModelKitController {
   }
 
   /// 第三方应用注册模型
+  ///
+  /// 需要 AppKit Bearer token。模型归属于 token 对应的 bundleId：
+  /// - body 中的 `appBundleId` 可省略；若提供则必须与 token 一致，否则 403；
+  /// - 同 id 已被其他 bundle 注册 → 409；
+  /// - 同 id 已由本 bundle 注册 → 按“整体替换”更新（保留启用/禁用状态），
+  ///   不会产生重复条目。
   Future<Response> _registerAppModel(Request request) async {
     try {
-      final bodyBytes = await _readBodyBytes(request);
-      if (bodyBytes == null || bodyBytes.isEmpty) {
-        return Response(400, body: jsonEncode({'error': 'empty body'}),
-            headers: const {'content-type': 'application/json'});
-      }
+      final callerBundleId = _requireCallerBundleId(request);
+      final store = _requireAppModelStore();
+      final body = await _readJsonObject(request);
 
-      final body = jsonDecode(String.fromCharCodes(bodyBytes));
-      if (body is! Map<String, dynamic>) {
-        return Response(400, body: jsonEncode({'error': 'invalid json body'}),
-            headers: const {'content-type': 'application/json'});
-      }
+      return await _serializeAppModelWrite(() async {
+        final id = _optionalString(body, 'id') ?? '';
+        final name = _optionalString(body, 'name') ?? '';
+        if (id.isEmpty || name.isEmpty) {
+          throw const _AppModelRequestException(
+            400,
+            'id and name are required',
+          );
+        }
 
-      final id = (body['id'] as String?)?.trim() ?? '';
-      final name = (body['name'] as String?)?.trim() ?? '';
-      final appBundleId = (body['appBundleId'] as String?)?.trim() ?? '';
+        final declaredBundleId = _optionalString(body, 'appBundleId') ?? '';
+        if (declaredBundleId.isNotEmpty && declaredBundleId != callerBundleId) {
+          throw const _AppModelRequestException(
+            403,
+            'appBundleId does not match the bundle of the bearer token',
+          );
+        }
 
-      if (id.isEmpty || name.isEmpty || appBundleId.isEmpty) {
-        return Response(400,
-            body: jsonEncode({'error': 'id, name and appBundleId are required'}),
-            headers: const {'content-type': 'application/json'});
-      }
+        final existing = _findAppModel(store, id);
+        if (existing != null && existing.appBundleId != callerBundleId) {
+          throw _AppModelRequestException(
+            409,
+            'app model id "$id" is already registered by another app',
+          );
+        }
 
-      final appName = (body['appName'] as String?)?.trim() ?? appBundleId;
+        final task = _resolveRegisteredTask(
+          body['task'],
+          fallback: ModelTask.chat,
+        );
+        final capabilities = _capabilitiesField(body);
+        final inputs = _normalizeInputModalities(
+          task,
+          _optionalModalities(body, 'input') ?? const <String>[],
+        );
+        final outputs = _normalizeOutputModalities(
+          task,
+          _optionalModalities(body, 'output') ?? const <String>[],
+        );
+        final caps = _normalizeCapabilities(
+          task,
+          stream: _optionalBool(capabilities, 'stream'),
+          toolCall: _optionalBool(capabilities, 'tool_call'),
+          reasoning: _optionalBool(capabilities, 'reasoning'),
+        );
 
-      final taskStr = (body['task'] as String?)?.trim() ?? 'chat';
-      // Validate: must be a known task name
-      final validTask = ModelTask.values.firstWhere(
-        (t) => t.name == taskStr || t.wireName == taskStr,
-        orElse: () => ModelTask.chat,
-      );
-      final task = validTask.name;
+        final appName = _optionalString(body, 'appName');
+        final record = AppModelData(
+          id: id,
+          name: name,
+          alias: _optionalString(body, 'alias') ?? '',
+          description: _optionalString(body, 'description') ?? '',
+          task: task.name,
+          provider: _nonEmptyOr(
+            _optionalString(body, 'provider'),
+            'openai_compatible',
+          ),
+          inputModalities: inputs,
+          outputModalities: outputs,
+          stream: caps.stream,
+          toolCall: caps.toolCall,
+          reasoning: caps.reasoning,
+          baseUrl: _optionalString(body, 'baseUrl'),
+          apiKey: _optionalString(body, 'apiKey'),
+          contextSize: _optionalInt(body, 'contextWindowSize'),
+          isDisabled: existing?.isDisabled ?? false,
+          appBundleId: callerBundleId,
+          appName: _nonEmptyOr(
+            appName,
+            _nonEmptyOr(existing?.appName, callerBundleId),
+          ),
+        );
 
-      List<String> parseStringList(dynamic raw) {
-        if (raw is! List) return const [];
-        return raw.whereType<String>().toList();
-      }
+        final replaced =
+            existing != null && await store.updateAppModel(id, record);
+        if (!replaced) await store.addAppModel(record);
 
-      final caps = body['capabilities'];
-      final inputModalities = parseStringList(body['input']);
-      final outputModalities = parseStringList(body['output']);
-
-      final record = AppModelData(
-        id: id,
-        name: name,
-        alias: (body['alias'] as String?)?.trim() ?? '',
-        description: (body['description'] as String?)?.trim() ?? '',
-        task: task,
-        provider: (body['provider'] as String?)?.trim() ?? 'openai_compatible',
-        inputModalities: inputModalities,
-        outputModalities: outputModalities,
-        stream: caps is Map<String, dynamic> ? (caps['stream'] as bool? ?? true) : true,
-        toolCall: caps is Map<String, dynamic> ? (caps['tool_call'] as bool? ?? false) : false,
-        reasoning: caps is Map<String, dynamic> ? (caps['reasoning'] as bool? ?? true) : true,
-        baseUrl: (body['baseUrl'] as String?)?.trim(),
-        apiKey: (body['apiKey'] as String?)?.trim(),
-        contextSize: (body['contextWindowSize'] as num?)?.toInt(),
-        appBundleId: appBundleId,
-        appName: appName,
-      );
-
-      await _addAppModelToStore(record);
-
-      return Response.ok(
-        jsonEncode({'success': true, 'id': id}),
-        headers: const {'content-type': 'application/json'},
-      );
+        return _appModelJson({
+          'success': true,
+          'id': id,
+          if (existing != null) 'updated': true,
+        });
+      });
+    } on _AppModelRequestException catch (error) {
+      return _appModelError(error.status, error.message);
     } on Exception catch (error) {
-      return Response(500, body: jsonEncode({'error': 'Register app model error: $error'}),
-          headers: const {'content-type': 'application/json'});
+      return _appModelError(500, 'Register app model error: $error');
     }
   }
 
-  /// 更新应用模型
+  /// 更新应用模型（部分更新）
+  ///
+  /// 仅模型所属 bundle 可更新：未知 id → 404，非所属 bundle → 403。
+  /// `appBundleId` 不可变更；`task` 变更时未显式给出的 input/output/capabilities
+  /// 会按新任务的默认值重置，避免遗留旧任务（如 chat）的模态与能力。
   Future<Response> _updateAppModel(Request request, String id) async {
     try {
-      final bodyBytes = await _readBodyBytes(request);
-      if (bodyBytes == null || bodyBytes.isEmpty) {
-        return Response(400, body: jsonEncode({'error': 'empty body'}),
-            headers: const {'content-type': 'application/json'});
-      }
+      final callerBundleId = _requireCallerBundleId(request);
+      final store = _requireAppModelStore();
+      final body = await _readJsonObject(request);
 
-      final body = jsonDecode(String.fromCharCodes(bodyBytes));
-      if (body is! Map<String, dynamic>) {
-        return Response(400, body: jsonEncode({'error': 'invalid json body'}),
-            headers: const {'content-type': 'application/json'});
-      }
+      return await _serializeAppModelWrite(() async {
+        final existing = _requireOwnedAppModel(store, id, callerBundleId);
 
-      body['id'] = id;
-      final ok = await _updateAppModelInStore(id, body);
-      if (!ok) {
-        return Response.notFound(
-          jsonEncode({'error': 'app model not found: $id'}),
-          headers: const {'content-type': 'application/json'},
+        final declaredBundleId = _optionalString(body, 'appBundleId') ?? '';
+        if (declaredBundleId.isNotEmpty &&
+            declaredBundleId != existing.appBundleId) {
+          throw const _AppModelRequestException(
+            400,
+            'appBundleId cannot be changed',
+          );
+        }
+
+        final existingTask =
+            _inferTaskFromModelType(existing.task) ?? ModelTask.chat;
+        final task = _resolveRegisteredTask(
+          body['task'],
+          fallback: existingTask,
         );
-      }
+        final taskChanged = task != existingTask;
 
-      return Response.ok(
-        jsonEncode({'success': true}),
-        headers: const {'content-type': 'application/json'},
-      );
+        final capabilities = _capabilitiesField(body);
+        final inputs = _normalizeInputModalities(
+          task,
+          _optionalModalities(body, 'input') ??
+              (taskChanged ? const <String>[] : existing.inputModalities),
+        );
+        final outputs = _normalizeOutputModalities(
+          task,
+          _optionalModalities(body, 'output') ??
+              (taskChanged ? const <String>[] : existing.outputModalities),
+        );
+        final caps = _normalizeCapabilities(
+          task,
+          stream:
+              _optionalBool(capabilities, 'stream') ??
+              (taskChanged ? null : existing.stream),
+          toolCall:
+              _optionalBool(capabilities, 'tool_call') ??
+              (taskChanged ? null : existing.toolCall),
+          reasoning:
+              _optionalBool(capabilities, 'reasoning') ??
+              (taskChanged ? null : existing.reasoning),
+        );
+
+        // apiKey 仅在显式给出非空值时覆盖，避免 PUT 误清除已保存的密钥。
+        final newKey = _optionalString(body, 'apiKey') ?? '';
+
+        final updated = AppModelData(
+          id: id,
+          name: _nonEmptyOr(_optionalString(body, 'name'), existing.name),
+          alias: _optionalString(body, 'alias') ?? existing.alias,
+          description:
+              _optionalString(body, 'description') ?? existing.description,
+          task: task.name,
+          provider: _nonEmptyOr(
+            _optionalString(body, 'provider'),
+            existing.provider,
+          ),
+          inputModalities: inputs,
+          outputModalities: outputs,
+          stream: caps.stream,
+          toolCall: caps.toolCall,
+          reasoning: caps.reasoning,
+          baseUrl: _optionalString(body, 'baseUrl') ?? existing.baseUrl,
+          apiKey: newKey.isNotEmpty ? newKey : existing.apiKey,
+          contextSize:
+              _optionalInt(body, 'contextWindowSize') ?? existing.contextSize,
+          isDisabled: existing.isDisabled,
+          appBundleId: existing.appBundleId,
+          appName: _nonEmptyOr(
+            _optionalString(body, 'appName'),
+            existing.appName,
+          ),
+        );
+
+        if (!await store.updateAppModel(id, updated)) {
+          throw _AppModelRequestException(404, 'app model not found: $id');
+        }
+        return _appModelJson({'success': true});
+      });
+    } on _AppModelRequestException catch (error) {
+      return _appModelError(error.status, error.message);
     } on Exception catch (error) {
-      return Response(500, body: jsonEncode({'error': 'Update app model error: $error'}),
-          headers: const {'content-type': 'application/json'});
+      return _appModelError(500, 'Update app model error: $error');
     }
   }
 
-  /// 第三方应用注销模型
+  /// 第三方应用注销模型（仅所属 bundle 可注销）
   Future<Response> _unregisterAppModel(Request request, String id) async {
     try {
-      final ok = await _deleteAppModelFromStore(id);
-      if (!ok) {
-        return Response.notFound(
-          jsonEncode({'error': 'app model not found: $id'}),
-          headers: const {'content-type': 'application/json'},
-        );
-      }
-      return Response.ok(
-        jsonEncode({'success': true}),
-        headers: const {'content-type': 'application/json'},
-      );
+      final callerBundleId = _requireCallerBundleId(request);
+      final store = _requireAppModelStore();
+
+      return await _serializeAppModelWrite(() async {
+        _requireOwnedAppModel(store, id, callerBundleId);
+        if (!await store.deleteAppModel(id)) {
+          throw _AppModelRequestException(404, 'app model not found: $id');
+        }
+        return _appModelJson({'success': true});
+      });
+    } on _AppModelRequestException catch (error) {
+      return _appModelError(error.status, error.message);
     } on Exception catch (error) {
-      return Response(500, body: jsonEncode({'error': 'Unregister app model error: $error'}),
-          headers: const {'content-type': 'application/json'});
+      return _appModelError(500, 'Unregister app model error: $error');
     }
   }
 
-  /// 切换应用模型的禁用状态
+  /// 切换应用模型的禁用状态（仅所属 bundle 可切换）
   Future<Response> _toggleAppModel(Request request, String id) async {
     try {
-      final ok = await _toggleAppModelInStore(id);
-      if (!ok) {
-        return Response.notFound(
-          jsonEncode({'error': 'app model not found: $id'}),
-          headers: const {'content-type': 'application/json'},
-        );
-      }
-      return Response.ok(
-        jsonEncode({'success': true}),
-        headers: const {'content-type': 'application/json'},
-      );
+      final callerBundleId = _requireCallerBundleId(request);
+      final store = _requireAppModelStore();
+
+      return await _serializeAppModelWrite(() async {
+        _requireOwnedAppModel(store, id, callerBundleId);
+        if (!await store.toggleAppModelDisabled(id)) {
+          throw _AppModelRequestException(404, 'app model not found: $id');
+        }
+        return _appModelJson({'success': true});
+      });
+    } on _AppModelRequestException catch (error) {
+      return _appModelError(error.status, error.message);
     } on Exception catch (error) {
-      return Response(500, body: jsonEncode({'error': 'Toggle app model error: $error'}),
-          headers: const {'content-type': 'application/json'});
+      return _appModelError(500, 'Toggle app model error: $error');
     }
   }
 
@@ -569,64 +685,251 @@ class ModelKitController {
     return _appModelStore?.appModels ?? const [];
   }
 
-  Future<void> _addAppModelToStore(AppModelData data) async {
-    final store = _appModelStore;
-    if (store == null) return;
-    await store.addAppModel(data);
+  static AppModelData? _findAppModel(AppModelStore store, String id) {
+    for (final model in store.appModels) {
+      if (model.id == id) return model;
+    }
+    return null;
   }
 
-  Future<bool> _updateAppModelInStore(String id, Map<String, dynamic> body) async {
+  // --- App model write: auth / validation / normalization ---
+
+  /// 通过 `Authorization: Bearer <AppKit token>` 解析调用方 bundleId。
+  ///
+  /// token 缺失、无效，或网关未接入 [AppKitService] 时抛出 401（fail closed）。
+  String _requireCallerBundleId(Request request) {
+    final service = _appKitService;
+    final token = extractBearerToken(request);
+    final bundleId = (service == null || token == null || token.isEmpty)
+        ? null
+        : service.bundleIdForToken(token)?.trim();
+    if (bundleId == null || bundleId.isEmpty) {
+      throw const _AppModelRequestException(
+        401,
+        'Missing or invalid AppKit bearer token',
+      );
+    }
+    return bundleId;
+  }
+
+  /// 当前网关的 locator 不支持 app model 持久化时抛出 501，
+  /// 避免写接口“假成功”但实际什么都没保存。
+  AppModelStore _requireAppModelStore() {
     final store = _appModelStore;
-    if (store == null) return false;
+    if (store == null) {
+      throw const _AppModelRequestException(
+        501,
+        'App model registration is not supported by this gateway',
+      );
+    }
+    return store;
+  }
 
-    final existing = store.appModels.where((m) => m.id == id).firstOrNull;
-    if (existing == null) return false;
+  /// 取出 [id] 对应且属于 [callerBundleId] 的模型；未知 id → 404，非所属 → 403。
+  static AppModelData _requireOwnedAppModel(
+    AppModelStore store,
+    String id,
+    String callerBundleId,
+  ) {
+    final existing = _findAppModel(store, id);
+    if (existing == null) {
+      throw _AppModelRequestException(404, 'app model not found: $id');
+    }
+    if (existing.appBundleId != callerBundleId) {
+      throw const _AppModelRequestException(
+        403,
+        'Only the owner bundleId can modify this app model',
+      );
+    }
+    return existing;
+  }
 
-    final newKey = (body['apiKey'] as String?)?.trim() ?? '';
+  /// 串行执行 app model 写操作（见 [_appModelWriteTail]）。
+  Future<T> _serializeAppModelWrite<T>(Future<T> Function() action) {
+    final run = _appModelWriteTail.then((_) => action());
+    // 队尾吞掉异常，避免一次失败阻塞后续写入。
+    _appModelWriteTail = run.then<void>((_) {}, onError: (Object _) {});
+    return run;
+  }
 
-    final updated = AppModelData(
-      id: id,
-      name: (body['name'] as String?)?.trim() ?? existing.name,
-      alias: (body['alias'] as String?)?.trim() ?? existing.alias,
-      description: (body['description'] as String?)?.trim() ?? existing.description,
-      task: (body['task'] as String?)?.trim() ?? existing.task,
-      provider: (body['provider'] as String?)?.trim() ?? existing.provider,
-      inputModalities: body['input'] is List
-          ? (body['input'] as List).whereType<String>().toList()
-          : existing.inputModalities,
-      outputModalities: body['output'] is List
-          ? (body['output'] as List).whereType<String>().toList()
-          : existing.outputModalities,
-      stream: body['capabilities'] is Map<String, dynamic>
-          ? ((body['capabilities'] as Map<String, dynamic>)['stream'] as bool? ?? existing.stream)
-          : existing.stream,
-      toolCall: body['capabilities'] is Map<String, dynamic>
-          ? ((body['capabilities'] as Map<String, dynamic>)['tool_call'] as bool? ?? existing.toolCall)
-          : existing.toolCall,
-      reasoning: body['capabilities'] is Map<String, dynamic>
-          ? ((body['capabilities'] as Map<String, dynamic>)['reasoning'] as bool? ?? existing.reasoning)
-          : existing.reasoning,
-      baseUrl: (body['baseUrl'] as String?)?.trim() ?? existing.baseUrl,
-      apiKey: newKey.isNotEmpty ? newKey : existing.apiKey,
-      contextSize: (body['contextWindowSize'] as num?)?.toInt() ?? existing.contextSize,
-      isDisabled: existing.isDisabled,
-      appBundleId: existing.appBundleId,
-      appName: (body['appName'] as String?)?.trim() ?? existing.appName,
+  Future<Map<String, dynamic>> _readJsonObject(Request request) async {
+    final bytes = await _readBodyBytes(request);
+    if (bytes == null || bytes.isEmpty) {
+      throw const _AppModelRequestException(400, 'empty body');
+    }
+    final Object? decoded;
+    try {
+      // 必须按 UTF-8 解码：String.fromCharCodes 会把中文 appName/description 解成乱码。
+      decoded = jsonDecode(utf8.decode(bytes));
+    } on FormatException {
+      throw const _AppModelRequestException(400, 'invalid json body');
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw const _AppModelRequestException(400, 'invalid json body');
+    }
+    return decoded;
+  }
+
+  static Response _appModelJson(Map<String, dynamic> data) => Response.ok(
+    jsonEncode(data),
+    headers: const {'content-type': 'application/json'},
+  );
+
+  static Response _appModelError(int status, String message) => Response(
+    status,
+    body: jsonEncode({'error': message}),
+    headers: const {'content-type': 'application/json'},
+  );
+
+  /// 读取可选字符串字段（已 trim）；缺失返回 null，类型不符抛 400。
+  static String? _optionalString(Map<String, dynamic> body, String key) {
+    final value = body[key];
+    if (value == null) return null;
+    if (value is! String) {
+      throw _AppModelRequestException(400, '$key must be a string');
+    }
+    return value.trim();
+  }
+
+  /// 读取可选整数字段；缺失返回 null，类型不符抛 400。
+  static int? _optionalInt(Map<String, dynamic> body, String key) {
+    final value = body[key];
+    if (value == null) return null;
+    if (value is! num) {
+      throw _AppModelRequestException(400, '$key must be a number');
+    }
+    return value.toInt();
+  }
+
+  /// 读取可选 `capabilities` 对象；缺失返回 null，类型不符抛 400。
+  static Map<String, dynamic>? _capabilitiesField(Map<String, dynamic> body) {
+    final value = body['capabilities'];
+    if (value == null) return null;
+    if (value is! Map<String, dynamic>) {
+      throw const _AppModelRequestException(
+        400,
+        'capabilities must be an object',
+      );
+    }
+    return value;
+  }
+
+  /// 读取 `capabilities` 中的布尔项；缺失返回 null，类型不符抛 400。
+  static bool? _optionalBool(Map<String, dynamic>? capabilities, String key) {
+    final value = capabilities?[key];
+    if (value == null) return null;
+    if (value is! bool) {
+      throw _AppModelRequestException(
+        400,
+        'capabilities.$key must be a boolean',
+      );
+    }
+    return value;
+  }
+
+  /// 读取可选模态数组（小写、去空、去重）；缺失返回 null，类型不符抛 400。
+  static List<String>? _optionalModalities(
+    Map<String, dynamic> body,
+    String key,
+  ) {
+    final value = body[key];
+    if (value == null) return null;
+    if (value is! List) {
+      throw _AppModelRequestException(400, '$key must be an array of strings');
+    }
+    final result = <String>[];
+    for (final item in value) {
+      if (item is! String) continue;
+      final normalized = item.trim().toLowerCase();
+      if (normalized.isNotEmpty && !result.contains(normalized)) {
+        result.add(normalized);
+      }
+    }
+    return result;
+  }
+
+  static String _nonEmptyOr(String? value, String fallback) =>
+      (value == null || value.isEmpty) ? fallback : value;
+
+  /// 严格解析注册/更新请求中的 `task`。
+  ///
+  /// 接受 `chat` / `embedding` / `asr` / `tts` / `decision`（以及 decision 的别名
+  /// `systemone`、`llm_decision`），大小写不敏感；缺失或为空时用 [fallback]；
+  /// 其余值抛 400，而不是像以前那样静默当成 chat。
+  static ModelTask _resolveRegisteredTask(
+    Object? raw, {
+    required ModelTask fallback,
+  }) {
+    if (raw == null) return fallback;
+    if (raw is! String) {
+      throw const _AppModelRequestException(400, 'task must be a string');
+    }
+    final normalized = raw.trim().toLowerCase();
+    if (normalized.isEmpty) return fallback;
+    if (normalized == 'systemone' || normalized == 'llm_decision') {
+      return ModelTask.decision;
+    }
+    for (final task in ModelTask.values) {
+      if (task.name == normalized || task.wireName == normalized) return task;
+    }
+    throw _AppModelRequestException(
+      400,
+      'unsupported task "${raw.trim()}"; expected one of: '
+      '${ModelTask.values.map((t) => t.wireName).join(', ')}',
     );
-
-    return store.updateAppModel(id, updated);
   }
 
-  Future<bool> _deleteAppModelFromStore(String id) async {
-    final store = _appModelStore;
-    if (store == null) return false;
-    return store.deleteAppModel(id);
+  /// 归一化输入模态。
+  ///
+  /// - decision：输入只允许 `text`（可选 `image` 作多模态）；`decisions` 属于
+  ///   输出，不允许作为输入；缺省为 `[text]`。
+  /// - 其他任务：保留调用方给出的值但剔除 `decisions`（它只属于 decision 的输出），
+  ///   为空时取 [_defaultInputs]。
+  static List<String> _normalizeInputModalities(
+    ModelTask task,
+    List<String> requested,
+  ) {
+    if (task == ModelTask.decision) {
+      final allowed = requested
+          .where((m) => m == 'text' || m == 'image')
+          .toList(growable: false);
+      if (allowed.isEmpty) return const ['text'];
+      return ['text', if (allowed.contains('image')) 'image'];
+    }
+    final kept = requested.where((m) => m != 'decisions').toList();
+    return kept.isEmpty ? _defaultInputs(task) : kept;
   }
 
-  Future<bool> _toggleAppModelInStore(String id) async {
-    final store = _appModelStore;
-    if (store == null) return false;
-    return store.toggleAppModelDisabled(id);
+  /// 归一化输出模态：decision 固定为 `[decisions]`；其他任务保留调用方给出的值但
+  /// 剔除 `decisions`，为空时取 [_defaultOutputs]。
+  static List<String> _normalizeOutputModalities(
+    ModelTask task,
+    List<String> requested,
+  ) {
+    if (task == ModelTask.decision) return _defaultOutputs(task);
+    final kept = requested.where((m) => m != 'decisions').toList();
+    return kept.isEmpty ? _defaultOutputs(task) : kept;
+  }
+
+  /// 归一化能力位。
+  ///
+  /// decision（`/v1/systemone`）既不流式、也不支持工具调用和推理，无论调用方
+  /// 传什么都强制为 false；其他任务沿用历史默认（stream/reasoning 默认 true，
+  /// tool_call 默认 false）。
+  static ({bool stream, bool toolCall, bool reasoning}) _normalizeCapabilities(
+    ModelTask task, {
+    bool? stream,
+    bool? toolCall,
+    bool? reasoning,
+  }) {
+    if (task == ModelTask.decision) {
+      return (stream: false, toolCall: false, reasoning: false);
+    }
+    return (
+      stream: stream ?? true,
+      toolCall: toolCall ?? false,
+      reasoning: reasoning ?? true,
+    );
   }
 
   Future<List<int>?> _readBodyBytes(Request request) async {

@@ -2738,29 +2738,77 @@ they appear in the unified `/modelkit/models` listing and can be accessed
 through the standard ModelKit proxy routes. App-registered models are
 persisted and survive gateway restarts.
 
-These endpoints do not require a bearer token.
+##### Authentication and ownership
+
+`GET /modelkit/app-models` is open. The **write** endpoints (`POST`, `PUT`,
+`DELETE`, and `toggle`) require the Bearer token returned by
+`POST /appkit/register`:
+
+```http
+Authorization: Bearer <token returned by POST /appkit/register>
+```
+
+Every registered model is owned by the `bundleId` that the token was issued
+for, and only that bundle can modify it:
+
+| Condition | Status |
+| --- | --- |
+| Token missing or not issued by `POST /appkit/register` | `401` |
+| Gateway has no app model storage (registration unsupported) | `501` |
+| `PUT` / `DELETE` / `toggle` on an unknown `id` | `404` |
+| `PUT` / `DELETE` / `toggle` on a model owned by another bundle | `403` |
+| `POST` whose body `appBundleId` differs from the token's bundle | `403` |
+| `POST` with an `id` already registered by another bundle | `409` |
+
+The tokens identify an app to the local gateway; `POST /appkit/register`
+itself does not authenticate the caller, so this protects apps from each other
+and from mistakes, under the same trust model as the other Kits.
+
+All write requests must be UTF-8 encoded JSON objects. A field of the wrong
+type (for example a non-string `id`, or `capabilities` that is not an object)
+is rejected with `400` rather than silently ignored.
 
 ##### AppModelData Schema
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `id` | `string` | Yes | Unique model identifier. |
-| `name` | `string` | Yes | Model display name. |
+| `name` | `string` | Yes | Model display name. For remote models this is the upstream model name; ModelKit rewrites the request `model` field from the `id` to this name. |
 | `alias` | `string` | No | Human-friendly model alias. |
 | `description` | `string` | No | Model description. |
-| `task` | `string` | No | Model task: `chat` (default), `embedding`, `asr`, `tts`, or `decision`. |
+| `task` | `string` | No | Model task: `chat` (default), `embedding`, `asr`, `tts`, or `decision` (case-insensitive; `systemone` and `llm_decision` are accepted as aliases of `decision`). Any other value is rejected with `400`. |
 | `provider` | `string` | No | Provider identifier (default: `openai_compatible`). |
-| `input` | `string[]` | No | Input modalities (e.g. `["text"]`). |
-| `output` | `string[]` | No | Output modalities (e.g. `["text"]`). |
-| `capabilities` | `object` | No | Capability flags: `stream` (bool, default true), `tool_call` (bool, default false), `reasoning` (bool, default true). |
+| `input` | `string[]` | No | Input modalities (e.g. `["text"]`). Defaults per task; see [Decision models](#decision-models). |
+| `output` | `string[]` | No | Output modalities (e.g. `["text"]`). Defaults per task; see [Decision models](#decision-models). |
+| `capabilities` | `object` | No | Capability flags: `stream` (bool, default true), `tool_call` (bool, default false), `reasoning` (bool, default true). Forced to `false` for `decision`. |
 | `baseUrl` | `string` | No | Model endpoint base URL. |
 | `apiKey` | `string` | No | API key for authenticating with the model endpoint. |
 | `contextWindowSize` | `number` | No | Context window size. |
-| `appBundleId` | `string` | Yes | Bundle ID of the registering app. |
+| `appBundleId` | `string` | No | Bundle ID of the registering app. Optional on write: it is taken from the Bearer token, and if provided it must match the token's bundle. It cannot be changed afterwards. |
 | `appName` | `string` | No | Display name of the registering app. Defaults to `appBundleId`. |
 
 When listing app models, the response replaces `apiKey` with `hasApiKey`
 (boolean) to avoid exposing credentials.
+
+##### Decision models
+
+A decision model (`"task": "decision"`, llama.cpp `/v1/systemone`) answers
+typed questions with probabilities and never generates text. To keep the
+registry consistent with the models ModelKit discovers locally, the gateway
+normalizes decision registrations regardless of what the caller sends:
+
+| Field | Behavior |
+| --- | --- |
+| `input` | Only `text` (always) and `image` (optional, for multimodal decision models such as Clef) are kept. Defaults to `["text"]`. `decisions` is an output modality and is dropped from `input`. |
+| `output` | Always `["decisions"]`. |
+| `capabilities` | `stream`, `tool_call` and `reasoning` are always `false`. |
+
+Conversely, `decisions` is not accepted for any other task: it is dropped from
+the `input` / `output` of `chat`, `embedding`, `asr` and `tts` models, which
+then fall back to that task's defaults if nothing is left.
+
+Once registered, call it through [`/modelkit/decision`](#all-modelkitdecision)
+with `"model"` set to the registered `id`.
 
 ##### GET /modelkit/app-models
 
@@ -2796,23 +2844,34 @@ Response: `200 OK` (`AppModelData[]`)
 
 ##### POST /modelkit/app-models
 
-Registers a new model from a third-party app. The model will appear in
+Registers a model from a third-party app. The model will appear in
 `GET /modelkit/models` and can be accessed through the standard proxy routes.
+Requires a Bearer token (see [Authentication and ownership](#authentication-and-ownership)).
 
-Request body: see AppModelData schema above. `id`, `name`, and `appBundleId`
-are required.
+Request body: see AppModelData schema above. `id` and `name` are required.
+
+Registering an `id` that the same bundle already registered **replaces** the
+model (the response carries `"updated": true`) and keeps its enabled/disabled
+state, so retrying a registration never produces duplicate entries. The
+replacement is complete: omitted optional fields, including `apiKey`, are
+reset. Use `PUT` for a partial update. An `id` owned by another bundle is
+rejected with `409`.
 
 Example request:
 
 ```bash
+TOKEN=$(curl -s http://localhost:8888/appkit/register \
+  -H 'Content-Type: application/json' \
+  -d '{"bundleId":"com.example.myapp"}' | jq -r .token)
+
 curl -X POST http://localhost:8888/modelkit/app-models \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "id": "example-gpt4o",
     "name": "GPT-4o",
     "alias": "gpt-4o",
     "description": "OpenAI GPT-4o model",
-    "appBundleId": "com.example.myapp",
     "appName": "My Example App",
     "task": "chat",
     "provider": "openai_compatible",
@@ -2838,17 +2897,51 @@ Response: `200 OK`
 }
 ```
 
+Example: registering a decision model. Only the identity and endpoint are
+needed; `input`, `output` and `capabilities` are filled in as described in
+[Decision models](#decision-models):
+
+```bash
+curl -X POST http://localhost:8888/modelkit/app-models \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "id": "example-julia",
+    "name": "Julia-1",
+    "task": "decision",
+    "baseUrl": "http://127.0.0.1:8080",
+    "apiKey": "sk-..."
+  }'
+```
+
+The stored model is reported by `GET /modelkit/app-models` as
+`"task": "decision"`, `"input": ["text"]`, `"output": ["decisions"]` with all
+capabilities `false`. It is then listed by `GET /modelkit/models` (but not by
+`GET /modelkit/chat/models`), and `POST /modelkit/decision` with
+`"model": "example-julia"` is forwarded to `http://127.0.0.1:8080/v1/systemone`
+with the registered `apiKey` as the upstream Bearer token and `model`
+rewritten to `Julia-1`.
+
 ##### PUT /modelkit/app-models/\<id\>
 
-Updates an existing app-registered model. Only the fields provided in the
-request body are updated; omitted fields retain their current values. The
-`apiKey` field is only overwritten when a non-empty value is provided.
+Updates an existing app-registered model. Requires the Bearer token of the
+model's owner. Only the fields provided in the request body are updated;
+omitted fields retain their current values. The `apiKey` field is only
+overwritten when a non-empty value is provided. `appBundleId` cannot be
+changed (a different value is rejected with `400`).
+
+When `task` is changed, any of `input`, `output` and `capabilities` that the
+request does not provide are reset to the defaults of the new task instead of
+keeping the old task's values, and the new task's constraints (for example the
+[decision](#decision-models) ones) are applied. An unknown `task` is rejected
+with `400`.
 
 Example request:
 
 ```bash
 curl -X PUT http://localhost:8888/modelkit/app-models/example-gpt4o \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "name": "GPT-4o Updated",
     "description": "Updated description",
@@ -2864,16 +2957,19 @@ Response: `200 OK`
 }
 ```
 
-Returns `404` if the model is not found.
+Returns `401` without a valid token, `403` if the model belongs to another
+bundle, and `404` if the model is not found.
 
 ##### DELETE /modelkit/app-models/\<id\>
 
-Unregisters an app-registered model.
+Unregisters an app-registered model. Requires the Bearer token of the model's
+owner.
 
 Example request:
 
 ```bash
-curl -X DELETE http://localhost:8888/modelkit/app-models/example-gpt4o
+curl -X DELETE http://localhost:8888/modelkit/app-models/example-gpt4o \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 Response: `200 OK`
@@ -2884,19 +2980,21 @@ Response: `200 OK`
 }
 ```
 
-Returns `404` if the model is not found.
+Returns `401` without a valid token, `403` if the model belongs to another
+bundle, and `404` if the model is not found.
 
 ##### POST /modelkit/app-models/\<id\>/toggle
 
 Toggles the disabled state of an app-registered model. A disabled model
 remains registered but is excluded from active model listings and proxy
-routing.
+routing. Requires the Bearer token of the model's owner.
 
 Example request:
 
 ```bash
 curl -X POST http://localhost:8888/modelkit/app-models/example-gpt4o/toggle \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{}'
 ```
 
@@ -2908,7 +3006,8 @@ Response: `200 OK`
 }
 ```
 
-Returns `404` if the model is not found.
+Returns `401` without a valid token, `403` if the model belongs to another
+bundle, and `404` if the model is not found.
 
 ### Error Responses
 
