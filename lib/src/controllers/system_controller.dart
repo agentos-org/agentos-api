@@ -47,6 +47,8 @@ class SystemController {
       '${ApiConfig.modelEmbeddingPath}/*': 'Text embedding',
       '${ApiConfig.modelAsrPath}/*': 'Speech-to-text',
       '${ApiConfig.modelTtsPath}/*': 'Text-to-speech',
+      '${ApiConfig.modelDecisionPath}/*':
+          'Decision models (typed questions, /v1/systemone)',
     };
     final info = {
       'name': 'AgentOS API Gateway',

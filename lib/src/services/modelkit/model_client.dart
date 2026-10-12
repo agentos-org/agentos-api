@@ -42,6 +42,12 @@ enum ModelTask {
 
   /// Text-to-speech.
   tts,
+
+  /// Typed-question decision models (llama.cpp `/v1/systemone`).
+  ///
+  /// Decision models answer by scoring caller-provided options and never
+  /// generate text, so they are kept apart from [chat] and [embedding].
+  decision,
 }
 
 /// Convenience helpers on [ModelTask].
@@ -57,6 +63,8 @@ extension ModelTaskX on ModelTask {
         return ApiConfig.serviceLlmAsr;
       case ModelTask.tts:
         return ApiConfig.serviceLlmTts;
+      case ModelTask.decision:
+        return ApiConfig.serviceLlmDecision;
     }
   }
 
@@ -71,6 +79,8 @@ extension ModelTaskX on ModelTask {
         return 'asr';
       case ModelTask.tts:
         return 'tts';
+      case ModelTask.decision:
+        return 'decision';
     }
   }
 
@@ -85,6 +95,8 @@ extension ModelTaskX on ModelTask {
         return '/audio/transcriptions';
       case ModelTask.tts:
         return '/audio/speech';
+      case ModelTask.decision:
+        return '/systemone';
     }
   }
 
@@ -99,6 +111,8 @@ extension ModelTaskX on ModelTask {
         return 'Speech-to-Text';
       case ModelTask.tts:
         return 'Text-to-Speech';
+      case ModelTask.decision:
+        return 'Decision';
     }
   }
 }
@@ -624,6 +638,12 @@ class ModelClient {
         if (totalTokens is int) return totalTokens;
         final completionTokens = usage['completion_tokens'];
         if (completionTokens is int) return completionTokens;
+        // 决策模型（/v1/systemone）的 usage 使用 input_tokens / output_tokens。
+        final inputTokens = usage['input_tokens'];
+        final outputTokens = usage['output_tokens'];
+        if (inputTokens is int) {
+          return inputTokens + (outputTokens is int ? outputTokens : 0);
+        }
       }
     } catch (_) {
       // ignore

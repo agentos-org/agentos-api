@@ -7,7 +7,7 @@ This gateway provides a single entry point for all local AI services:
 - **RagKit**: RAG knowledge base management and query (powered by agentos_kernel)
 - **AppKit**: Application registration and subscription
 - **ToolKit**: Tool execution through the gateway
-- **ModelKit**: Task-oriented model services (chat, embedding, ASR, TTS)
+- **ModelKit**: Task-oriented model services (chat, embedding, ASR, TTS, decision)
 - **HarnessKit**: AppKit-authenticated routing to the AgentOS-managed Harness runtime
 - **AuthKit**: Third-party app OAuth-like authentication
 - **DiscoveryKit**: Nearby AgentOS device discovery
@@ -341,6 +341,7 @@ identified by `capabilities.vision` on the resolved model.
 - `ALL /modelkit/embedding/*` - Text embeddings
 - `ALL /modelkit/asr/*` - Speech-to-text
 - `ALL /modelkit/tts/*` - Text-to-speech
+- `ALL /modelkit/decision/*` - Decision models (typed questions via llama.cpp `/v1/systemone`)
 - `GET /modelkit/app-models` - List app-registered models
 - `POST /modelkit/app-models` - Register a model from a third-party app
 - `PUT /modelkit/app-models/<id>` - Update an app-registered model

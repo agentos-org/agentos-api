@@ -5,6 +5,9 @@ import '../../locator.dart';
 const Set<String> _nonTextInferenceModelDenylist = {
   'embedding',
   'llm_embedding',
+  // 决策模型只回答打分题，不生成文本，不能同步给 Kernel 作为文本推理模型。
+  'decision',
+  'llm_decision',
   'text_to_speech',
   'texttospeech',
   'tts',

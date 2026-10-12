@@ -2061,6 +2061,7 @@ Response: `200 OK`
     "/modelkit/embedding/*": "Text embedding",
     "/modelkit/asr/*": "Speech-to-text",
     "/modelkit/tts/*": "Text-to-speech",
+    "/modelkit/decision/*": "Decision models (typed questions, /v1/systemone)",
     "/modelkit/app-models": "App model registration API"
   }
 }
@@ -2341,6 +2342,8 @@ kernel default LLM configuration.
 | `ALL /modelkit/asr/*` | Forward to a custom ASR upstream path |
 | `ALL /modelkit/tts` | Forward to the TTS default endpoint (`/audio/speech`) |
 | `ALL /modelkit/tts/*` | Forward to a custom TTS upstream path |
+| `ALL /modelkit/decision` | Forward to the decision-model default endpoint (`/systemone`, i.e. upstream `/v1/systemone`) |
+| `ALL /modelkit/decision/*` | Forward to a custom decision-model upstream path |
 | `GET /modelkit/app-models` | List all app-registered models |
 | `POST /modelkit/app-models` | Register a model from a third-party app |
 | `PUT /modelkit/app-models/<id>` | Update an app-registered model |
@@ -2357,9 +2360,9 @@ kernel default LLM configuration.
 | `name` | `string` | Yes | Upstream model name. For remote models, the gateway may rewrite request body `model` from `id` to this value before forwarding. |
 | `alias` | `string` | Yes | Human-friendly model alias. |
 | `description` | `string` | Yes | Model description from the service locator. |
-| `task` | `string` | Yes | `chat`, `embedding`, `asr`, or `tts`. |
-| `input` | `string[]` | Yes | Input modalities, such as `text`, `image`, or `audio`. |
-| `output` | `string[]` | Yes | Output modalities, such as `text` or `audio`. |
+| `task` | `string` | Yes | `chat`, `embedding`, `asr`, `tts`, or `decision` (decision models, llama.cpp `/v1/systemone`). |
+| `input` | `string[]` | Yes | Input modalities, such as `text`, `image`, or `audio`. Multimodal decision models (such as Clef) accept `image`. |
+| `output` | `string[]` | Yes | Output modalities, such as `text`, `audio`, or `decisions` (decision models). |
 | `capabilities` | `ModelCapabilities` | Yes | Capability flags. |
 | `contextWindowSize` | `number` | No | Context window size when provided by the backing model metadata. |
 | `isRemote` | `boolean` | Yes | Whether the model is served by a remote provider route. |
@@ -2398,6 +2401,7 @@ endpoint. A sub-path is forwarded as the requested upstream path.
 | `/modelkit/embedding` | `embedding` | `/embeddings` | `application/json` | JSON embedding response |
 | `/modelkit/asr` | `asr` | `/audio/transcriptions` | `multipart/form-data` | JSON or text transcription |
 | `/modelkit/tts` | `tts` | `/audio/speech` | `application/json` | Audio bytes or provider response |
+| `/modelkit/decision` | `decision` | `/systemone` | `application/json` | JSON `answers` (per-question result, probabilities and confidence) |
 
 Examples:
 
@@ -2417,7 +2421,7 @@ keys may be reduced to basenames.
 #### GET /modelkit/models
 
 Lists available models in the task-oriented wire schema. Each entry carries
-`task` (`chat` / `embedding` / `asr` / `tts`), `input` / `output` modalities,
+`task` (`chat` / `embedding` / `asr` / `tts` / `decision`), `input` / `output` modalities,
 and a `capabilities` block (`vision`, `tool_call`, `stream`, `reasoning`).
 `id` is the unique 12-character hash-style model identifier used by the gateway
 for routing and lookup. Treat `name` and `alias` as display/provider metadata,
@@ -2442,6 +2446,24 @@ Response: `200 OK` (`ModelInfo[]`)
       "reasoning": true
     },
     "contextWindowSize": 8192,
+    "isRemote": false,
+    "isCustom": false
+  },
+  {
+    "id": "b21d5e08a7c3",
+    "name": "Julia-1",
+    "alias": "julia-1",
+    "description": "Decision model (llama.cpp /v1/systemone)",
+    "task": "decision",
+    "input": ["text"],
+    "output": ["decisions"],
+    "capabilities": {
+      "vision": false,
+      "tool_call": false,
+      "stream": false,
+      "reasoning": false
+    },
+    "contextWindowSize": 4096,
     "isRemote": false,
     "isCustom": false
   }
@@ -2634,6 +2656,45 @@ Voice-list example:
 curl http://localhost:8888/modelkit/tts/audio/voices
 ```
 
+#### ALL /modelkit/decision
+
+Forwards decision-model requests (llama.cpp `/v1/systemone`, which returns the
+probabilities of typed questions in one forward pass) to the resolved decision
+backend. The root path maps to the upstream `/v1/systemone` endpoint. Decision
+models do not support the chat / embeddings endpoints, nor streaming.
+
+Common JSON request body:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | No | Decision model `id` or name from `/modelkit/models`; the first running decision model is used when omitted. |
+| `state` | `string` / `object` / `array` | Yes | The content to judge; non-string values are serialized to JSON text. |
+| `questions` | `object` | Yes | `question id -> {type, instructions, criteria}`; `type` is `choice`, `score` or `noul`. |
+| `images` | `string[]` | No | Data URLs for multimodal decision models (such as Clef). |
+
+Request example:
+
+```bash
+curl -X POST http://localhost:8888/modelkit/decision \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Julia-1",
+    "state": "Customer message: I was charged twice for my order last week and nobody has replied.",
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which team should handle this?",
+        "criteria": {"billing": "payments, charges, refunds", "shipping": "delivery, tracking", "technical": "bugs, login problems"}
+      },
+      "angry": {"type": "noul", "instructions": "Is the customer angry?"}
+    }
+  }'
+```
+
+Response: the upstream JSON, shaped like `{"model": "...", "answers": {"route": {"type": "choice", "choice": "billing",
+"probabilities": {...}, "confidence": 0.98}, "angry": {"type": "noul", "noul": 0.89}}, "usage":
+{"input_tokens": 128, "output_tokens": 0}}`.
+
 #### GET /modelkit/chat/models
 
 Lists available chat models in the OpenAI-compatible wire format. This endpoint
@@ -2687,7 +2748,7 @@ These endpoints do not require a bearer token.
 | `name` | `string` | Yes | Model display name. |
 | `alias` | `string` | No | Human-friendly model alias. |
 | `description` | `string` | No | Model description. |
-| `task` | `string` | No | Model task: `chat` (default), `embedding`, `asr`, or `tts`. |
+| `task` | `string` | No | Model task: `chat` (default), `embedding`, `asr`, `tts`, or `decision`. |
 | `provider` | `string` | No | Provider identifier (default: `openai_compatible`). |
 | `input` | `string[]` | No | Input modalities (e.g. `["text"]`). |
 | `output` | `string[]` | No | Output modalities (e.g. `["text"]`). |

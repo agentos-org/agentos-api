@@ -2022,6 +2022,7 @@ Query：
     "/modelkit/embedding/*": "文本嵌入",
     "/modelkit/asr/*": "语音转文本",
     "/modelkit/tts/*": "文本转语音",
+    "/modelkit/decision/*": "决策模型（类型化问题，/v1/systemone）",
     "/modelkit/app-models": "应用模型注册 API"
   }
 }
@@ -2292,6 +2293,8 @@ metadata 或 kernel 默认 LLM 配置中解析 provider 凭证。
 | `ALL /modelkit/asr/*` | 转发到自定义 ASR 上游路径 |
 | `ALL /modelkit/tts` | 转发到 TTS 默认端点（`/audio/speech`） |
 | `ALL /modelkit/tts/*` | 转发到自定义 TTS 上游路径 |
+| `ALL /modelkit/decision` | 转发到决策模型默认端点（`/systemone`，即上游 `/v1/systemone`） |
+| `ALL /modelkit/decision/*` | 转发到自定义决策模型上游路径 |
 | `GET /modelkit/app-models` | 列出所有应用注册的模型 |
 | `POST /modelkit/app-models` | 第三方应用注册模型 |
 | `PUT /modelkit/app-models/<id>` | 更新应用注册的模型 |
@@ -2308,9 +2311,9 @@ metadata 或 kernel 默认 LLM 配置中解析 provider 凭证。
 | `name` | `string` | 是 | 上游模型名称。对于远程模型，网关可能会在转发前将请求体中的 `model` 从 `id` 改写为该值。 |
 | `alias` | `string` | 是 | 便于展示的人类可读模型别名。 |
 | `description` | `string` | 是 | 来自 service locator 的模型说明。 |
-| `task` | `string` | 是 | `chat`、`embedding`、`asr` 或 `tts`。 |
-| `input` | `string[]` | 是 | 输入模态，例如 `text`、`image` 或 `audio`。 |
-| `output` | `string[]` | 是 | 输出模态，例如 `text` 或 `audio`。 |
+| `task` | `string` | 是 | `chat`、`embedding`、`asr`、`tts` 或 `decision`（决策模型，llama.cpp `/v1/systemone`）。 |
+| `input` | `string[]` | 是 | 输入模态，例如 `text`、`image` 或 `audio`。多模态决策模型（如 Clef）支持 `image`。 |
+| `output` | `string[]` | 是 | 输出模态，例如 `text`、`audio` 或 `decisions`（决策模型）。 |
 | `capabilities` | `ModelCapabilities` | 是 | 能力标记。 |
 | `contextWindowSize` | `number` | 否 | 底层模型 metadata 提供时返回上下文窗口大小。 |
 | `isRemote` | `boolean` | 是 | 模型是否通过远程 provider route 提供。 |
@@ -2348,6 +2351,7 @@ ModelKit 的路径前缀用于选择任务。任务根路径会映射到默认�
 | `/modelkit/embedding` | `embedding` | `/embeddings` | `application/json` | JSON embedding response |
 | `/modelkit/asr` | `asr` | `/audio/transcriptions` | `multipart/form-data` | JSON 或 text transcription |
 | `/modelkit/tts` | `tts` | `/audio/speech` | `application/json` | 音频 bytes 或 provider 响应 |
+| `/modelkit/decision` | `decision` | `/systemone` | `application/json` | JSON `answers`（每题的结果、概率与置信度） |
 
 示例：
 
@@ -2366,7 +2370,7 @@ ModelKit 的路径前缀用于选择任务。任务根路径会映射到默认�
 #### GET /modelkit/models
 
 以基于任务的 wire schema 列出可用模型。每个条目包含 `task`
-（`chat` / `embedding` / `asr` / `tts`）、`input` / `output` 模态，以及
+（`chat` / `embedding` / `asr` / `tts` / `decision`）、`input` / `output` 模态，以及
 `capabilities` 块（`vision`、`tool_call`、`stream`、`reasoning`）。
 其中 `id` 是网关用于路由和反查的唯一 12 位 hash 风格模型标识。`name` 和
 `alias` 应视为展示或 provider metadata，而不是规范 ID。
@@ -2390,6 +2394,24 @@ ModelKit 的路径前缀用于选择任务。任务根路径会映射到默认�
       "reasoning": true
     },
     "contextWindowSize": 8192,
+    "isRemote": false,
+    "isCustom": false
+  },
+  {
+    "id": "b21d5e08a7c3",
+    "name": "Julia-1",
+    "alias": "julia-1",
+    "description": "决策模型（llama.cpp /v1/systemone）",
+    "task": "decision",
+    "input": ["text"],
+    "output": ["decisions"],
+    "capabilities": {
+      "vision": false,
+      "tool_call": false,
+      "stream": false,
+      "reasoning": false
+    },
+    "contextWindowSize": 4096,
     "isRemote": false,
     "isCustom": false
   }
@@ -2580,6 +2602,44 @@ curl -X POST http://localhost:8888/modelkit/tts \
 curl http://localhost:8888/modelkit/tts/audio/voices
 ```
 
+#### ALL /modelkit/decision
+
+将决策模型（llama.cpp `/v1/systemone`，一次前向返回类型化问题的概率）请求转发到解析出的
+决策模型后端。根路径映射到上游 `/v1/systemone` 端点；决策模型不支持 chat / embeddings
+端点，也不支持流式输出。
+
+常见 JSON 请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | 否 | 来自 `/modelkit/models` 的决策模型 `id` 或名称；省略时使用第一个运行中的决策模型。 |
+| `state` | `string` / `object` / `array` | 是 | 待判断的内容；非字符串会被序列化为 JSON 文本。 |
+| `questions` | `object` | 是 | `问题 id -> {type, instructions, criteria}`；`type` 为 `choice`、`score` 或 `noul`。 |
+| `images` | `string[]` | 否 | 多模态决策模型（如 Clef）可传入 data URL。 |
+
+请求示例：
+
+```bash
+curl -X POST http://localhost:8888/modelkit/decision \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Julia-1",
+    "state": "客户留言：我上周的订单被重复扣款，一直没人回复。",
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "这件事应该由哪个团队处理？",
+        "criteria": {"billing": "付款、扣费、退款", "shipping": "配送、物流", "technical": "程序错误、登录问题"}
+      },
+      "angry": {"type": "noul", "instructions": "客户是否在生气？"}
+    }
+  }'
+```
+
+响应：上游 JSON，形如 `{"model": "...", "answers": {"route": {"type": "choice", "choice": "billing",
+"probabilities": {...}, "confidence": 0.98}, "angry": {"type": "noul", "noul": 0.89}}, "usage":
+{"input_tokens": 128, "output_tokens": 0}}`。
+
 #### GET /modelkit/chat/models
 
 以 OpenAI 兼容的 wire 格式列出可用的 chat 模型。该端点聚合所有可用的 chat
@@ -2629,7 +2689,7 @@ curl http://localhost:8888/modelkit/tts/audio/voices
 | `name` | `string` | 是 | 模型显示名称。 |
 | `alias` | `string` | 否 | 便于展示的模型别名。 |
 | `description` | `string` | 否 | 模型描述。 |
-| `task` | `string` | 否 | 模型任务：`chat`（默认）、`embedding`、`asr` 或 `tts`。 |
+| `task` | `string` | 否 | 模型任务：`chat`（默认）、`embedding`、`asr`、`tts` 或 `decision`。 |
 | `provider` | `string` | 否 | 提供商标识（默认：`openai_compatible`）。 |
 | `input` | `string[]` | 否 | 输入模态（例如 `["text"]`）。 |
 | `output` | `string[]` | 否 | 输出模态（例如 `["text"]`）。 |

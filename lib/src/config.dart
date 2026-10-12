@@ -31,8 +31,8 @@ class ApiConfig {
 
   /// ModelKit API path — unified entry point for all model task services.
   ///
-  /// Groups chat (text + vision), embedding, ASR and TTS behind a single
-  /// task-oriented namespace.
+  /// Groups chat (text + vision), embedding, ASR, TTS and decision behind a
+  /// single task-oriented namespace.
   static const String modelkitPath = '/modelkit';
 
   /// CronKit API path (cron task management)
@@ -74,6 +74,10 @@ class ApiConfig {
   /// Text-to-speech (TTS) task path.
   static const String modelTtsPath = '$modelkitPath/tts';
 
+  /// Decision task path — typed-question decision models (llama.cpp
+  /// `/v1/systemone`). Hitting the task root forwards to `/v1/systemone`.
+  static const String modelDecisionPath = '$modelkitPath/decision';
+
   // ============ Service Identifiers ============
 
   /// Service identifier constants
@@ -87,6 +91,9 @@ class ApiConfig {
   static const String serviceLlmEmbedding = 'llm_embedding';
   static const String serviceLlmTts = 'llm_tts';
   static const String serviceLlmAsr = 'llm_asr';
+
+  /// Decision-model service identifier (llama.cpp `/v1/systemone`).
+  static const String serviceLlmDecision = 'llm_decision';
 
   // ============ Default Ports ============
 
@@ -139,6 +146,8 @@ class ApiConfig {
         return modelTtsPath;
       case serviceLlmAsr:
         return modelAsrPath;
+      case serviceLlmDecision:
+        return modelDecisionPath;
       default:
         return null;
     }
@@ -156,6 +165,7 @@ class ApiConfig {
   static const String llmEmbeddingName = 'Text Embedding';
   static const String llmTtsName = 'Text-to-Speech';
   static const String llmAsrName = 'Speech-to-Text';
+  static const String llmDecisionName = 'Decision';
 
   // ============ Service Display Names (Chinese) ============
 
@@ -169,6 +179,7 @@ class ApiConfig {
   static const String llmEmbeddingNameZh = '文本嵌入';
   static const String llmTtsNameZh = '文本转语音';
   static const String llmAsrNameZh = '语音转文本';
+  static const String llmDecisionNameZh = '决策';
 
   static String getDisplayName(String serviceKey) {
     switch (serviceKey) {
@@ -186,6 +197,8 @@ class ApiConfig {
         return llmTtsName;
       case serviceLlmAsr:
         return llmAsrName;
+      case serviceLlmDecision:
+        return llmDecisionName;
       default:
         return serviceKey;
     }
@@ -207,6 +220,8 @@ class ApiConfig {
         return llmTtsNameZh;
       case serviceLlmAsr:
         return llmAsrNameZh;
+      case serviceLlmDecision:
+        return llmDecisionNameZh;
       default:
         return serviceKey;
     }

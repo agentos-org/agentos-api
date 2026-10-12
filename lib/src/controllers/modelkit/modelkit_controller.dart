@@ -11,7 +11,7 @@ import '../../services/appkit/appkit_service.dart';
 /// ModelKit Controller
 ///
 /// Task-oriented gateway controller. Exposes one route per [ModelTask]:
-/// `/chat`, `/embedding`, `/asr`, `/tts`. Vision-language models live
+/// `/chat`, `/embedding`, `/asr`, `/tts`, `/decision`. Vision-language models live
 /// behind `/chat` and are identified by `capabilities.vision = true` on the
 /// resolved model.
 class ModelKitController {
@@ -52,6 +52,7 @@ class ModelKitController {
     _registerForwardRoutes(router, ModelTask.embedding);
     _registerForwardRoutes(router, ModelTask.asr);
     _registerForwardRoutes(router, ModelTask.tts);
+    _registerForwardRoutes(router, ModelTask.decision);
 
     return router;
   }
@@ -225,6 +226,8 @@ class ModelKitController {
         return const ['audio'];
       case ModelTask.tts:
         return const ['text'];
+      case ModelTask.decision:
+        return vision ? const ['text', 'image'] : const ['text'];
     }
   }
 
@@ -238,6 +241,9 @@ class ModelKitController {
         return const ['text'];
       case ModelTask.tts:
         return const ['audio'];
+      case ModelTask.decision:
+        // 与 llama.cpp `/v1/models` 的 architecture.output_modalities 保持一致。
+        return const ['decisions'];
     }
   }
 
@@ -264,6 +270,10 @@ class ModelKitController {
     switch (normalized) {
       case 'chat':
         return ModelTask.chat;
+      case 'decision':
+      case 'llm_decision':
+      case 'systemone':
+        return ModelTask.decision;
       case 'embedding':
         return ModelTask.embedding;
       case 'asr':

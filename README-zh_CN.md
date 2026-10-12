@@ -7,7 +7,7 @@
 - **RagKit**：RAG 知识库管理与检索（基于 agentos_kernel）
 - **AppKit**：应用注册与订阅
 - **ToolKit**：通过网关访问工具执行能力
-- **ModelKit**：基于任务的模型服务（chat、embedding、ASR、TTS）
+- **ModelKit**：基于任务的模型服务（chat、embedding、ASR、TTS、decision）
 - **HarnessKit**：将 AppKit 鉴权后的请求路由到 AgentOS 唯一的 Harness runtime
 - **AuthKit**：第三方应用 OAuth 认证
 - **DiscoveryKit**：附近 AgentOS 设备发现
@@ -315,6 +315,7 @@ App 条目的 `status: "running"` 表示 ToolKit provider 可用；App 专用后
 - `ALL /modelkit/embedding/*` - 文本嵌入
 - `ALL /modelkit/asr/*` - 语音转文本
 - `ALL /modelkit/tts/*` - 文本转语音
+- `ALL /modelkit/decision/*` - 决策模型（通过 llama.cpp `/v1/systemone` 回答类型化问题）
 - `GET /modelkit/app-models` - 列出应用注册的模型
 - `POST /modelkit/app-models` - 第三方应用注册模型
 - `PUT /modelkit/app-models/<id>` - 更新应用注册的模型

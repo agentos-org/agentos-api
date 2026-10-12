@@ -243,6 +243,7 @@ abstract class AgentOSServiceLocator {
   /// - 'llm_embedding': LLM embedding model service
   /// - 'llm_tts': Text-to-speech service
   /// - 'llm_asr': Speech-to-text service
+  /// - 'llm_decision': Decision-model service (llama.cpp `/v1/systemone`)
   ///
   /// [modelId] Optional model identifier for LLM services with multiple
   /// running instances. When provided, attempts to route to the specific
@@ -818,6 +819,7 @@ class DefaultServiceLocator implements AgentOSServiceLocator {
     'llm_embedding': 52030,
     'llm_tts': 52040,
     'llm_asr': 52050,
+    'llm_decision': 52060,
   };
 
   @override
