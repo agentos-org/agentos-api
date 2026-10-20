@@ -26,15 +26,16 @@ LlmModelInfo _firstParty(
   );
 }
 
+/// 应用模型：id 是网关由 `bundleId + key` 生成的 hashid（key 即注册时的 name）。
 LlmModelInfo _app(
-  String localId,
+  String key,
   String bundleId, {
   String name = '',
   String alias = '',
 }) {
   return LlmModelInfo(
-    id: AppModelId.qualify(bundleId: bundleId, localId: localId),
-    name: name.isEmpty ? 'name-of-$localId' : name,
+    id: AppModelId.generate(bundleId: bundleId, name: key),
+    name: name.isEmpty ? 'name-of-$key' : name,
     alias: alias,
     description: '',
     parameters: '',
@@ -73,39 +74,13 @@ void main() {
     });
   });
 
-  group('appLocalIdOf', () {
-    test('应用模型取出 localId；第一方与非 qualified 形态返回 null', () {
-      expect(appLocalIdOf(_app('chat-1', 'com.example.a')), 'chat-1');
-      expect(appLocalIdOf(_firstParty('abc123def456')), isNull);
-
-      final legacy = LlmModelInfo(
-        id: 'bare-id',
-        name: 'n',
-        alias: '',
-        description: '',
-        parameters: '',
-        paramsB: 0,
-        quantization: '',
-        sizeGB: 0,
-        minRAMGB: 0,
-        downloadUrl: '',
-        tags: const [],
-        repoId: '',
-        type: 'textGeneration',
-        isAppModel: true,
-        appBundleId: 'com.example.a',
-      );
-      expect(appLocalIdOf(legacy), isNull);
-    });
-  });
-
   group('resolveModelIdentifier：分层解析', () {
     test('精确 id 命中，且没有告警', () {
       final target = _app('chat-1', 'com.example.a');
       final result = resolveModelIdentifier([
         _firstParty('aaaaaaaaaaaa', name: 'gpt'),
         target,
-      ], 'chat-1@com.example.a');
+      ], target.id);
       expect(result.model, same(target));
       expect(result.warnings, isEmpty);
     });
@@ -145,44 +120,18 @@ void main() {
       expect(result.model, same(platform));
     });
 
-    test('应用的裸 localId 等于第一方的 name 时，第一方优先（id 劫持）', () {
-      final platform = _firstParty('aaaaaaaaaaaa', name: 'gpt-4o');
-      final hijacker = _app('gpt-4o', 'com.example.evil');
-      final result = resolveModelIdentifier([hijacker, platform], 'gpt-4o');
-      expect(result.model, same(platform));
+    test('应用模型的 id 是 12 位 hashid，按 id 精确命中', () {
+      final app = _app('chat-1', 'com.example.a', name: 'upstream');
+      expect(app.id, matches(RegExp(r'^[0-9a-f]{12}$')));
+      expect(resolveModelIdentifier([app], app.id).model, same(app));
     });
 
-    test('没有第一方匹配时，裸 localId 唯一则命中，并给出弃用告警', () {
-      final app = _app('legacy-id', 'com.example.a', name: 'upstream');
-      final result = resolveModelIdentifier([
-        _firstParty('aaaaaaaaaaaa', name: 'gpt'),
-        app,
-      ], 'legacy-id');
-      expect(result.model, same(app));
-      expect(result.warnings, hasLength(1));
-      expect(result.warnings.single, contains('弃用'));
-      expect(result.warnings.single, contains('legacy-id@com.example.a'));
-    });
-
-    test('多个应用共用同一个 localId 时，裸 id 无法判定目标：不命中并给出提示', () {
-      final result = resolveModelIdentifier([
-        _app('shared', 'com.example.a'),
-        _app('shared', 'com.example.b'),
-      ], 'shared');
-      expect(result.model, isNull);
-      expect(result.warnings, hasLength(1));
-      expect(result.warnings.single, contains('shared@com.example.a'));
-      expect(result.warnings.single, contains('shared@com.example.b'));
-    });
-
-    test('裸 localId 不唯一时，仍可继续按应用 name 命中', () {
-      final a = _app('shared', 'com.example.a', name: 'shared');
-      final result = resolveModelIdentifier([
-        a,
-        _app('shared', 'com.example.b', name: 'other'),
-      ], 'shared');
-      // 两个应用的 localId 都是 shared（歧义），退到应用 name 层后只有 a 的 name 是 shared。
-      expect(result.model, same(a));
+    test('同名模型在不同应用下 hashid 不同，按 hashid 各自精确命中', () {
+      final a = _app('shared', 'com.example.a');
+      final b = _app('shared', 'com.example.b');
+      expect(a.id, isNot(b.id));
+      expect(resolveModelIdentifier([a, b], a.id).model, same(a));
+      expect(resolveModelIdentifier([a, b], b.id).model, same(b));
     });
 
     test('没有第一方匹配时，应用 alias 再 name 依次生效', () {
@@ -260,18 +209,12 @@ void main() {
       expect(resolveModelId([platform], 'fast').model, isNull);
     });
 
-    test('兼容唯一的应用裸 localId（并告警），歧义时不命中', () {
-      final app = _app('legacy-id', 'com.example.a');
-      final hit = resolveModelId([app], 'legacy-id');
+    test('应用模型按 hashid 精确命中', () {
+      final app = _app('chat-1', 'com.example.a');
+      final hit = resolveModelId([app], app.id);
       expect(hit.model, same(app));
-      expect(hit.warnings, isNotEmpty);
-
-      final miss = resolveModelId([
-        app,
-        _app('legacy-id', 'com.example.b'),
-      ], 'legacy-id');
-      expect(miss.model, isNull);
-      expect(miss.warnings, isNotEmpty);
+      expect(hit.warnings, isEmpty);
+      expect(resolveModelId([app], 'missing').model, isNull);
     });
 
     test('空 id 不命中', () {

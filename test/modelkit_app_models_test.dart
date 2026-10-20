@@ -13,7 +13,7 @@ import 'package:test/test.dart';
 /// 并把 app model 暴露成远程 [LlmModelInfo]，用来验证 `/modelkit/*` 的完整链路。
 ///
 /// `addAppModel` 故意先让出事件循环再写入，模拟真实存储“读-改-写不原子”的
-/// 窗口，用于验证 controller 对并发同 id 写入的串行化。
+/// 窗口，用于验证 controller 对并发同名写入的串行化。
 class _FakeAppModelLocator implements AgentOSServiceLocator, AppModelStore {
   final List<AppModelData> _models = [];
 
@@ -35,8 +35,8 @@ class _FakeAppModelLocator implements AgentOSServiceLocator, AppModelStore {
       .where((m) => !m.isDisabled)
       .map(
         (m) => LlmModelInfo(
-          // 与真实 locator 一致：对外 id 是 qualifiedId（localId@bundleId）。
-          id: m.qualifiedId,
+          // 与真实 locator 一致：对外 id 就是网关生成的 hashid。
+          id: m.id,
           name: m.name,
           alias: m.alias,
           description: m.description,
@@ -69,18 +69,10 @@ class _FakeAppModelLocator implements AgentOSServiceLocator, AppModelStore {
   @override
   List<AppModelData> get appModels => List.unmodifiable(_models);
 
-  /// 按 localId 取模型。仅适用于 localId 在整个 fake 里唯一的用例；
-  /// 多个 bundle 共用同一个 localId 时请用 [byQualifiedId]。
+  /// 按 hashid 取模型。
   AppModelData? byId(String id) {
     for (final m in _models) {
       if (m.id == id) return m;
-    }
-    return null;
-  }
-
-  AppModelData? byQualifiedId(String qualifiedId) {
-    for (final m in _models) {
-      if (m.qualifiedId == qualifiedId) return m;
     }
     return null;
   }
@@ -92,24 +84,24 @@ class _FakeAppModelLocator implements AgentOSServiceLocator, AppModelStore {
   }
 
   @override
-  Future<bool> updateAppModel(String qualifiedId, AppModelData model) async {
+  Future<bool> updateAppModel(String id, AppModelData model) async {
     await Future<void>.delayed(const Duration(milliseconds: 10));
-    final index = _models.indexWhere((m) => m.qualifiedId == qualifiedId);
+    final index = _models.indexWhere((m) => m.id == id);
     if (index < 0) return false;
     _models[index] = model;
     return true;
   }
 
   @override
-  Future<bool> deleteAppModel(String qualifiedId) async {
+  Future<bool> deleteAppModel(String id) async {
     final before = _models.length;
-    _models.removeWhere((m) => m.qualifiedId == qualifiedId);
+    _models.removeWhere((m) => m.id == id);
     return _models.length != before;
   }
 
   @override
-  Future<bool> toggleAppModelDisabled(String qualifiedId) async {
-    final index = _models.indexWhere((m) => m.qualifiedId == qualifiedId);
+  Future<bool> toggleAppModelDisabled(String id) async {
+    final index = _models.indexWhere((m) => m.id == id);
     if (index < 0) return false;
     final m = _models[index];
     _models[index] = AppModelData(
@@ -172,6 +164,13 @@ Object? _decode(Response response) =>
 Map<String, dynamic> _asMap(Response response) =>
     _decode(response) as Map<String, dynamic>;
 
+const _bundleA = 'com.example.a';
+const _bundleB = 'com.example.b';
+
+/// 网关为 (bundleId, name) 生成的 hashid。
+String _idOf(String bundleId, String name) =>
+    AppModelId.generate(bundleId: bundleId, name: name);
+
 void main() {
   late _FakeAppModelLocator locator;
   late HttpServer gateway;
@@ -206,6 +205,13 @@ void main() {
     body: utf8.encode(jsonEncode(body)),
   );
 
+  /// 注册并断言成功，返回网关生成的 hashid。
+  Future<String> registerOk(String token, Map<String, dynamic> body) async {
+    final response = await register(token, body);
+    expect(response.statusCode, 200, reason: response.body);
+    return _asMap(response)['id'] as String;
+  }
+
   Future<Response> update(String token, String id, Map<String, dynamic> body) =>
       put(
         Uri.parse('$host/modelkit/app-models/$id'),
@@ -223,10 +229,14 @@ void main() {
     headers: authHeaders(token),
   );
 
-  Map<String, dynamic> decisionBody({String id = 'dec-1'}) => {
-    'id': id,
-    'name': 'qwen-decision',
+  Map<String, dynamic> decisionBody({String name = 'qwen-decision'}) => {
+    'name': name,
     'task': 'decision',
+    'baseUrl': 'http://127.0.0.1:1',
+  };
+
+  Map<String, dynamic> chatBody(String name) => {
+    'name': name,
     'baseUrl': 'http://127.0.0.1:1',
   };
 
@@ -237,6 +247,7 @@ void main() {
         'authorization': 'Bearer sk-not-issued',
       };
       final noAuth = <String, String>{'content-type': 'application/json'};
+      final id = _idOf(_bundleA, 'qwen-decision');
 
       for (final headers in [noAuth, bogus]) {
         final created = await post(
@@ -249,7 +260,7 @@ void main() {
 
         expect(
           (await put(
-            Uri.parse('$host/modelkit/app-models/dec-1'),
+            Uri.parse('$host/modelkit/app-models/$id'),
             headers: headers,
             body: jsonEncode({'name': 'x'}),
           )).statusCode,
@@ -257,14 +268,14 @@ void main() {
         );
         expect(
           (await delete(
-            Uri.parse('$host/modelkit/app-models/dec-1'),
+            Uri.parse('$host/modelkit/app-models/$id'),
             headers: headers,
           )).statusCode,
           401,
         );
         expect(
           (await post(
-            Uri.parse('$host/modelkit/app-models/dec-1/toggle'),
+            Uri.parse('$host/modelkit/app-models/$id/toggle'),
             headers: headers,
           )).statusCode,
           401,
@@ -284,7 +295,7 @@ void main() {
       final bare = await _serveGateway(DefaultServiceLocator());
       addTearDown(() => bare.close(force: true));
       final bareHost = _hostOf(bare);
-      final token = await registerBundle('com.example.a', base: bareHost);
+      final token = await registerBundle(_bundleA, base: bareHost);
 
       final response = await post(
         Uri.parse('$bareHost/modelkit/app-models'),
@@ -297,14 +308,13 @@ void main() {
 
   group('decision 注册', () {
     test('最小请求体即可注册，输入输出与能力位按 decision 约定补全', () async {
-      final token = await registerBundle('com.example.a');
+      final token = await registerBundle(_bundleA);
 
       final response = await register(token, decisionBody());
       expect(response.statusCode, 200, reason: response.body);
       expect(_asMap(response), {
         'success': true,
-        'id': 'dec-1',
-        'qualifiedId': 'dec-1@com.example.a',
+        'id': _idOf(_bundleA, 'qwen-decision'),
       });
 
       final list =
@@ -320,23 +330,22 @@ void main() {
         'tool_call': false,
         'reasoning': false,
       });
-      expect(model['appBundleId'], 'com.example.a');
-      expect(model['appName'], 'com.example.a');
+      expect(model['appBundleId'], _bundleA);
+      expect(model['appName'], _bundleA);
     });
 
     test('别名 task 与不合规的输入/输出/能力位会被归一化', () async {
-      final token = await registerBundle('com.example.a');
+      final token = await registerBundle(_bundleA);
 
-      final response = await register(token, {
+      final id = await registerOk(token, {
         ...decisionBody(),
         'task': 'SystemOne',
         'input': ['decisions', 'audio', 'image', 'text'],
         'output': ['text'],
         'capabilities': {'stream': true, 'tool_call': true, 'reasoning': true},
       });
-      expect(response.statusCode, 200, reason: response.body);
 
-      final model = locator.byId('dec-1')!;
+      final model = locator.byId(id)!;
       expect(model.task, 'decision');
       expect(model.inputModalities, ['text', 'image']);
       expect(model.outputModalities, ['decisions']);
@@ -347,20 +356,15 @@ void main() {
     });
 
     test('未知 task 返回 400；缺省 task 视为 chat 并沿用 chat 默认值', () async {
-      final token = await registerBundle('com.example.a');
+      final token = await registerBundle(_bundleA);
 
       final bad = await register(token, {...decisionBody(), 'task': 'vision'});
       expect(bad.statusCode, 400);
       expect(_asMap(bad)['error'], contains('decision'));
       expect(locator.appModels, isEmpty);
 
-      final implicit = await register(token, {
-        'id': 'chat-1',
-        'name': 'gpt',
-        'baseUrl': 'http://127.0.0.1:1',
-      });
-      expect(implicit.statusCode, 200, reason: implicit.body);
-      final chat = locator.byId('chat-1')!;
+      final id = await registerOk(token, chatBody('gpt'));
+      final chat = locator.byId(id)!;
       expect(chat.task, 'chat');
       expect(chat.inputModalities, ['text']);
       expect(chat.outputModalities, ['text']);
@@ -368,27 +372,39 @@ void main() {
     });
 
     test('非 decision 任务不接受 decisions 模态，缺省回退到该任务的默认值', () async {
-      final token = await registerBundle('com.example.a');
+      final token = await registerBundle(_bundleA);
 
-      final response = await register(token, {
-        'id': 'chat-1',
-        'name': 'gpt',
-        'baseUrl': 'http://127.0.0.1:1',
+      final id = await registerOk(token, {
+        ...chatBody('gpt'),
         'input': ['text', 'decisions'],
         'output': ['decisions'],
       });
-      expect(response.statusCode, 200, reason: response.body);
 
-      final chat = locator.byId('chat-1')!;
+      final chat = locator.byId(id)!;
       expect(chat.inputModalities, ['text']);
       expect(chat.outputModalities, ['text']);
     });
 
-    test('请求体类型错误返回 400，而不是 500', () async {
-      final token = await registerBundle('com.example.a');
+    test('缺少 name 或 name 为空白时返回 400，且不会写入', () async {
+      final token = await registerBundle(_bundleA);
 
       for (final body in <Map<String, dynamic>>[
-        {...decisionBody(), 'id': 123},
+        {'baseUrl': 'http://127.0.0.1:1'},
+        {...decisionBody(name: '')},
+        {...decisionBody(name: '   ')},
+      ]) {
+        final response = await register(token, body);
+        expect(response.statusCode, 400, reason: '$body -> ${response.body}');
+        expect(_asMap(response)['error'], contains('name'));
+      }
+      expect(locator.appModels, isEmpty);
+    });
+
+    test('请求体类型错误返回 400，而不是 500', () async {
+      final token = await registerBundle(_bundleA);
+
+      for (final body in <Map<String, dynamic>>[
+        {...decisionBody(), 'name': 123},
         {...decisionBody(), 'capabilities': 'yes'},
         {
           ...decisionBody(),
@@ -417,157 +433,248 @@ void main() {
     });
 
     test('中文 appName / description 不会被解成乱码', () async {
-      final token = await registerBundle('com.example.a');
+      final token = await registerBundle(_bundleA);
 
-      final response = await register(token, {
+      final id = await registerOk(token, {
         ...decisionBody(),
         'appName': '我的应用',
         'description': '中文描述',
       });
-      expect(response.statusCode, 200, reason: response.body);
 
-      final model = locator.byId('dec-1')!;
+      final model = locator.byId(id)!;
       expect(model.appName, '我的应用');
       expect(model.description, '中文描述');
     });
   });
 
-  group('归属校验', () {
-    test('appBundleId 可省略；与 token 不一致时返回 403', () async {
-      final token = await registerBundle('com.example.a');
+  group('hashid', () {
+    test('注册响应返回由 bundleId + name 生成的 12 位 hashid，各接口使用同一个 id', () async {
+      final token = await registerBundle(_bundleA);
+      final id = await registerOk(token, decisionBody());
 
-      final spoofed = await register(token, {
-        ...decisionBody(),
-        'appBundleId': 'com.example.b',
-      });
-      expect(spoofed.statusCode, 403);
-      expect(locator.appModels, isEmpty);
+      expect(id, _idOf(_bundleA, 'qwen-decision'));
+      expect(id, matches(RegExp(r'^[0-9a-f]{12}$')));
 
-      final matching = await register(token, {
-        ...decisionBody(),
-        'appBundleId': 'com.example.a',
-      });
-      expect(matching.statusCode, 200, reason: matching.body);
-      expect(locator.byId('dec-1')!.appBundleId, 'com.example.a');
+      final appModels =
+          (_decode(await get(Uri.parse('$host/modelkit/app-models')))
+                  as List<dynamic>)
+              .cast<Map<String, dynamic>>();
+      expect(appModels.single['id'], id);
+
+      final models =
+          (_decode(await get(Uri.parse('$host/modelkit/models')))
+                  as List<dynamic>)
+              .cast<Map<String, dynamic>>();
+      expect(models.single['id'], id);
+      expect(models.single['source'], 'app');
     });
 
-    test('其他调用方不能修改、删除或切换别人的模型（别人的 localId 在自己的命名空间里不存在 → 404）', () async {
-      final tokenA = await registerBundle('com.example.a');
-      final tokenB = await registerBundle('com.example.b');
-      expect((await register(tokenA, decisionBody())).statusCode, 200);
-
-      expect(
-        (await update(tokenB, 'dec-1', {'name': 'hijacked'})).statusCode,
-        404,
-      );
-      expect((await unregister(tokenB, 'dec-1')).statusCode, 404);
-      expect((await toggle(tokenB, 'dec-1')).statusCode, 404);
-
-      final model = locator.byId('dec-1')!;
-      expect(model.name, 'qwen-decision');
-      expect(model.isDisabled, isFalse);
-      expect(model.appBundleId, 'com.example.a');
-
-      // 所属方仍然可以操作。
-      expect((await toggle(tokenA, 'dec-1')).statusCode, 200);
-      expect(locator.byId('dec-1')!.isDisabled, isTrue);
-      expect((await unregister(tokenA, 'dec-1')).statusCode, 200);
-      expect(locator.appModels, isEmpty);
-    });
-
-    test('未知 id 返回 404', () async {
-      final token = await registerBundle('com.example.a');
-
-      expect((await update(token, 'missing', {'name': 'x'})).statusCode, 404);
-      expect((await unregister(token, 'missing')).statusCode, 404);
-      expect((await toggle(token, 'missing')).statusCode, 404);
-    });
-
-    test('另一个 bundle 使用同一个 localId 不再冲突：各自独立，原模型不受影响', () async {
-      final tokenA = await registerBundle('com.example.a');
-      final tokenB = await registerBundle('com.example.b');
-      expect((await register(tokenA, decisionBody())).statusCode, 200);
-
-      final other = await register(tokenB, {
-        ...decisionBody(),
-        'name': 'other-name',
-      });
-      expect(other.statusCode, 200, reason: other.body);
-      expect(_asMap(other)['updated'], isNull);
-
-      expect(locator.appModels, hasLength(2));
-      expect(
-        locator.byQualifiedId('dec-1@com.example.a')!.name,
-        'qwen-decision',
-      );
-      expect(locator.byQualifiedId('dec-1@com.example.b')!.name, 'other-name');
-    });
-
-    test('同 bundle 重复注册按整体替换（upsert），保留禁用状态且不产生重复条目', () async {
-      final token = await registerBundle('com.example.a');
-      expect((await register(token, decisionBody())).statusCode, 200);
-      expect((await toggle(token, 'dec-1')).statusCode, 200);
+    test('同一应用同名重复注册得到同一个 hashid：整体替换，保留禁用状态，不产生重复条目', () async {
+      final token = await registerBundle(_bundleA);
+      final id = await registerOk(token, decisionBody());
+      expect((await toggle(token, id)).statusCode, 200);
 
       final again = await register(token, {
         ...decisionBody(),
-        'name': 'qwen-decision-v2',
+        'description': 'refreshed',
       });
       expect(again.statusCode, 200, reason: again.body);
-      expect(_asMap(again)['updated'], isTrue);
+      expect(_asMap(again), {'success': true, 'id': id, 'updated': true});
 
       expect(locator.appModels, hasLength(1));
-      final model = locator.byId('dec-1')!;
-      expect(model.name, 'qwen-decision-v2');
+      final model = locator.byId(id)!;
+      expect(model.description, 'refreshed');
       expect(model.isDisabled, isTrue);
     });
 
-    test('并发的同 id 注册只会留下一条记录', () async {
-      final token = await registerBundle('com.example.a');
+    test('不同应用注册同名模型得到不同的 hashid，互不影响', () async {
+      final tokenA = await registerBundle(_bundleA);
+      final tokenB = await registerBundle(_bundleB);
+      final idA = await registerOk(tokenA, decisionBody());
+
+      final other = await register(tokenB, decisionBody());
+      expect(other.statusCode, 200, reason: other.body);
+      expect(_asMap(other)['updated'], isNull);
+      final idB = _asMap(other)['id'] as String;
+
+      expect(idA, isNot(idB));
+      expect(idB, _idOf(_bundleB, 'qwen-decision'));
+      expect(locator.appModels, hasLength(2));
+      expect(locator.byId(idA)!.appBundleId, _bundleA);
+      expect(locator.byId(idB)!.appBundleId, _bundleB);
+    });
+
+    test('并发的同名注册只会留下一条记录，且得到同一个 id', () async {
+      final token = await registerBundle(_bundleA);
 
       final responses = await Future.wait([
         for (var i = 0; i < 5; i++)
-          register(token, {...decisionBody(), 'name': 'name-$i'}),
+          register(token, {...decisionBody(), 'description': 'v$i'}),
       ]);
       expect(responses.map((r) => r.statusCode), everyElement(200));
+      expect(responses.map((r) => _asMap(r)['id']).toSet(), {
+        _idOf(_bundleA, 'qwen-decision'),
+      });
+      expect(
+        responses.where((r) => _asMap(r)['updated'] == true),
+        hasLength(4),
+      );
       expect(locator.appModels, hasLength(1));
     });
 
-    test('两个 bundle 并发使用同一个 localId：都成功，各留一条', () async {
-      final tokenA = await registerBundle('com.example.a');
-      final tokenB = await registerBundle('com.example.b');
+    test('两个应用并发注册同名模型：都成功，各留一条', () async {
+      final tokenA = await registerBundle(_bundleA);
+      final tokenB = await registerBundle(_bundleB);
 
       final responses = await Future.wait([
         register(tokenA, decisionBody()),
         register(tokenB, decisionBody()),
       ]);
       expect(responses.map((r) => r.statusCode), everyElement(200));
-      expect(locator.appModels, hasLength(2));
-      expect(locator.appModels.map((m) => m.qualifiedId).toSet(), {
-        'dec-1@com.example.a',
-        'dec-1@com.example.b',
+      expect(locator.appModels.map((m) => m.id).toSet(), {
+        _idOf(_bundleA, 'qwen-decision'),
+        _idOf(_bundleB, 'qwen-decision'),
       });
+    });
+
+    test('注销后重新注册同名模型，得到同一个 hashid', () async {
+      final token = await registerBundle(_bundleA);
+      final id = await registerOk(token, chatBody('gpt-x'));
+      expect((await unregister(token, id)).statusCode, 200);
+      expect(locator.appModels, isEmpty);
+
+      final again = await register(token, chatBody('gpt-x'));
+      expect(again.statusCode, 200, reason: again.body);
+      expect(_asMap(again), {'success': true, 'id': id});
+      expect(locator.appModels, hasLength(1));
+    });
+
+    test('改名后 id 保持不变；再用旧 name 注册会因 hashid 仍被占用返回 409', () async {
+      final token = await registerBundle(_bundleA);
+      final id = await registerOk(token, chatBody('gpt-old'));
+
+      expect((await update(token, id, {'name': 'gpt-new'})).statusCode, 200);
+      expect(locator.byId(id)!.name, 'gpt-new');
+
+      final conflict = await register(token, chatBody('gpt-old'));
+      expect(conflict.statusCode, 409);
+      final error = _asMap(conflict)['error'] as String;
+      expect(error, contains(id));
+      expect(error, contains('gpt-new'));
+      expect(locator.appModels, hasLength(1));
+
+      // 用新 name 注册命中的是同一条记录，id 不变。
+      final again = await register(token, chatBody('gpt-new'));
+      expect(again.statusCode, 200, reason: again.body);
+      expect(_asMap(again), {'success': true, 'id': id, 'updated': true});
+      expect(locator.appModels, hasLength(1));
+    });
+  });
+
+  group('归属校验', () {
+    test('appBundleId 可省略；与 token 不一致时返回 403', () async {
+      final token = await registerBundle(_bundleA);
+
+      final spoofed = await register(token, {
+        ...decisionBody(),
+        'appBundleId': _bundleB,
+      });
+      expect(spoofed.statusCode, 403);
+      expect(locator.appModels, isEmpty);
+
+      final matching = await register(token, {
+        ...decisionBody(),
+        'appBundleId': _bundleA,
+      });
+      expect(matching.statusCode, 200, reason: matching.body);
+      expect(
+        locator.byId(_asMap(matching)['id'] as String)!.appBundleId,
+        _bundleA,
+      );
+    });
+
+    test('其他调用方不能修改、删除或切换别人的模型（别人的 hashid 对自己不可见 → 404）', () async {
+      final tokenA = await registerBundle(_bundleA);
+      final tokenB = await registerBundle(_bundleB);
+      final id = await registerOk(tokenA, decisionBody());
+
+      expect((await update(tokenB, id, {'name': 'hijacked'})).statusCode, 404);
+      expect((await unregister(tokenB, id)).statusCode, 404);
+      expect((await toggle(tokenB, id)).statusCode, 404);
+
+      final model = locator.byId(id)!;
+      expect(model.name, 'qwen-decision');
+      expect(model.isDisabled, isFalse);
+      expect(model.appBundleId, _bundleA);
+
+      // 所属方仍然可以操作。
+      expect((await toggle(tokenA, id)).statusCode, 200);
+      expect(locator.byId(id)!.isDisabled, isTrue);
+      expect((await unregister(tokenA, id)).statusCode, 200);
+      expect(locator.appModels, isEmpty);
+    });
+
+    test('未知 id 返回 404', () async {
+      final token = await registerBundle(_bundleA);
+
+      expect((await update(token, 'missing', {'name': 'x'})).statusCode, 404);
+      expect((await unregister(token, 'missing')).statusCode, 404);
+      expect((await toggle(token, 'missing')).statusCode, 404);
+    });
+
+    test('PUT / toggle / DELETE 只作用于调用方自己 hashid 对应的模型', () async {
+      final tokenA = await registerBundle(_bundleA);
+      final tokenB = await registerBundle(_bundleB);
+      final idA = await registerOk(tokenA, decisionBody());
+      final idB = await registerOk(tokenB, decisionBody());
+
+      expect(
+        (await update(tokenB, idB, {'description': 'b only'})).statusCode,
+        200,
+      );
+      expect(locator.byId(idA)!.description, '');
+      expect(locator.byId(idB)!.description, 'b only');
+
+      expect((await toggle(tokenB, idB)).statusCode, 200);
+      expect(locator.byId(idA)!.isDisabled, isFalse);
+      expect(locator.byId(idB)!.isDisabled, isTrue);
+
+      expect((await unregister(tokenA, idA)).statusCode, 200);
+      expect(locator.byId(idA), isNull);
+      expect(locator.byId(idB), isNotNull);
+    });
+
+    test('bundleId 不符合 [A-Za-z0-9._-]{1,128} 时注册模型返回 400，且不会写入', () async {
+      for (final bundle in ['com.example@a', 'com example', 'x' * 129]) {
+        final token = await registerBundle(bundle);
+        final response = await register(token, decisionBody());
+        expect(response.statusCode, 400, reason: 'bundleId "$bundle"');
+        expect(_asMap(response)['error'], contains('bundleId'));
+      }
+      expect(locator.appModels, isEmpty);
+
+      // 边界：128 个字符的 bundleId 可以注册。
+      final token = await registerBundle('x' * 128);
+      expect((await register(token, decisionBody())).statusCode, 200);
     });
   });
 
   group('更新', () {
     test('PUT 是部分更新，且空 apiKey 不会清除已保存的密钥', () async {
-      final token = await registerBundle('com.example.a');
-      expect(
-        (await register(token, {
-          ...decisionBody(),
-          'apiKey': 'sk-upstream',
-          'description': 'before',
-        })).statusCode,
-        200,
-      );
+      final token = await registerBundle(_bundleA);
+      final id = await registerOk(token, {
+        ...decisionBody(),
+        'apiKey': 'sk-upstream',
+        'description': 'before',
+      });
 
-      final response = await update(token, 'dec-1', {
+      final response = await update(token, id, {
         'name': 'renamed',
         'apiKey': '',
       });
       expect(response.statusCode, 200, reason: response.body);
 
-      final model = locator.byId('dec-1')!;
+      final model = locator.byId(id)!;
       expect(model.name, 'renamed');
       expect(model.description, 'before');
       expect(model.apiKey, 'sk-upstream');
@@ -576,27 +683,19 @@ void main() {
     });
 
     test('PUT 把 task 改成 decision 时，旧的模态与能力位会被重置', () async {
-      final token = await registerBundle('com.example.a');
-      expect(
-        (await register(token, {
-          'id': 'm-1',
-          'name': 'multi',
-          'task': 'chat',
-          'baseUrl': 'http://127.0.0.1:1',
-          'input': ['text', 'image'],
-          'capabilities': {
-            'stream': true,
-            'tool_call': true,
-            'reasoning': true,
-          },
-        })).statusCode,
-        200,
-      );
+      final token = await registerBundle(_bundleA);
+      final id = await registerOk(token, {
+        'name': 'multi',
+        'task': 'chat',
+        'baseUrl': 'http://127.0.0.1:1',
+        'input': ['text', 'image'],
+        'capabilities': {'stream': true, 'tool_call': true, 'reasoning': true},
+      });
 
-      final response = await update(token, 'm-1', {'task': 'decision'});
+      final response = await update(token, id, {'task': 'decision'});
       expect(response.statusCode, 200, reason: response.body);
 
-      final model = locator.byId('m-1')!;
+      final model = locator.byId(id)!;
       expect(model.task, 'decision');
       expect(model.inputModalities, ['text']);
       expect(model.outputModalities, ['decisions']);
@@ -607,210 +706,85 @@ void main() {
     });
 
     test('PUT 带未知 task 或不同的 appBundleId 时返回 400', () async {
-      final token = await registerBundle('com.example.a');
-      expect((await register(token, decisionBody())).statusCode, 200);
+      final token = await registerBundle(_bundleA);
+      final id = await registerOk(token, decisionBody());
 
-      expect((await update(token, 'dec-1', {'task': 'bogus'})).statusCode, 400);
+      expect((await update(token, id, {'task': 'bogus'})).statusCode, 400);
       expect(
-        (await update(token, 'dec-1', {
-          'appBundleId': 'com.example.b',
-        })).statusCode,
+        (await update(token, id, {'appBundleId': _bundleB})).statusCode,
         400,
       );
-      expect(locator.byId('dec-1')!.task, 'decision');
-      expect(locator.byId('dec-1')!.appBundleId, 'com.example.a');
+      expect(locator.byId(id)!.task, 'decision');
+      expect(locator.byId(id)!.appBundleId, _bundleA);
     });
   });
 
   group('同一应用下 name 唯一', () {
-    Map<String, dynamic> chatBody(String id, String name) => {
-      'id': id,
-      'name': name,
-      'baseUrl': 'http://127.0.0.1:1',
-    };
+    test('PUT 改名为本应用已占用的 name 返回 409', () async {
+      final token = await registerBundle(_bundleA);
+      await registerOk(token, chatBody('gpt-x'));
+      final id2 = await registerOk(token, chatBody('gpt-y'));
 
-    test('同一应用用不同 id 注册同名模型返回 409，且不会写入', () async {
-      final token = await registerBundle('com.example.a');
-      expect((await register(token, chatBody('m-1', 'gpt-x'))).statusCode, 200);
-
-      final conflict = await register(token, chatBody('m-2', 'gpt-x'));
+      final conflict = await update(token, id2, {'name': 'gpt-x'});
       expect(conflict.statusCode, 409);
       final error = _asMap(conflict)['error'] as String;
       // 冲突提示要能告诉调用方是哪个名称、与哪个已有 id 冲突。
       expect(error, contains('gpt-x'));
-      expect(error, contains('m-1'));
-
-      expect(locator.appModels, hasLength(1));
-      expect(locator.byId('m-1')!.name, 'gpt-x');
-      expect(locator.byId('m-2'), isNull);
-    });
-
-    test('不同应用可以注册相同 name', () async {
-      final tokenA = await registerBundle('com.example.a');
-      final tokenB = await registerBundle('com.example.b');
-
-      expect(
-        (await register(tokenA, chatBody('a-1', 'gpt-x'))).statusCode,
-        200,
-      );
-      final other = await register(tokenB, chatBody('b-1', 'gpt-x'));
-      expect(other.statusCode, 200, reason: other.body);
-
-      expect(locator.appModels, hasLength(2));
-      expect(locator.byId('a-1')!.appBundleId, 'com.example.a');
-      expect(locator.byId('b-1')!.appBundleId, 'com.example.b');
-    });
-
-    test('同 id 重复注册且 name 未变化仍是整体替换，不被拦截', () async {
-      final token = await registerBundle('com.example.a');
-      expect((await register(token, chatBody('m-1', 'gpt-x'))).statusCode, 200);
-
-      final again = await register(token, {
-        ...chatBody('m-1', 'gpt-x'),
-        'description': 'refreshed',
-      });
-      expect(again.statusCode, 200, reason: again.body);
-      expect(_asMap(again)['updated'], isTrue);
-      expect(locator.appModels, hasLength(1));
-      expect(locator.byId('m-1')!.description, 'refreshed');
-    });
-
-    test('同 id 重复注册时改成本应用已占用的 name 返回 409，原记录不变', () async {
-      final token = await registerBundle('com.example.a');
-      expect((await register(token, chatBody('m-1', 'gpt-x'))).statusCode, 200);
-      expect((await register(token, chatBody('m-2', 'gpt-y'))).statusCode, 200);
-
-      final conflict = await register(token, chatBody('m-2', 'gpt-x'));
-      expect(conflict.statusCode, 409);
-      expect(locator.byId('m-2')!.name, 'gpt-y');
-      expect(locator.byId('m-1')!.name, 'gpt-x');
-    });
-
-    test('PUT 改名为本应用已占用的 name 返回 409，不能绕过注册时的检查', () async {
-      final token = await registerBundle('com.example.a');
-      expect((await register(token, chatBody('m-1', 'gpt-x'))).statusCode, 200);
-      expect((await register(token, chatBody('m-2', 'gpt-y'))).statusCode, 200);
-
-      final conflict = await update(token, 'm-2', {'name': 'gpt-x'});
-      expect(conflict.statusCode, 409);
-      expect(locator.byId('m-2')!.name, 'gpt-y');
+      expect(error, contains(_idOf(_bundleA, 'gpt-x')));
+      expect(locator.byId(id2)!.name, 'gpt-y');
 
       // 改成未被占用的名称、或保持原名只改其他字段，都应成功。
-      final renamed = await update(token, 'm-2', {'name': 'gpt-z'});
+      final renamed = await update(token, id2, {'name': 'gpt-z'});
       expect(renamed.statusCode, 200, reason: renamed.body);
-      expect(locator.byId('m-2')!.name, 'gpt-z');
+      expect(locator.byId(id2)!.name, 'gpt-z');
 
-      final sameName = await update(token, 'm-2', {
+      final sameName = await update(token, id2, {
         'name': 'gpt-z',
         'description': 'only description',
       });
       expect(sameName.statusCode, 200, reason: sameName.body);
-      expect(locator.byId('m-2')!.description, 'only description');
+      expect(locator.byId(id2)!.description, 'only description');
     });
 
     test('PUT 可以改成其他应用已使用的 name', () async {
-      final tokenA = await registerBundle('com.example.a');
-      final tokenB = await registerBundle('com.example.b');
-      expect(
-        (await register(tokenA, chatBody('a-1', 'gpt-x'))).statusCode,
-        200,
-      );
-      expect(
-        (await register(tokenB, chatBody('b-1', 'gpt-y'))).statusCode,
-        200,
-      );
+      final tokenA = await registerBundle(_bundleA);
+      final tokenB = await registerBundle(_bundleB);
+      await registerOk(tokenA, chatBody('gpt-x'));
+      final idB = await registerOk(tokenB, chatBody('gpt-y'));
 
-      final response = await update(tokenB, 'b-1', {'name': 'gpt-x'});
+      final response = await update(tokenB, idB, {'name': 'gpt-x'});
       expect(response.statusCode, 200, reason: response.body);
-      expect(locator.byId('b-1')!.name, 'gpt-x');
+      expect(locator.byId(idB)!.name, 'gpt-x');
     });
 
     test('已禁用的模型仍占用名称', () async {
-      final token = await registerBundle('com.example.a');
-      expect((await register(token, chatBody('m-1', 'gpt-x'))).statusCode, 200);
-      expect((await toggle(token, 'm-1')).statusCode, 200);
-      expect(locator.byId('m-1')!.isDisabled, isTrue);
+      final token = await registerBundle(_bundleA);
+      final id1 = await registerOk(token, chatBody('gpt-x'));
+      final id2 = await registerOk(token, chatBody('gpt-y'));
+      expect((await toggle(token, id1)).statusCode, 200);
+      expect(locator.byId(id1)!.isDisabled, isTrue);
 
-      expect((await register(token, chatBody('m-2', 'gpt-x'))).statusCode, 409);
+      expect((await update(token, id2, {'name': 'gpt-x'})).statusCode, 409);
+      expect(locator.byId(id2)!.name, 'gpt-y');
+    });
+
+    test('name 前后空白会被 trim：与不带空白的同名模型是同一个', () async {
+      final token = await registerBundle(_bundleA);
+      final id = await registerOk(token, chatBody('  gpt-x  '));
+      expect(id, _idOf(_bundleA, 'gpt-x'));
+      expect(locator.byId(id)!.name, 'gpt-x');
+
+      final again = await register(token, chatBody('gpt-x'));
+      expect(_asMap(again), {'success': true, 'id': id, 'updated': true});
       expect(locator.appModels, hasLength(1));
     });
 
-    test('注销后名称可以被复用', () async {
-      final token = await registerBundle('com.example.a');
-      expect((await register(token, chatBody('m-1', 'gpt-x'))).statusCode, 200);
-      expect((await unregister(token, 'm-1')).statusCode, 200);
-
-      final reuse = await register(token, chatBody('m-2', 'gpt-x'));
-      expect(reuse.statusCode, 200, reason: reuse.body);
-      expect(locator.appModels.map((m) => m.id), ['m-2']);
-    });
-
-    test('同一应用并发注册同名但不同 id：恰好一个成功、一个 409', () async {
-      final token = await registerBundle('com.example.a');
-
-      final responses = await Future.wait([
-        register(token, chatBody('m-1', 'gpt-x')),
-        register(token, chatBody('m-2', 'gpt-x')),
-        register(token, chatBody('m-3', 'gpt-x')),
-      ]);
-      expect(responses.map((r) => r.statusCode).toList()..sort(), [
-        200,
-        409,
-        409,
-      ]);
-      expect(locator.appModels.where((m) => m.name == 'gpt-x'), hasLength(1));
-    });
-
-    test('name 前后空白会被 trim 后再比较', () async {
-      final token = await registerBundle('com.example.a');
-      expect(
-        (await register(token, chatBody('m-1', '  gpt-x  '))).statusCode,
-        200,
-      );
-      expect(locator.byId('m-1')!.name, 'gpt-x');
-
-      expect((await register(token, chatBody('m-2', 'gpt-x'))).statusCode, 409);
-    });
-
-    test('name 区分大小写：仅大小写不同视为不同名称', () async {
-      final token = await registerBundle('com.example.a');
-      expect((await register(token, chatBody('m-1', 'GPT-X'))).statusCode, 200);
-      expect((await register(token, chatBody('m-2', 'gpt-x'))).statusCode, 200);
+    test('name 区分大小写：仅大小写不同视为不同模型', () async {
+      final token = await registerBundle(_bundleA);
+      final upper = await registerOk(token, chatBody('GPT-X'));
+      final lower = await registerOk(token, chatBody('gpt-x'));
+      expect(upper, isNot(lower));
       expect(locator.appModels, hasLength(2));
-    });
-
-    test('历史遗留的同名数据不会被锁死：名称未变化时仍可更新与重新注册', () async {
-      final token = await registerBundle('com.example.a');
-      // 绕过 API 直接写入两条同名数据，模拟引入该约束之前遗留的记录。
-      for (final id in ['legacy-1', 'legacy-2']) {
-        await locator.addAppModel(
-          AppModelData(
-            id: id,
-            name: 'legacy-name',
-            baseUrl: 'http://127.0.0.1:1',
-            appBundleId: 'com.example.a',
-            appName: 'A',
-          ),
-        );
-      }
-
-      final updated = await update(token, 'legacy-1', {
-        'description': 'still editable',
-      });
-      expect(updated.statusCode, 200, reason: updated.body);
-      expect(locator.byId('legacy-1')!.description, 'still editable');
-
-      final reregistered = await register(
-        token,
-        chatBody('legacy-2', 'legacy-name'),
-      );
-      expect(reregistered.statusCode, 200, reason: reregistered.body);
-
-      // 但新增第三条同名记录仍被拒绝。
-      expect(
-        (await register(token, chatBody('legacy-3', 'legacy-name'))).statusCode,
-        409,
-      );
     });
   });
 
@@ -818,33 +792,26 @@ void main() {
     test(
       'decision app model 出现在 /modelkit/models，但不在 /modelkit/chat/models',
       () async {
-        final token = await registerBundle('com.example.a');
-        expect((await register(token, decisionBody())).statusCode, 200);
-        expect(
-          (await register(token, {
-            'id': 'chat-1',
-            'name': 'gpt-chat',
-            'baseUrl': 'http://127.0.0.1:1',
-          })).statusCode,
-          200,
-        );
+        final token = await registerBundle(_bundleA);
+        final decisionId = await registerOk(token, decisionBody());
+        await registerOk(token, chatBody('gpt-chat'));
 
         final models =
             _decode(await get(Uri.parse('$host/modelkit/models')))
                 as List<dynamic>;
         final decision = models.cast<Map<String, dynamic>>().singleWhere(
-          // 对外 id 是 qualifiedId：localId@bundleId。
-          (m) => m['id'] == 'dec-1@com.example.a',
+          // 对外 id 就是注册时返回的 hashid。
+          (m) => m['id'] == decisionId,
         );
         expect(decision['task'], 'decision');
         expect(decision['output'], ['decisions']);
         expect(decision['isAppModel'], isTrue);
-        expect(decision['appBundleId'], 'com.example.a');
+        expect(decision['appBundleId'], _bundleA);
         expect(decision['isRemote'], isTrue);
         // 应用模型同样是 isRemote=true、isCustom=false，必须由 source 与平台模型区分。
         expect(decision['isCustom'], isFalse);
         expect(decision['source'], 'app');
-        expect(decision['appName'], 'com.example.a');
+        expect(decision['appName'], _bundleA);
 
         final chatList = _asMap(
           await get(Uri.parse('$host/modelkit/chat/models')),
@@ -884,19 +851,18 @@ void main() {
           await request.response.close();
         });
 
-        final token = await registerBundle('com.example.a');
-        final registered = await register(token, {
+        final token = await registerBundle(_bundleA);
+        final id = await registerOk(token, {
           ...decisionBody(),
           'baseUrl': 'http://127.0.0.1:${upstream.port}',
           'apiKey': 'sk-upstream',
         });
-        expect(registered.statusCode, 200, reason: registered.body);
 
         final response = await post(
           Uri.parse('$host/modelkit/decision'),
           headers: {'content-type': 'application/json'},
           body: jsonEncode({
-            'model': 'dec-1@com.example.a',
+            'model': id,
             'input': 'pick one',
             'options': ['a', 'b'],
           }),
@@ -911,223 +877,84 @@ void main() {
         expect(requests.single.body['model'], 'qwen-decision');
       },
     );
-  });
 
-  group('命名空间 id（localId@bundleId）', () {
-    Map<String, dynamic> chatBody(String id, String name) => {
-      'id': id,
-      'name': name,
-      'baseUrl': 'http://127.0.0.1:1',
-    };
-
-    /// 启动一个记录“被命中次数”的 decision upstream，返回 server 与命中计数器。
-    Future<(HttpServer, List<String>)> startUpstream(String tag) async {
-      final hits = <String>[];
-      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      addTearDown(() => upstream.close(force: true));
-      upstream.listen((request) async {
-        await utf8.decoder.bind(request).join();
-        hits.add(tag);
-        request.response
-          ..statusCode = 200
-          ..headers.set('content-type', 'application/json')
-          ..write(
-            jsonEncode({
-              'decisions': [
-                {'id': tag},
-              ],
-            }),
-          );
-        await request.response.close();
-      });
-      return (upstream, hits);
-    }
-
-    Future<Response> callDecision(String model) => post(
-      Uri.parse('$host/modelkit/decision'),
-      headers: {'content-type': 'application/json'},
-      body: jsonEncode({
-        'model': model,
-        'input': 'pick one',
-        'options': ['a', 'b'],
-      }),
-    );
-
-    test('注册响应与 GET /app-models 同时返回 localId（id）和 qualifiedId', () async {
-      final token = await registerBundle('com.example.a');
-      final registered = await register(token, decisionBody());
-      expect(registered.statusCode, 200, reason: registered.body);
-      expect(_asMap(registered)['id'], 'dec-1');
-      expect(_asMap(registered)['qualifiedId'], 'dec-1@com.example.a');
-
-      final list =
-          _decode(await get(Uri.parse('$host/modelkit/app-models')))
-              as List<dynamic>;
-      final entry = (list.single as Map<String, dynamic>);
-      expect(entry['id'], 'dec-1');
-      expect(entry['qualifiedId'], 'dec-1@com.example.a');
-    });
-
-    test('不同 bundle 的同名 localId 在 /modelkit/models 里是两个不同的 id', () async {
-      final tokenA = await registerBundle('com.example.a');
-      final tokenB = await registerBundle('com.example.b');
-      expect((await register(tokenA, decisionBody())).statusCode, 200);
-      expect((await register(tokenB, decisionBody())).statusCode, 200);
+    test('不同应用的同名模型在 /modelkit/models 里是两个不同的 id', () async {
+      final tokenA = await registerBundle(_bundleA);
+      final tokenB = await registerBundle(_bundleB);
+      final idA = await registerOk(tokenA, decisionBody());
+      final idB = await registerOk(tokenB, decisionBody());
 
       final models =
           (_decode(await get(Uri.parse('$host/modelkit/models')))
                   as List<dynamic>)
               .cast<Map<String, dynamic>>();
-      expect(models.map((m) => m['id']).toSet(), {
-        'dec-1@com.example.a',
-        'dec-1@com.example.b',
-      });
+      expect(models.map((m) => m['id']).toSet(), {idA, idB});
       expect(models.map((m) => m['source']), everyElement('app'));
     });
 
-    test('PUT / toggle / DELETE 只作用于调用方命名空间内的同名 localId', () async {
-      final tokenA = await registerBundle('com.example.a');
-      final tokenB = await registerBundle('com.example.b');
-      expect((await register(tokenA, decisionBody())).statusCode, 200);
-      expect((await register(tokenB, decisionBody())).statusCode, 200);
+    test('按 hashid 精确路由到各自应用的 upstream', () async {
+      Future<(HttpServer, List<String>)> startUpstream(String tag) async {
+        final hits = <String>[];
+        final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => upstream.close(force: true));
+        upstream.listen((request) async {
+          await utf8.decoder.bind(request).join();
+          hits.add(tag);
+          request.response
+            ..statusCode = 200
+            ..headers.set('content-type', 'application/json')
+            ..write(
+              jsonEncode({
+                'decisions': [
+                  {'id': tag},
+                ],
+              }),
+            );
+          await request.response.close();
+        });
+        return (upstream, hits);
+      }
 
-      expect(
-        (await update(tokenB, 'dec-1', {'description': 'b only'})).statusCode,
-        200,
+      Future<Response> callDecision(String model) => post(
+        Uri.parse('$host/modelkit/decision'),
+        headers: {'content-type': 'application/json'},
+        body: jsonEncode({
+          'model': model,
+          'input': 'pick one',
+          'options': ['a', 'b'],
+        }),
       );
-      expect(locator.byQualifiedId('dec-1@com.example.a')!.description, '');
-      expect(
-        locator.byQualifiedId('dec-1@com.example.b')!.description,
-        'b only',
-      );
 
-      expect((await toggle(tokenB, 'dec-1')).statusCode, 200);
-      expect(locator.byQualifiedId('dec-1@com.example.a')!.isDisabled, isFalse);
-      expect(locator.byQualifiedId('dec-1@com.example.b')!.isDisabled, isTrue);
-
-      expect((await unregister(tokenA, 'dec-1')).statusCode, 200);
-      expect(locator.byQualifiedId('dec-1@com.example.a'), isNull);
-      expect(locator.byQualifiedId('dec-1@com.example.b'), isNotNull);
-    });
-
-    test('localId 不符合 [A-Za-z0-9._-]{1,64} 时返回 400，且不会写入', () async {
-      final token = await registerBundle('com.example.a');
-
-      for (final bad in ['has space', 'a@b', 'a(b)', 'a/b', '中文', 'x' * 65]) {
-        final response = await register(token, decisionBody(id: bad));
-        expect(response.statusCode, 400, reason: 'id "$bad"');
-        expect(_asMap(response)['error'], contains('[A-Za-z0-9._-]'));
-      }
-      expect(locator.appModels, isEmpty);
-
-      // 边界：64 个字符与全部允许的符号可以注册（name 各不相同，避免触发同应用重名）。
-      for (final good in ['x' * 64, 'A.b_c-1']) {
-        final response = await register(token, chatBody(good, 'name-$good'));
-        expect(response.statusCode, 200, reason: 'id "$good"');
-      }
-      expect(locator.appModels, hasLength(2));
-    });
-
-    test('bundleId 不符合 [A-Za-z0-9._-]{1,128} 时注册模型返回 400，且不会写入', () async {
-      for (final bundle in ['com.example@a', 'com example', 'x' * 129]) {
-        final token = await registerBundle(bundle);
-        final response = await register(token, decisionBody());
-        expect(response.statusCode, 400, reason: 'bundleId "$bundle"');
-        expect(_asMap(response)['error'], contains('bundleId'));
-      }
-      expect(locator.appModels, isEmpty);
-
-      // 边界：128 个字符的 bundleId 可以注册。
-      final token = await registerBundle('x' * 128);
-      expect((await register(token, decisionBody())).statusCode, 200);
-    });
-
-    test('按 qualifiedId 精确路由到各自 bundle 的 upstream', () async {
       final (upstreamA, hitsA) = await startUpstream('A');
       final (upstreamB, hitsB) = await startUpstream('B');
-      final tokenA = await registerBundle('com.example.a');
-      final tokenB = await registerBundle('com.example.b');
-      expect(
-        (await register(tokenA, {
-          ...decisionBody(),
-          'baseUrl': 'http://127.0.0.1:${upstreamA.port}',
-        })).statusCode,
-        200,
-      );
-      expect(
-        (await register(tokenB, {
-          ...decisionBody(),
-          'baseUrl': 'http://127.0.0.1:${upstreamB.port}',
-        })).statusCode,
-        200,
-      );
+      final tokenA = await registerBundle(_bundleA);
+      final tokenB = await registerBundle(_bundleB);
+      final idA = await registerOk(tokenA, {
+        ...decisionBody(),
+        'baseUrl': 'http://127.0.0.1:${upstreamA.port}',
+      });
+      final idB = await registerOk(tokenB, {
+        ...decisionBody(),
+        'baseUrl': 'http://127.0.0.1:${upstreamB.port}',
+      });
 
-      final toB = await callDecision('dec-1@com.example.b');
+      final toB = await callDecision(idB);
       expect(toB.statusCode, 200, reason: toB.body);
       expect(hitsB, ['B']);
       expect(hitsA, isEmpty);
 
-      final toA = await callDecision('dec-1@com.example.a');
+      final toA = await callDecision(idA);
       expect(toA.statusCode, 200, reason: toA.body);
       expect(hitsA, ['A']);
       expect(hitsB, ['B']);
     });
 
-    test('裸 localId 兜底：只有一个 bundle 使用时仍可解析（兼容旧调用方）', () async {
-      final (upstream, hits) = await startUpstream('A');
-      final token = await registerBundle('com.example.a');
-      expect(
-        (await register(token, {
-          ...decisionBody(),
-          'baseUrl': 'http://127.0.0.1:${upstream.port}',
-        })).statusCode,
-        200,
-      );
-
-      final response = await callDecision('dec-1');
-      expect(response.statusCode, 200, reason: response.body);
-      expect(hits, ['A']);
-    });
-
-    test('裸 localId 被多个 bundle 使用时无法判定目标，不会随便挑一个转发', () async {
-      final (upstreamA, hitsA) = await startUpstream('A');
-      final (upstreamB, hitsB) = await startUpstream('B');
-      final tokenA = await registerBundle('com.example.a');
-      final tokenB = await registerBundle('com.example.b');
-      for (final (token, upstream) in [
-        (tokenA, upstreamA),
-        (tokenB, upstreamB),
-      ]) {
-        expect(
-          (await register(token, {
-            ...decisionBody(),
-            'baseUrl': 'http://127.0.0.1:${upstream.port}',
-          })).statusCode,
-          200,
-        );
-      }
-
-      final response = await callDecision('dec-1');
-      expect(response.statusCode, isNot(200), reason: response.body);
-      expect(hitsA, isEmpty);
-      expect(hitsB, isEmpty);
-    });
-
     test('/chat/models：菜单标签冲突的模型回退为真实 id，不冲突的保持标签', () async {
-      final tokenA = await registerBundle('com.example.a');
-      final tokenB = await registerBundle('com.example.b');
-      expect(
-        (await register(tokenA, chatBody('m-1', 'gpt-x'))).statusCode,
-        200,
-      );
-      expect(
-        (await register(tokenB, chatBody('m-1', 'gpt-x'))).statusCode,
-        200,
-      );
-      expect(
-        (await register(tokenA, chatBody('m-2', 'gpt-y'))).statusCode,
-        200,
-      );
+      final tokenA = await registerBundle(_bundleA);
+      final tokenB = await registerBundle(_bundleB);
+      final idAX = await registerOk(tokenA, chatBody('gpt-x'));
+      final idBX = await registerOk(tokenB, chatBody('gpt-x'));
+      await registerOk(tokenA, chatBody('gpt-y'));
 
       final chatList = _asMap(
         await get(Uri.parse('$host/modelkit/chat/models')),
@@ -1137,7 +964,7 @@ void main() {
           .map((m) => m['id'])
           .toList();
       expect(ids, hasLength(3));
-      expect(ids, containsAll(['m-1@com.example.a', 'm-1@com.example.b']));
+      expect(ids, containsAll([idAX, idBX]));
       expect(ids, contains('gpt-y'));
       expect(ids, isNot(contains('gpt-x')));
     });

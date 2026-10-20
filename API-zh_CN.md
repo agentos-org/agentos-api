@@ -235,7 +235,7 @@ AgentKit 提供 LiteAgent 兼容路由，并通过 LiteAgent SDK 执行。
 说明：
 - 支持 `Capability.skills`，并会原样转发给 LiteAgent SDK。`skills` 的每一项都应是完整的 Agent Skills Markdown 文档。
 - 每个 skill 文档的规范来源为 [agentskills.io/specification](https://agentskills.io/specification)，重点遵循其中 `SKILL.md` 的格式要求：YAML frontmatter 加 Markdown 正文。
-- 也支持 `Capability.llmConfig.modelId`。AgentKit 会先用 `modelId` 在内部模型注册表中做反查（`modelId` 取 `GET /modelkit/models` 返回的 `id`；应用模型为 `localId@bundleId`，旧版本保存的裸 `localId` 在唯一时仍可解析，但已弃用），再展开成 LiteAgent 可用的具体 `llmConfig`。其中解析出的模型名会写入 `llmConfig.model`；同时网关还会在可用时补齐 `baseUrl`、`apiKey`、`provider`、`adapter`、`contextWindowSize` 等字段。
+- 也支持 `Capability.llmConfig.modelId`。AgentKit 会先用 `modelId` 在内部模型注册表中做反查（`modelId` 取 `GET /modelkit/models` 返回的 `id`），再展开成 LiteAgent 可用的具体 `llmConfig`。其中解析出的模型名会写入 `llmConfig.model`；同时网关还会在可用时补齐 `baseUrl`、`apiKey`、`provider`、`adapter`、`contextWindowSize` 等字段。
 - 网关使用 `callbackOpenTool.timeout` 等待外部 function call 回调。未提供或值非法时使用兼容默认值 300 秒。
 
 响应：`200 OK`（`Session`）
@@ -2307,7 +2307,7 @@ metadata 或 kernel 默认 LLM 配置中解析 provider 凭证。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `id` | `string` | 是 | 网关用于路由和反查的模型 ID，在整个列表内唯一。`local` / `platform` 模型是 12 位 hash 风格 ID，`custom` 模型是创建时生成的 ID，`app` 模型是 `localId@bundleId` 形式的**命名空间 ID**（例如 `chat-1@com.example.myapp`）。详见 [模型 ID 与寻址](#模型-id-与寻址)。 |
+| `id` | `string` | 是 | 网关用于路由和反查的模型 ID，在整个列表内唯一。`local` / `platform` 模型是 12 位 hash 风格 ID，`custom` 模型是创建时生成的 ID，`app` 模型是应用注册时由网关生成的 12 位 hashid（例如 `6f78dcce6717`）。详见 [模型 ID 与寻址](#模型-id-与寻址)。 |
 | `name` | `string` | 是 | 上游模型名称。对于远程模型，网关可能会在转发前将请求体中的 `model` 从 `id` 改写为该值。 |
 | `alias` | `string` | 是 | 便于展示的人类可读模型别名。 |
 | `description` | `string` | 是 | 来自 service locator 的模型说明。 |
@@ -2352,28 +2352,24 @@ metadata 或 kernel 默认 LLM 配置中解析 provider 凭证。
 | `local` | 12 位 hex | 由本机运行实例派生。 |
 | `platform` | 12 位 hex | 由平台模型的服务端 ID 派生。 |
 | `custom` | 创建时生成的 ID | 创建后保持不变。管理 API 创建自定义模型时可省略 `id`，由网关生成；传入的 `id` 不能与任何已有模型冲突。 |
-| `app` | `localId@bundleId` | 命名空间 ID。`localId` 是应用注册时传入的 `id`，`bundleId` 是注册应用的 bundle ID。不同应用可以使用相同的 `localId`，拼接后的完整 ID 不会冲突，也不会与 `local` / `platform` 的 12 位 hex ID 冲突；自定义模型创建时会与所有已有模型做冲突检查。 |
+| `app` | 12 位 hex | 注册时由网关生成：`sha256("<bundleId>:<name>")`（`name` 去掉首尾空白）的前 12 位 hex。注册响应会返回它，应用之后用它来维护该模型。同一应用、同一 `name` 总是得到同一个 ID，不同应用即使 `name` 相同，ID 也不同；自定义模型创建时会与所有已有模型做冲突检查。 |
 
-应用模型的 `localId` 与 `bundleId` 都只允许 `[A-Za-z0-9._-]`（`localId` 1–64 个字符，
-`bundleId` 1–128 个字符），因此 `@` 永远只会作为分隔符出现，拆分没有歧义。不符合规则的注册
-请求返回 `400`。
+注册应用模型的应用，其 `bundleId` 只允许 `[A-Za-z0-9._-]`（1–128 个字符）；其他 `bundleId`
+发起的注册请求返回 `400`。
 
 **解析顺序。** 请求里的 `model` 可以是 `id`，也可以是 `alias` / `name`（用于兼容旧调用方）。
 网关按以下顺序查找，命中即停止：
 
-1. 精确匹配 `id`（所有模型，包括应用模型的完整 `localId@bundleId`）；
+1. 精确匹配 `id`（所有模型，包括应用模型的 hashid）；
 2. 第一方模型（`local` / `platform` / `custom`）的 `alias`，然后是 `name`；
-3. 应用模型的裸 `localId`（**已弃用**，仅当恰好只有一个应用模型使用该 `localId` 时命中）；
-4. 应用模型的 `alias`，然后是 `name`。
+3. 应用模型的 `alias`，然后是 `name`。
 
 由此带来的保证：应用无法通过把自己模型的 `alias` / `name` / `id` 设成某个第一方模型的名称
 来“劫持”该名称的请求——第一方模型始终优先。同一层级匹配到多个模型时取列表中的第一个，网关
 日志会记录一条告警，列出所有候选 `id`。
 
 **建议。** 调用方应使用 `GET /modelkit/models`（或应用注册响应）里的完整 `id`，不要依赖
-`alias` / `name`；应用模型请使用 `localId@bundleId`。裸 `localId` 只是为升级前保存了旧 ID 的
-调用方保留的兼容路径：命中时网关会记录弃用告警；多个应用使用同一个 `localId` 时无法确定
-目标，请求**不会**被路由。
+`alias` / `name`。
 
 **列表去重。** 网关在组装 `GET /modelkit/models` 时会对 `id` 去重：`id` 相同时第一方模型
 优先于应用模型，同一层级先出现者保留，被丢弃的一项会记录告警。这是一道兜底，正常情况下
@@ -2431,7 +2427,7 @@ ModelKit 的路径前缀用于选择任务。任务根路径会映射到默认�
 （`chat` / `embedding` / `asr` / `tts` / `decision`）、`input` / `output` 模态，以及
 `capabilities` 块（`vision`、`tool_call`、`stream`、`reasoning`）。
 其中 `id` 是网关用于路由和反查的唯一模型标识：本地 / 平台模型是 12 位 hash 风格，应用注册模型是
-`localId@bundleId`（见 [模型 ID 与寻址](#模型-id-与寻址)）。`name` 和
+注册时由网关生成的 hashid（见 [模型 ID 与寻址](#模型-id-与寻址)）。`name` 和
 `alias` 应视为展示或 provider metadata，而不是规范 ID。
 
 响应：`200 OK`（`ModelInfo[]`）
@@ -2694,7 +2690,7 @@ curl http://localhost:8888/modelkit/tts/audio/voices
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | `string` | 否 | 来自 `/modelkit/models` 的决策模型 `id`（应用模型为 `localId@bundleId`）或名称；省略时使用第一个运行中的决策模型。解析规则见 [模型 ID 与寻址](#模型-id-与寻址)。 |
+| `model` | `string` | 否 | 来自 `/modelkit/models` 的决策模型 `id` 或名称；省略时使用第一个运行中的决策模型。解析规则见 [模型 ID 与寻址](#模型-id-与寻址)。 |
 | `state` | `string` / `object` / `array` | 是 | 待判断的内容；非字符串会被序列化为 JSON 文本。 |
 | `questions` | `object` | 是 | `问题 id -> {type, instructions, criteria}`；`type` 为 `choice`、`score` 或 `noul`。 |
 | `images` | `string[]` | 否 | 多模态决策模型（如 Clef）可传入 data URL。 |
@@ -2757,7 +2753,7 @@ curl -X POST http://localhost:8888/modelkit/decision \
 
 展示标签可能重名（例如两个应用各注册了一个叫 `gpt-4o` 的模型）。为了让客户端拿到的 `id`
 不会指向多个模型，只要某个标签在列表内重复出现，**所有**使用该标签的条目都会回退为模型的
-真实 `id`（应用模型即 `localId@bundleId`），其余条目保持展示标签不变。需要精确寻址时，
+真实 `id`，其余条目保持展示标签不变。需要精确寻址时，
 请使用 `GET /modelkit/models` 返回的 `id`。
 
 #### 应用模型注册 API
@@ -2775,39 +2771,32 @@ curl -X POST http://localhost:8888/modelkit/decision \
 Authorization: Bearer <POST /appkit/register 返回的 token>
 ```
 
-每个已注册的模型都归属于 token 所对应的 `bundleId`。`id` 是**每个应用自己的命名空间**内的
-`localId`：不同应用可以注册相同的 `id`，互不冲突，对外的完整 ID 是 `localId@bundleId`
-（见 [模型 ID 与寻址](#模型-id-与寻址)）。`PUT` / `DELETE` / `toggle` 的路径参数 `<id>` 只在
-**调用方自己的命名空间**内查找，因此应用天然无法修改其他应用的模型：
+每个已注册的模型都归属于 token 所对应的 `bundleId`。注册时网关会为模型分配 `id`（12 位
+hashid，见 [模型 ID 与寻址](#模型-id-与寻址)）。`PUT` / `DELETE` / `toggle` 的路径参数 `<id>`
+只在**调用方自己的模型**中查找，因此应用天然无法修改其他应用的模型：
 
 | 条件 | 状态码 |
 | --- | --- |
 | 缺少 token，或 token 不是由 `POST /appkit/register` 签发 | `401` |
 | 网关没有 app model 存储（不支持注册） | `501` |
-| `POST` 的 `id` 不符合 `localId` 规则，或 token 所属的 `bundleId` 不符合 `bundleId` 规则 | `400` |
-| 对调用方命名空间内不存在的 `id` 执行 `PUT` / `DELETE` / `toggle`（包括该 `id` 只存在于其他应用的情况） | `404` |
+| `POST` 缺少 `name`，或 token 所属的 `bundleId` 不符合 `bundleId` 规则 | `400` |
+| 对调用方自己的模型中不存在的 `id` 执行 `PUT` / `DELETE` / `toggle`（包括该 `id` 属于其他应用的情况） | `404` |
 | `POST` 请求体里的 `appBundleId` 与 token 所属 bundle 不一致 | `403` |
-| `POST` / `PUT` 会让模型的 `name` 与同一 bundle 下的另一个模型重名 | `409` |
-
-> 变更说明：旧版本里“`id` 已被其他 bundle 注册”会返回 `409`，“修改其他 bundle 的模型”会
-> 返回 `403`。由于 `id` 现在是按应用隔离的命名空间，这两种情况不再存在：前者各自注册成功，
-> 后者因为在调用方命名空间内找不到而返回 `404`。已有的客户端如果把 `409` 当作“换一个 id
-> 重试”处理，这条分支将不再触发，可以安全保留。
+| `PUT` 会让模型的 `name` 与同一 bundle 下的另一个模型重名，或 `POST` 生成的 `id` 仍被一个已改名的模型占用 | `409` |
 
 token 用于向本地网关标识应用身份；`POST /appkit/register` 本身不对调用方做身份
 认证，因此该校验的作用是让应用之间互不干扰、避免误操作，与其他 Kit 采用同一信任
 模型。
 
-所有写请求的请求体必须是 UTF-8 编码的 JSON 对象。字段类型不对（例如 `id` 不是字符串、
+所有写请求的请求体必须是 UTF-8 编码的 JSON 对象。字段类型不对（例如 `name` 不是字符串、
 `capabilities` 不是对象）会返回 `400`，而不是被静默忽略。
 
 ##### AppModelData Schema
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `id` | `string` | 是 | 模型在**本应用内**的标识（`localId`），1–64 个字符，只允许 `[A-Za-z0-9._-]`，不得包含 `@`。不同应用可以使用相同的 `id`；对外完整 ID 为 `localId@bundleId`（见 `qualifiedId`）。 |
-| `qualifiedId` | `string` | 只读 | 对外的完整模型 ID：`<id>@<appBundleId>`。出现在注册响应和 `GET /modelkit/app-models` 中，与 `GET /modelkit/models` 里该模型的 `id` 完全一致；请求体中传入会被忽略。调用 `/modelkit/chat` 等代理路由时，请把 `"model"` 设为它。 |
-| `name` | `string` | 是 | 模型显示名称。对远程模型而言它就是上游模型名；ModelKit 会把请求里的 `model` 字段从 `id` 改写为该名称。同一应用注册的模型之间必须唯一（见 [POST /modelkit/app-models](#post-modelkitapp-models)）。 |
+| `id` | `string` | 只读 | 模型 ID：注册时网关根据 `appBundleId + name` 生成的 12 位 hashid。它出现在注册响应和 `GET /modelkit/app-models` 中，与 `GET /modelkit/models` 里该模型的 `id` 完全一致，且模型改名后保持不变。用它来维护模型（`PUT` / `DELETE` / `toggle`），调用 `/modelkit/chat` 等代理路由时也把 `"model"` 设为它。 |
+| `name` | `string` | 是 | 模型显示名称。对远程模型而言它就是上游模型名；ModelKit 会把请求里的 `model` 字段从 `id` 改写为该名称。同一应用注册的模型之间必须唯一；它与 `appBundleId` 共同决定 `id`（见 [POST /modelkit/app-models](#post-modelkitapp-models)）。 |
 | `alias` | `string` | 否 | 便于展示的模型别名。 |
 | `description` | `string` | 否 | 模型描述。 |
 | `task` | `string` | 否 | 模型任务：`chat`（默认）、`embedding`、`asr`、`tts` 或 `decision`（大小写不敏感；`systemone`、`llm_decision` 视为 `decision` 的别名）。其他取值返回 `400`。 |
@@ -2839,20 +2828,19 @@ decision 的注册请求做归一化，无论调用方传入什么：
 `input` / `output` 中剔除，剔除后为空时回退到该任务的默认值。
 
 注册后，通过 [`/modelkit/decision`](#all-modelkitdecision) 调用，并把 `"model"` 设为
-模型的完整 ID `qualifiedId`（`<id>@<bundleId>`）。
+模型的 `id`。
 
 ##### GET /modelkit/app-models
 
-列出所有第三方应用注册的模型。每一项的 `id` 仍是注册时传入的 `localId`（保持原有语义），
-同时新增只读字段 `qualifiedId`，即该模型在 `GET /modelkit/models` 里的 `id`。
+列出所有第三方应用注册的模型。每一项的 `id` 是注册时返回的 hashid，与该模型在
+`GET /modelkit/models` 里的 `id` 一致。
 
 响应：`200 OK`（`AppModelData[]`）
 
 ```json
 [
   {
-    "id": "example-gpt4o",
-    "qualifiedId": "example-gpt4o@com.example.myapp",
+    "id": "6f78dcce6717",
     "name": "GPT-4o",
     "alias": "gpt-4o",
     "description": "OpenAI GPT-4o model",
@@ -2880,28 +2868,24 @@ decision 的注册请求做归一化，无论调用方传入什么：
 第三方应用注册模型。注册后的模型会出现在 `GET /modelkit/models` 中，
 并可通过标准代理路由访问。需要 Bearer token（见[认证与归属](#认证与归属)）。
 
-请求体：参见上方 AppModelData schema。`id` 和 `name` 为必填。
+请求体：参见上方 AppModelData schema。`name` 为必填；模型 `id` 由网关生成，不需要传入。
 
-`id` 必须是 1–64 个 `[A-Za-z0-9._-]` 字符，token 所属的 `bundleId` 必须是 1–128 个
-`[A-Za-z0-9._-]` 字符，否则返回 `400`（这两条规则只在注册模型时校验，不影响 AppKit 的
-其他功能）。注册成功后，响应里的 `qualifiedId`（`<id>@<bundleId>`）就是该模型对外的唯一 ID，
-调用方应保存它并在请求里把 `"model"` 设为它，即可精确路由到这个模型。
+网关把 `sha256("<bundleId>:<name>")`（`name` 去掉首尾空白，区分大小写）的前 12 位 hex 作为 `id`，
+并在响应中返回。调用方应保存它：既用于维护该模型（`PUT` / `DELETE` / `toggle`），也在请求里把
+`"model"` 设为它，即可精确路由到这个模型。token 所属的 `bundleId` 必须是 1–128 个
+`[A-Za-z0-9._-]` 字符，否则返回 `400`（这条规则只在注册模型时校验，不影响 AppKit 的其他功能）。
 
-`id` 只需在**同一个应用内**唯一：不同应用注册相同的 `id` 互不影响，也不会与平台模型或
-本地模型冲突。
+同一个应用注册的模型默认 `name` 互不相同，所以 `name` 就是模型在应用内的身份：同一个 bundle
+重复注册已有的 `name` 时，会**整体替换**该模型（响应带 `"updated": true`），保留其 `id` 与
+启用/禁用状态，因此重试注册不会产生重复条目。替换是完整的：未提供的可选字段（包括 `apiKey`）
+会被重置，需要局部更新请用 `PUT`。不同应用可以注册相同的 `name`，它们得到不同的 `id`。
 
-同一个 bundle 重复注册已有的 `id` 时，会**整体替换**该模型（响应带
-`"updated": true`）并保留其启用/禁用状态，因此重试注册不会产生重复条目。替换是完整的：
-未提供的可选字段（包括 `apiKey`）会被重置，需要局部更新请用 `PUT`。
+说明：
 
-`name` 在**同一个应用**（同一 `bundleId`）注册的模型之间还必须唯一。注册一个新 `id`
-而其 `name` 已被该应用的另一个模型使用，或者整体替换已有模型时把 `name` 改成该应用另一个
-模型已在使用的名称，都会返回 `409`，且不会写入任何数据。说明：
-
-- 比较前会先去掉 `name` 首尾空白，比较区分大小写（`GPT-4o` 与 `gpt-4o` 视为不同名称）。
-- 不同应用之间可以使用相同的 `name`。
-- 已禁用的模型仍然占用其名称；通过 `DELETE` 注销后该名称才会释放。
-- 对已有 `id` 重复注册且不修改 `name` 时不会被该规则拦截，因此重试仍然是幂等的。
+- 比较前会先去掉 `name` 首尾空白，比较区分大小写（`GPT-4o` 与 `gpt-4o` 视为不同模型）。
+- 已禁用的模型仍然占用其名称；通过 `DELETE` 注销后该名称才会释放（再次注册会得到同一个 `id`）。
+- 模型通过 `PUT` 改名后 `id` 不变。如果新注册的 `name` 生成的 `id` 仍被一个已改名的模型占用，
+  请求返回 `409` 且不会写入任何数据；请先注销那个模型，或换一个 `name`。
 
 请求示例：
 
@@ -2914,7 +2898,6 @@ curl -X POST http://localhost:8888/modelkit/app-models \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
-    "id": "example-gpt4o",
     "name": "GPT-4o",
     "alias": "gpt-4o",
     "description": "OpenAI GPT-4o model",
@@ -2939,17 +2922,16 @@ curl -X POST http://localhost:8888/modelkit/app-models \
 ```json
 {
   "success": true,
-  "id": "example-gpt4o",
-  "qualifiedId": "example-gpt4o@com.example.myapp"
+  "id": "6f78dcce6717"
 }
 ```
 
-随后即可用完整 ID 调用该模型：
+随后即可用返回的 `id` 调用该模型：
 
 ```bash
 curl -X POST http://localhost:8888/modelkit/chat \
   -H 'Content-Type: application/json' \
-  -d '{"model": "example-gpt4o@com.example.myapp", "messages": [{"role": "user", "content": "你好"}]}'
+  -d '{"model": "6f78dcce6717", "messages": [{"role": "user", "content": "你好"}]}'
 ```
 
 示例：注册 decision 模型。只需提供身份与端点，`input`、`output`、`capabilities`
@@ -2960,7 +2942,6 @@ curl -X POST http://localhost:8888/modelkit/app-models \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
-    "id": "example-julia",
     "name": "Julia-1",
     "task": "decision",
     "baseUrl": "http://127.0.0.1:8080",
@@ -2971,19 +2952,19 @@ curl -X POST http://localhost:8888/modelkit/app-models \
 `GET /modelkit/app-models` 会把它报告为 `"task": "decision"`、
 `"input": ["text"]`、`"output": ["decisions"]`，且所有能力位均为 `false`。它会出现在
 `GET /modelkit/models` 中（但不会出现在 `GET /modelkit/chat/models`）；以
-`"model": "example-julia@com.example.myapp"` 调用 `POST /modelkit/decision` 时，请求会被转发到
+`"model": "b35bf2726675"`（即为 `Julia-1` 返回的 `id`）调用 `POST /modelkit/decision` 时，请求会被转发到
 `http://127.0.0.1:8080/v1/systemone`，并以注册的 `apiKey` 作为上游 Bearer token，
 同时把 `model` 改写为 `Julia-1`。
 
 ##### PUT /modelkit/app-models/\<id\>
 
 更新已注册的应用模型，需要携带该模型所属 bundle 的 Bearer token。路径参数 `<id>` 是
-`localId`（不带 `@bundleId`），只会在调用方自己的命名空间内查找。仅更新请求体中提供的
+注册时返回的 `id`，只会在调用方自己的模型中查找。仅更新请求体中提供的
 字段；未提供的字段保留当前值。`apiKey` 只在传入非空值时才会覆盖。`appBundleId` 不可更改
 （传入不同的值返回 `400`）。
 
-重命名（修改 `name`）与 `POST` 遵循同一条“同一应用内唯一”规则：如果同一应用的另一个模型
-已在使用新的 `name`，请求返回 `409` 且模型保持不变。未修改名称的请求不会被该规则拦截。
+重命名（修改 `name`）要求新的 `name` 没有被该应用的其他模型使用，否则请求返回 `409` 且模型
+保持不变；模型改名后 `id` 不变。未修改名称的请求不会被该规则拦截。
 
 修改 `task` 时，请求中未提供的 `input`、`output`、`capabilities` 会重置为新 task 的默认值，
 而不是沿用旧 task 的值，同时套用新 task 的约束（例如 [decision](#decision-模型) 的约束）。
@@ -2992,7 +2973,7 @@ curl -X POST http://localhost:8888/modelkit/app-models \
 请求示例：
 
 ```bash
-curl -X PUT http://localhost:8888/modelkit/app-models/example-gpt4o \
+curl -X PUT http://localhost:8888/modelkit/app-models/6f78dcce6717 \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -3010,7 +2991,7 @@ curl -X PUT http://localhost:8888/modelkit/app-models/example-gpt4o \
 }
 ```
 
-没有有效 token 时返回 `401`；在调用方自己的命名空间内找不到该 `id`（包括它只属于其他应用的情况）时返回 `404`。
+没有有效 token 时返回 `401`；在调用方自己的模型中找不到该 `id`（包括它属于其他应用的情况）时返回 `404`。
 
 ##### DELETE /modelkit/app-models/\<id\>
 
@@ -3019,7 +3000,7 @@ curl -X PUT http://localhost:8888/modelkit/app-models/example-gpt4o \
 请求示例：
 
 ```bash
-curl -X DELETE http://localhost:8888/modelkit/app-models/example-gpt4o \
+curl -X DELETE http://localhost:8888/modelkit/app-models/6f78dcce6717 \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -3031,7 +3012,7 @@ curl -X DELETE http://localhost:8888/modelkit/app-models/example-gpt4o \
 }
 ```
 
-没有有效 token 时返回 `401`；在调用方自己的命名空间内找不到该 `id`（包括它只属于其他应用的情况）时返回 `404`。
+没有有效 token 时返回 `401`；在调用方自己的模型中找不到该 `id`（包括它属于其他应用的情况）时返回 `404`。
 
 ##### POST /modelkit/app-models/\<id\>/toggle
 
@@ -3041,7 +3022,7 @@ curl -X DELETE http://localhost:8888/modelkit/app-models/example-gpt4o \
 请求示例：
 
 ```bash
-curl -X POST http://localhost:8888/modelkit/app-models/example-gpt4o/toggle \
+curl -X POST http://localhost:8888/modelkit/app-models/6f78dcce6717/toggle \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
   -d '{}'
@@ -3055,7 +3036,7 @@ curl -X POST http://localhost:8888/modelkit/app-models/example-gpt4o/toggle \
 }
 ```
 
-没有有效 token 时返回 `401`；在调用方自己的命名空间内找不到该 `id`（包括它只属于其他应用的情况）时返回 `404`。
+没有有效 token 时返回 `401`；在调用方自己的模型中找不到该 `id`（包括它属于其他应用的情况）时返回 `404`。
 
 ### 错误响应
 

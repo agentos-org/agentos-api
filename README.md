@@ -350,8 +350,11 @@ identified by `capabilities.vision` on the resolved model.
 
 The `app-models` write endpoints (`POST` / `PUT` / `DELETE` / `toggle`) require
 the AppKit Bearer token from `POST /appkit/register`, and a model can only be
-modified by the bundle that registered it. `task` may be `chat`, `embedding`,
-`asr`, `tts` or `decision`.
+modified by the bundle that registered it. Registration takes no model id: the
+gateway generates a 12-character hashid from `bundleId + name` and returns it as
+`id`; use it for `PUT` / `DELETE` / `toggle` and as the `model` of proxy
+requests (it is also the `id` listed by `GET /modelkit/models`). `task` may be
+`chat`, `embedding`, `asr`, `tts` or `decision`.
 
 ## AppKit API
 

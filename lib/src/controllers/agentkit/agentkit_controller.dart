@@ -1130,7 +1130,7 @@ class AgentKitController {
 
   Future<Map<String, dynamic>?> _resolveLlmConfigById(String id) async {
     final models = await _serviceLocator.getLlmModelList();
-    // 精确匹配 id；兼容旧版本持久化下来的应用模型裸 localId（唯一时命中）。
+    // 只做精确匹配 id（应用模型的 id 是网关生成的 hashid）。
     final resolution = resolveModelId(models, id);
     for (final warning in resolution.warnings) {
       requestLogger.warning('AgentKit model resolution: $warning');

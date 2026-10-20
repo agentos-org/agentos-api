@@ -1,5 +1,4 @@
 import '../../locator.dart';
-import 'app_model_id.dart';
 
 /// 一次模型标识解析的结果。
 class ModelResolution {
@@ -8,7 +7,7 @@ class ModelResolution {
   /// 命中的模型；未命中为 null。
   final LlmModelInfo? model;
 
-  /// 解析过程中产生的告警（同层级多个匹配、使用了已弃用的裸 id 等），
+  /// 解析过程中产生的告警（同层级多个匹配等），
   /// 由调用方决定如何记录。
   final List<String> warnings;
 
@@ -38,23 +37,14 @@ List<String> modelIdentifierCandidates(String identifier) {
   return candidates;
 }
 
-/// 取出应用模型在其 bundle 内的 localId；非应用模型、或 id 不是 `localId@bundleId` 形态时返回 null。
-String? appLocalIdOf(LlmModelInfo model) {
-  if (!model.isAppModel) return null;
-  final bundleId = model.appBundleId;
-  if (bundleId == null || bundleId.isEmpty) return null;
-  return AppModelId.localIdOf(model.id, bundleId: bundleId);
-}
-
 /// 按分层规则把客户端给出的模型标识解析为模型。
 ///
 /// 解析顺序（前一层命中即返回）：
-/// 1. 精确匹配 id；
+/// 1. 精确匹配 id（应用模型的 id 是网关生成的 12 位 hashid）；
 /// 2. 第一方模型（本地 / 平台 / 自定义）的 alias，再 name；
-/// 3. 应用模型的裸 localId（兼容旧版本直接用 localId 作为 id 的调用方，仅在唯一时命中）；
-/// 4. 应用模型的 alias，再 name。
+/// 3. 应用模型的 alias，再 name。
 ///
-/// 这样应用注册的 id / alias / name 都不可能压过第一方模型：例如应用把 alias 设成
+/// 这样应用注册的 alias / name 都不可能压过第一方模型：例如应用把 alias 设成
 /// `gpt-4o`，按 name 寻址 `gpt-4o` 的请求依然命中第一方模型。
 ///
 /// 同一层级匹配到多个模型时取列表中的第一个，并在 [ModelResolution.warnings] 里给出告警。
@@ -69,7 +59,7 @@ ModelResolution resolveModelIdentifier(
   );
 }
 
-/// 按 id 解析模型：精确匹配 id，未命中时兼容唯一的应用模型裸 localId。
+/// 按 id 解析模型：只做精确匹配 id。
 ///
 /// 供只接受“模型 id”的调用方使用（AgentKit / CronKit 的 `modelId`），不做 alias / name 匹配。
 ModelResolution resolveModelId(List<LlmModelInfo> models, String id) {
@@ -85,7 +75,7 @@ ModelResolution _resolve(
   if (candidates.isEmpty) return const ModelResolution();
   final warnings = <String>[];
 
-  // 1. 精确 id。qualifiedId 不可能与第一方的 hex id 相同，列表顺序即第一方优先。
+  // 1. 精确 id。列表顺序即第一方优先（应用模型 hashid 与第一方 id 极小概率重复时第一方胜出）。
   for (final candidate in candidates) {
     for (final model in models) {
       if (model.id == candidate) return ModelResolution(model: model);
@@ -121,27 +111,7 @@ ModelResolution _resolve(
     }
   }
 
-  // 3. 应用模型的裸 localId（兼容）。多个应用使用同一个 localId 时无法判断目标，不命中。
-  for (final candidate in candidates) {
-    final matches = apps
-        .where((m) => appLocalIdOf(m) == candidate)
-        .toList(growable: false);
-    if (matches.isEmpty) continue;
-    if (matches.length == 1) {
-      warnings.add(
-        '标识 "$candidate" 是应用模型的裸 id，已兼容解析到 ${matches.first.id}；'
-        '该用法已弃用，请改用完整 id（localId@bundleId）',
-      );
-      return ModelResolution(model: matches.first, warnings: warnings);
-    }
-    warnings.add(
-      '标识 "$candidate" 同时是 ${matches.length} 个应用模型的 id'
-      '（${matches.map((m) => m.id).join(", ")}），无法确定目标；'
-      '请改用完整 id（localId@bundleId）',
-    );
-  }
-
-  // 4. 应用模型 alias → name。
+  // 3. 应用模型 alias → name。
   if (includeAliasAndName) {
     final byAlias = _matchByField(
       apps,
