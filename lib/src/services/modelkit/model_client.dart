@@ -9,6 +9,7 @@ import 'package:unique_id_dart/unique_id_dart.dart';
 import '../../config.dart';
 import '../../locator.dart';
 import '../../middleware.dart';
+import 'model_resolver.dart';
 import 'sse_normalizer.dart';
 
 /// Response returned by [ModelClient.send].
@@ -556,54 +557,32 @@ class ModelClient {
     );
   }
 
+  /// Distinct resolution warnings already logged by this client.
+  ///
+  /// Resolution runs on every request, so an ambiguous identifier would
+  /// otherwise flood the log; each distinct message is written once.
+  final Set<String> _loggedResolutionWarnings = <String>{};
+
+  /// Upper bound for [_loggedResolutionWarnings] so a client sending many
+  /// distinct identifiers cannot grow it without limit.
+  static const int _maxLoggedResolutionWarnings = 256;
+
   Future<LlmModelInfo?> _resolveModel(String identifier) async {
     final models = await _serviceLocator.getLlmModelList();
-    // Build the ordered set of candidate identifiers a client may send. The
-    // chat model list exposes ids shaped like `alias (name)` (see
-    // `ModelKitController._menuModelLabel`), so we accept the raw identifier as
-    // well as the alias / name parsed out of that label.
-    final candidates = _modelIdentifierCandidates(identifier);
-
-    for (final candidate in candidates) {
-      for (final m in models) {
-        if (m.id == candidate) return m;
+    // Layered resolution (see [resolveModelIdentifier]): exact id first, then
+    // first-party alias / name, then app models, so an app-registered id /
+    // alias / name can never override a first-party model. The chat model list
+    // exposes ids shaped like `alias (name)`, which the resolver also accepts.
+    final resolution = resolveModelIdentifier(models, identifier);
+    for (final warning in resolution.warnings) {
+      if (_loggedResolutionWarnings.length >= _maxLoggedResolutionWarnings) {
+        _loggedResolutionWarnings.clear();
+      }
+      if (_loggedResolutionWarnings.add(warning)) {
+        requestLogger.warning('ModelKit model resolution: $warning');
       }
     }
-    for (final candidate in candidates) {
-      for (final m in models) {
-        if (m.alias.isNotEmpty && m.alias == candidate) return m;
-      }
-    }
-    for (final candidate in candidates) {
-      for (final m in models) {
-        if (m.name == candidate) return m;
-      }
-    }
-    return null;
-  }
-
-  /// Expands a client-supplied model identifier into the candidates that may
-  /// match an [LlmModelInfo].
-  ///
-  /// Handles the menu label format `alias (name)` by also yielding the trimmed
-  /// alias (text before the final parenthesis group) and the inner name.
-  static List<String> _modelIdentifierCandidates(String identifier) {
-    final trimmed = identifier.trim();
-    if (trimmed.isEmpty) return const [];
-
-    final candidates = <String>[trimmed];
-
-    if (trimmed.endsWith(')')) {
-      final open = trimmed.lastIndexOf('(');
-      if (open > 0) {
-        final inner = trimmed.substring(open + 1, trimmed.length - 1).trim();
-        final outer = trimmed.substring(0, open).trim();
-        if (inner.isNotEmpty) candidates.add(inner);
-        if (outer.isNotEmpty) candidates.add(outer);
-      }
-    }
-
-    return candidates;
+    return resolution.model;
   }
 
   String? _extractModelName(List<int>? body) {

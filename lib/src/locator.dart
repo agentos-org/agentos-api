@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'services/modelkit/app_model_id.dart';
 import 'services/toolkit/app_open_tool_provider.dart';
 
 /// Unified service state across all service types
@@ -67,6 +68,38 @@ class AppInfo {
   };
 }
 
+/// 模型的来源/归属分类（互斥，单一取值）。
+///
+/// 用一个显式枚举取代 `isRemote` / `isCustom` / `isAppModel` 三个布尔值的
+/// 隐式组合，使外部使用端无需各自推导分类：
+///
+/// - [local]：在本机运行（本地内置/导入模型）；
+/// - [platform]：AgentOS 平台下发的远端模型；
+/// - [custom]：用户自行配置的远端模型；
+/// - [app]：由第三方应用通过应用模型注册 API 注册的模型。
+///
+/// 运行位置（本机/云端）是次要信息，不再混入分类名称。
+enum LlmModelSource {
+  local('local'),
+  platform('platform'),
+  custom('custom'),
+  app('app');
+
+  const LlmModelSource(this.wireName);
+
+  /// 对外下发的 wire 取值（`local` / `platform` / `custom` / `app`）。
+  final String wireName;
+
+  /// 按 wire 取值解析；未知或为空时返回 null。
+  static LlmModelSource? tryParse(String? value) {
+    if (value == null) return null;
+    for (final source in LlmModelSource.values) {
+      if (source.wireName == value) return source;
+    }
+    return null;
+  }
+}
+
 /// LLM model information
 class LlmModelInfo {
   final String id;
@@ -106,6 +139,12 @@ class LlmModelInfo {
   /// The bundle ID of the third-party app that registered this model.
   /// Null for non-app models.
   final String? appBundleId;
+
+  /// Human-readable name of the third-party app that registered this model
+  /// (for grouping/labelling in model pickers). Null for non-app models, or
+  /// when the locator cannot provide one — consumers should then fall back to
+  /// [appBundleId].
+  final String? appName;
 
   /// Task-oriented identifier (`chat` / `embedding` / `asr` / `tts`).
   ///
@@ -168,6 +207,7 @@ class LlmModelInfo {
     this.isCustom = false,
     this.isAppModel = false,
     this.appBundleId,
+    this.appName,
     this.task,
     this.inputModalities = const [],
     this.outputModalities = const [],
@@ -180,6 +220,19 @@ class LlmModelInfo {
 
   /// Whether this model is a remote model with its own endpoint.
   bool get isRemote => baseUrl != null && baseUrl!.isNotEmpty;
+
+  /// 模型的来源分类（互斥），由现有布尔字段按固定优先级推导：
+  ///
+  /// 1. [isAppModel] → [LlmModelSource.app]（应用模型即使没有 baseUrl 也归应用）；
+  /// 2. 非 [isRemote] → [LlmModelSource.local]；
+  /// 3. [isCustom] → [LlmModelSource.custom]；
+  /// 4. 其余 → [LlmModelSource.platform]。
+  LlmModelSource get source {
+    if (isAppModel) return LlmModelSource.app;
+    if (!isRemote) return LlmModelSource.local;
+    if (isCustom) return LlmModelSource.custom;
+    return LlmModelSource.platform;
+  }
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -201,6 +254,8 @@ class LlmModelInfo {
     if (isCustom) 'isCustom': true,
     if (isAppModel) 'isAppModel': true,
     if (appBundleId != null) 'appBundleId': appBundleId,
+    if (appName != null && appName!.isNotEmpty) 'appName': appName,
+    'source': source.wireName,
     if (task != null) 'task': task,
     'provider': provider,
     if (inputModalities.isNotEmpty) 'input': inputModalities,
@@ -270,6 +325,10 @@ abstract class AgentOSServiceLocator {
 /// locators that support app models implement this interface.
 /// Default no-op implementations are provided via extension for backward
 /// compatibility with locators that do not yet support app models.
+///
+/// App models are namespaced by their bundle: [AppModelData.id] is only unique
+/// within one bundle, so the store addresses a model by its
+/// [AppModelData.qualifiedId] (`localId@bundleId`).
 abstract class AppModelStore {
   /// Lists all app-registered models.
   List<AppModelData> get appModels;
@@ -277,14 +336,17 @@ abstract class AppModelStore {
   /// Adds an app-registered model.
   Future<void> addAppModel(AppModelData model);
 
-  /// Updates an app-registered model.
-  Future<bool> updateAppModel(String id, AppModelData model);
+  /// Updates the app-registered model identified by [qualifiedId]
+  /// (`localId@bundleId`).
+  Future<bool> updateAppModel(String qualifiedId, AppModelData model);
 
-  /// Deletes an app-registered model.
-  Future<bool> deleteAppModel(String id);
+  /// Deletes the app-registered model identified by [qualifiedId]
+  /// (`localId@bundleId`).
+  Future<bool> deleteAppModel(String qualifiedId);
 
-  /// Toggles an app-registered model's disabled state.
-  Future<bool> toggleAppModelDisabled(String id);
+  /// Toggles the disabled state of the app-registered model identified by
+  /// [qualifiedId] (`localId@bundleId`).
+  Future<bool> toggleAppModelDisabled(String qualifiedId);
 
   /// Removes all models registered by a specific app.
   Future<int> removeAppModelsByBundleId(String bundleId);
@@ -292,6 +354,8 @@ abstract class AppModelStore {
 
 /// App model data used at the API layer (independent of Hive persistence).
 class AppModelData {
+  /// The model id inside its bundle (localId). Only unique per [appBundleId];
+  /// see [qualifiedId] for the gateway-wide identifier.
   final String id;
   final String name;
   final String alias;
@@ -330,27 +394,33 @@ class AppModelData {
     this.appName = '',
   });
 
+  /// The gateway-wide model id (`localId@bundleId`) that `/modelkit/models`
+  /// exposes and that requests use to address this model.
+  String get qualifiedId =>
+      AppModelId.qualify(bundleId: appBundleId, localId: id);
+
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'alias': alias,
-        'description': description,
-        'task': task,
-        'provider': provider,
-        'input': inputModalities,
-        'output': outputModalities,
-        'capabilities': {
-          'stream': stream,
-          'tool_call': toolCall,
-          'reasoning': reasoning,
-        },
-        if (baseUrl != null) 'baseUrl': baseUrl,
-        'hasApiKey': (apiKey ?? '').isNotEmpty,
-        if (contextSize != null) 'contextWindowSize': contextSize,
-        'isDisabled': isDisabled,
-        'appBundleId': appBundleId,
-        'appName': appName,
-      };
+    'id': id,
+    'qualifiedId': qualifiedId,
+    'name': name,
+    'alias': alias,
+    'description': description,
+    'task': task,
+    'provider': provider,
+    'input': inputModalities,
+    'output': outputModalities,
+    'capabilities': {
+      'stream': stream,
+      'tool_call': toolCall,
+      'reasoning': reasoning,
+    },
+    if (baseUrl != null) 'baseUrl': baseUrl,
+    'hasApiKey': (apiKey ?? '').isNotEmpty,
+    if (contextSize != null) 'contextWindowSize': contextSize,
+    'isDisabled': isDisabled,
+    'appBundleId': appBundleId,
+    'appName': appName,
+  };
 }
 
 extension AgentOSServiceLocatorOpenToolConfig on AgentOSServiceLocator {
@@ -409,7 +479,13 @@ class PeerApp {
   final String? appName;
   final String? avatarUrl;
 
-  const PeerApp({this.bundleId, this.userId, this.username, this.appName, this.avatarUrl});
+  const PeerApp({
+    this.bundleId,
+    this.userId,
+    this.username,
+    this.appName,
+    this.avatarUrl,
+  });
 
   bool get isDeviceLevel => userId == null;
 
@@ -591,7 +667,14 @@ class TransferFileInfo {
 }
 
 /// Transfer session state.
-enum TransferState { pending, preparing, transferring, completed, failed, cancelled }
+enum TransferState {
+  pending,
+  preparing,
+  transferring,
+  completed,
+  failed,
+  cancelled,
+}
 
 /// Per-file transfer state.
 enum FileTransferState { pending, transferring, completed, failed }
@@ -626,8 +709,8 @@ class TransferSession {
     this.errorMessage,
     Map<String, double>? fileProgress,
     Map<String, FileTransferState>? fileStates,
-  })  : fileProgress = fileProgress ?? {},
-        fileStates = fileStates ?? {};
+  }) : fileProgress = fileProgress ?? {},
+       fileStates = fileStates ?? {};
 
   Map<String, dynamic> toJson() => {
     'transferId': transferId,

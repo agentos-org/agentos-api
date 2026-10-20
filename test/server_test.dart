@@ -465,6 +465,23 @@ void main() {
           baseUrl: 'https://example.test/v1',
           isCustom: true,
         ),
+        LlmModelInfo(
+          id: 'remote-platform',
+          name: 'deepseek-v4-flash',
+          alias: 'deepseek-v4-flash',
+          description: 'remote platform model',
+          parameters: 'remote',
+          paramsB: 0,
+          quantization: 'none',
+          sizeGB: 0,
+          minRAMGB: 0,
+          downloadUrl: '',
+          tags: ['chat'],
+          repoId: 'remote',
+          type: 'text',
+          contextWindowSize: 64000,
+          baseUrl: 'https://platform.example.test/v1',
+        ),
       ],
     );
     final kernelFuture = Future<KernelService?>.value(null);
@@ -500,6 +517,8 @@ void main() {
       expect(qwen['contextWindowSize'], 8192);
       expect(qwen['isRemote'], isFalse);
       expect(qwen['isCustom'], isFalse);
+      expect(qwen['source'], 'local');
+      expect(qwen.containsKey('appName'), isFalse);
 
       // Stopped local chat model must not be listed.
       expect(byId.containsKey('stopped-local-model'), isFalse);
@@ -512,7 +531,15 @@ void main() {
       expect(remote['alias'], 'gpt-4.1');
       expect(remote['isRemote'], isTrue);
       expect(remote['isCustom'], isTrue);
+      expect(remote['source'], 'custom');
       expect(remote.containsKey('baseUrl'), isFalse);
+
+      final platform = byId['remote-platform']!;
+      expect(platform['isRemote'], isTrue);
+      expect(platform['isCustom'], isFalse);
+      expect(platform['source'], 'platform');
+      expect(platform.containsKey('isAppModel'), isFalse);
+      expect(platform.containsKey('appName'), isFalse);
     } finally {
       await localServer.close(force: true);
     }

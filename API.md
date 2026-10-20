@@ -244,7 +244,7 @@ Request body: `Capability`
 Notes:
 - `Capability.skills` is supported and forwarded as-is to LiteAgent SDK. Each item should be a complete Agent Skills markdown document.
 - The source spec for each skill document is [agentskills.io/specification](https://agentskills.io/specification), especially the `SKILL.md` format with YAML frontmatter followed by Markdown content.
-- `Capability.llmConfig.modelId` is also supported. AgentKit resolves `modelId` from the internal model registry, then expands it into a concrete LiteAgent `llmConfig`. The resolved model name is written to `llmConfig.model`; the gateway also fills fields such as `baseUrl`, `apiKey`, `provider`, `adapter`, and `contextWindowSize` when available.
+- `Capability.llmConfig.modelId` is also supported. AgentKit resolves `modelId` from the internal model registry (use the `id` returned by `GET /modelkit/models`; for app models that is `localId@bundleId`, and a bare `localId` saved by an older version still resolves when it is unique but is deprecated), then expands it into a concrete LiteAgent `llmConfig`. The resolved model name is written to `llmConfig.model`; the gateway also fills fields such as `baseUrl`, `apiKey`, `provider`, `adapter`, and `contextWindowSize` when available.
 - The gateway uses `callbackOpenTool.timeout` for external function-call waits. If omitted or invalid, it uses the 300-second compatibility default.
 
 Response: `200 OK` (`Session`)
@@ -2356,7 +2356,7 @@ kernel default LLM configuration.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `id` | `string` | Yes | Unique 12-character hash-style model ID used by the gateway for routing and lookup. |
+| `id` | `string` | Yes | Model ID used by the gateway for routing and lookup; unique within the list. `local` / `platform` models use a 12-character hash-style ID, `custom` models use an ID generated at creation, and `app` models use a **namespaced ID** of the form `localId@bundleId` (for example `chat-1@com.example.myapp`). See [Model IDs and Addressing](#model-ids-and-addressing). |
 | `name` | `string` | Yes | Upstream model name. For remote models, the gateway may rewrite request body `model` from `id` to this value before forwarding. |
 | `alias` | `string` | Yes | Human-friendly model alias. |
 | `description` | `string` | Yes | Model description from the service locator. |
@@ -2367,8 +2367,79 @@ kernel default LLM configuration.
 | `contextWindowSize` | `number` | No | Context window size when provided by the backing model metadata. |
 | `isRemote` | `boolean` | Yes | Whether the model is served by a remote provider route. |
 | `isCustom` | `boolean` | Yes | Whether the model is custom/user-defined. |
+| `source` | `string` | Yes | Mutually exclusive origin of the model: `local`, `platform`, `custom`, or `app`. Clients should group and label models by this field instead of deriving a category from `isRemote` / `isCustom` / `isAppModel`. See [Model Source](#model-source). |
 | `isAppModel` | `boolean` | No | Present and `true` when the model was registered by a third-party app via the App Model Registration API. |
 | `appBundleId` | `string` | No | Bundle ID of the third-party app that registered this model. Only present for app-registered models. |
+| `appName` | `string` | No | Human-readable name of the app that registered this model, for grouping in model pickers. Only present for app-registered models (`source` = `app`); falls back to `appBundleId` when the app did not provide a name. |
+
+#### Model Source
+
+`source` is a single, mutually exclusive classification derived by the gateway.
+It replaces the implicit combination of the boolean flags, which could not
+distinguish app-registered models from platform models (both are
+`isRemote: true, isCustom: false`).
+
+| `source` | Meaning | Derived when |
+| --- | --- | --- |
+| `app` | Registered by a third-party app through `/modelkit/app-models`. | `isAppModel` is `true` (highest priority) |
+| `local` | Runs on this device. | Not an app model and `isRemote` is `false` |
+| `custom` | A remote model the user configured. | Not an app model, `isRemote` is `true`, and `isCustom` is `true` |
+| `platform` | A remote model provided by the AgentOS platform. | Any other remote model |
+
+The boolean fields `isRemote`, `isCustom`, `isAppModel` and `appBundleId` are
+kept unchanged for backward compatibility. Run location (on-device vs. cloud)
+is secondary information; do not fold it into the group name.
+
+Suggested labels for model pickers (same wording as the AgentOS desktop model
+manager): `local` → "Local Models", `platform` → "Platform Models", `custom` →
+"Custom Models", `app` → "App · {appName}" (one group per app).
+
+#### Model IDs and Addressing
+
+Every `id` returned by `GET /modelkit/models` can be used verbatim as the
+`model` field of a request, and the gateway routes it to exactly that model.
+The shape of the `id` depends on the source:
+
+| `source` | `id` shape | Notes |
+| --- | --- | --- |
+| `local` | 12 hex characters | Derived from the running local instance. |
+| `platform` | 12 hex characters | Derived from the platform model's server-side ID. |
+| `custom` | ID generated at creation | Stable after creation. The admin API may omit `id` when creating a custom model, in which case the gateway generates one; a supplied `id` must not collide with any existing model. |
+| `app` | `localId@bundleId` | Namespaced ID. `localId` is the `id` the app passed when registering, `bundleId` is the registering app's bundle ID. Different apps may use the same `localId`; the combined ID never collides, and never collides with the 12-hex `local` / `platform` IDs. Custom-model creation checks against all existing models. |
+
+Both `localId` and `bundleId` of an app model are restricted to
+`[A-Za-z0-9._-]` (`localId`: 1-64 characters, `bundleId`: 1-128 characters), so
+`@` only ever appears as the separator and splitting is unambiguous.
+Registration requests that violate the rules are rejected with `400`.
+
+**Resolution order.** The `model` of a request may be an `id`, or an `alias` /
+`name` (kept for older callers). The gateway looks it up in this order and stops
+at the first hit:
+
+1. Exact `id` (all models, including the full `localId@bundleId` of app models);
+2. `alias`, then `name`, of first-party models (`local` / `platform` / `custom`);
+3. Bare `localId` of an app model (**deprecated**; matches only when exactly one
+   app model uses that `localId`);
+4. `alias`, then `name`, of app models.
+
+This guarantees that an app cannot "hijack" requests for a first-party model by
+giving its own model the same `alias` / `name` / `id`: first-party models always
+win. When several models match at the same level, the first one in the list is
+used and the gateway logs a warning listing every candidate `id`.
+
+**Recommendation.** Callers should use the full `id` from
+`GET /modelkit/models` (or from the registration response) and not rely on
+`alias` / `name`; for app models use `localId@bundleId`. The bare `localId` is
+only a compatibility path for callers that persisted an old ID before upgrading:
+the gateway logs a deprecation warning when it is used, and when several apps
+share the same `localId` the target cannot be determined, so the request is
+**not** routed.
+
+**List de-duplication.** While assembling `GET /modelkit/models` the gateway
+de-duplicates by `id`: on a duplicate, a first-party model wins over an app
+model and, within the same tier, the first occurrence wins; the dropped entry is
+logged as a warning. This is a safety net and does not trigger under normal
+operation.
 
 #### ModelCapabilities
 
@@ -2423,9 +2494,10 @@ keys may be reduced to basenames.
 Lists available models in the task-oriented wire schema. Each entry carries
 `task` (`chat` / `embedding` / `asr` / `tts` / `decision`), `input` / `output` modalities,
 and a `capabilities` block (`vision`, `tool_call`, `stream`, `reasoning`).
-`id` is the unique 12-character hash-style model identifier used by the gateway
-for routing and lookup. Treat `name` and `alias` as display/provider metadata,
-not as the canonical ID.
+`id` is the unique model identifier used by the gateway for routing and lookup:
+a 12-character hash-style ID for local / platform models, and `localId@bundleId`
+for app-registered models (see [Model IDs and Addressing](#model-ids-and-addressing)).
+Treat `name` and `alias` as display/provider metadata, not as the canonical ID.
 
 Response: `200 OK` (`ModelInfo[]`)
 
@@ -2447,7 +2519,8 @@ Response: `200 OK` (`ModelInfo[]`)
     },
     "contextWindowSize": 8192,
     "isRemote": false,
-    "isCustom": false
+    "isCustom": false,
+    "source": "local"
   },
   {
     "id": "b21d5e08a7c3",
@@ -2465,7 +2538,29 @@ Response: `200 OK` (`ModelInfo[]`)
     },
     "contextWindowSize": 4096,
     "isRemote": false,
-    "isCustom": false
+    "isCustom": false,
+    "source": "local"
+  },
+  {
+    "id": "c94e07b1d2f6",
+    "name": "deepseek-v4-flash",
+    "alias": "deepseek-v4-flash-jm",
+    "description": "Chat model registered by a third-party app",
+    "task": "chat",
+    "input": ["text"],
+    "output": ["text"],
+    "capabilities": {
+      "vision": false,
+      "tool_call": true,
+      "stream": true,
+      "reasoning": true
+    },
+    "isRemote": true,
+    "isCustom": false,
+    "source": "app",
+    "isAppModel": true,
+    "appBundleId": "com.example.jmtest",
+    "appName": "JMtest App"
   }
 ]
 ```
@@ -2667,7 +2762,7 @@ Common JSON request body:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `model` | `string` | No | Decision model `id` or name from `/modelkit/models`; the first running decision model is used when omitted. |
+| `model` | `string` | No | Decision model `id` (`localId@bundleId` for app models) or name from `/modelkit/models`; the first running decision model is used when omitted. Resolution rules: [Model IDs and Addressing](#model-ids-and-addressing). |
 | `state` | `string` / `object` / `array` | Yes | The content to judge; non-string values are serialized to JSON text. |
 | `questions` | `object` | Yes | `question id -> {type, instructions, criteria}`; `type` is `choice`, `score` or `noul`. |
 | `images` | `string[]` | No | Data URLs for multimodal decision models (such as Clef). |
@@ -2731,6 +2826,13 @@ name (format: `alias (name)` when they differ, or just the alias/name). The
 `aliases` array contains both `name` and `alias` for lookup flexibility. The
 `meta.n_ctx` field carries the context window size when available.
 
+Display labels can collide (for example two apps each registering a model named
+`gpt-4o`). So that a client never receives an `id` that points at more than one
+model, whenever a label appears more than once in the list **every** entry using
+that label falls back to the model's real `id` (`localId@bundleId` for app
+models), while the remaining entries keep their display label. For exact
+addressing, use the `id` returned by `GET /modelkit/models`.
+
 #### App Model Registration API
 
 Third-party applications can register their own models with ModelKit so that
@@ -2749,16 +2851,27 @@ Authorization: Bearer <token returned by POST /appkit/register>
 ```
 
 Every registered model is owned by the `bundleId` that the token was issued
-for, and only that bundle can modify it:
+for. The `id` is a `localId` in **each app's own namespace**: different apps may
+register the same `id` without conflict, and the externally visible full ID is
+`localId@bundleId` (see [Model IDs and Addressing](#model-ids-and-addressing)).
+The `<id>` path parameter of `PUT` / `DELETE` / `toggle` is looked up only in the
+**caller's own namespace**, so an app cannot modify another app's models:
 
 | Condition | Status |
 | --- | --- |
 | Token missing or not issued by `POST /appkit/register` | `401` |
 | Gateway has no app model storage (registration unsupported) | `501` |
-| `PUT` / `DELETE` / `toggle` on an unknown `id` | `404` |
-| `PUT` / `DELETE` / `toggle` on a model owned by another bundle | `403` |
+| `POST` with an `id` that violates the `localId` rules, or a token whose `bundleId` violates the `bundleId` rules | `400` |
+| `PUT` / `DELETE` / `toggle` on an `id` that does not exist in the caller's namespace (including an `id` that exists only for another app) | `404` |
 | `POST` whose body `appBundleId` differs from the token's bundle | `403` |
-| `POST` with an `id` already registered by another bundle | `409` |
+| `POST` / `PUT` that would give the model a `name` already used by another model of the same bundle | `409` |
+
+> Behavior change: previously, an `id` already registered by another bundle
+> returned `409`, and modifying another bundle's model returned `403`. Because
+> `id` is now a per-app namespace, neither case exists any more: the former
+> succeeds independently for each app, and the latter returns `404` since the id
+> is not found in the caller's namespace. Clients that treated `409` as "retry
+> with a different id" can keep that branch; it simply no longer fires.
 
 The tokens identify an app to the local gateway; `POST /appkit/register`
 itself does not authenticate the caller, so this protects apps from each other
@@ -2772,8 +2885,9 @@ is rejected with `400` rather than silently ignored.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `id` | `string` | Yes | Unique model identifier. |
-| `name` | `string` | Yes | Model display name. For remote models this is the upstream model name; ModelKit rewrites the request `model` field from the `id` to this name. |
+| `id` | `string` | Yes | The model's identifier **within this app** (`localId`): 1-64 characters from `[A-Za-z0-9._-]`, must not contain `@`. Different apps may use the same `id`; the full external ID is `localId@bundleId` (see `qualifiedId`). |
+| `qualifiedId` | `string` | Read-only | The full external model ID: `<id>@<appBundleId>`. Returned by the registration response and `GET /modelkit/app-models`, and identical to the model's `id` in `GET /modelkit/models`; ignored if sent in a request body. Use it as `"model"` when calling proxy routes such as `/modelkit/chat`. |
+| `name` | `string` | Yes | Model display name. For remote models this is the upstream model name; ModelKit rewrites the request `model` field from the `id` to this name. Must be unique among the models registered by the same app (see [POST /modelkit/app-models](#post-modelkitapp-models)). |
 | `alias` | `string` | No | Human-friendly model alias. |
 | `description` | `string` | No | Model description. |
 | `task` | `string` | No | Model task: `chat` (default), `embedding`, `asr`, `tts`, or `decision` (case-insensitive; `systemone` and `llm_decision` are accepted as aliases of `decision`). Any other value is rejected with `400`. |
@@ -2808,11 +2922,13 @@ the `input` / `output` of `chat`, `embedding`, `asr` and `tts` models, which
 then fall back to that task's defaults if nothing is left.
 
 Once registered, call it through [`/modelkit/decision`](#all-modelkitdecision)
-with `"model"` set to the registered `id`.
+with `"model"` set to the model's full ID, `qualifiedId` (`<id>@<bundleId>`).
 
 ##### GET /modelkit/app-models
 
-Lists all models registered by third-party apps.
+Lists all models registered by third-party apps. Each entry's `id` is still the
+`localId` passed at registration (unchanged semantics); the read-only
+`qualifiedId` is new and equals the model's `id` in `GET /modelkit/models`.
 
 Response: `200 OK` (`AppModelData[]`)
 
@@ -2820,6 +2936,7 @@ Response: `200 OK` (`AppModelData[]`)
 [
   {
     "id": "example-gpt4o",
+    "qualifiedId": "example-gpt4o@com.example.myapp",
     "name": "GPT-4o",
     "alias": "gpt-4o",
     "description": "OpenAI GPT-4o model",
@@ -2850,12 +2967,37 @@ Requires a Bearer token (see [Authentication and ownership](#authentication-and-
 
 Request body: see AppModelData schema above. `id` and `name` are required.
 
+The `id` must be 1-64 characters from `[A-Za-z0-9._-]`, and the token's
+`bundleId` must be 1-128 characters from `[A-Za-z0-9._-]`; otherwise the request
+is rejected with `400` (these two rules are only enforced when registering
+models and do not affect any other AppKit feature). After a successful
+registration the `qualifiedId` in the response (`<id>@<bundleId>`) is the
+model's unique external ID: callers should store it and set `"model"` to it in
+requests to route to exactly this model.
+
+The `id` only has to be unique **within the same app**: different apps may
+register the same `id` without affecting each other, and it can never collide
+with a platform or local model.
+
 Registering an `id` that the same bundle already registered **replaces** the
 model (the response carries `"updated": true`) and keeps its enabled/disabled
 state, so retrying a registration never produces duplicate entries. The
 replacement is complete: omitted optional fields, including `apiKey`, are
-reset. Use `PUT` for a partial update. An `id` owned by another bundle is
-rejected with `409`.
+reset. Use `PUT` for a partial update.
+
+The `name` must also be unique among the models registered by the **same
+app** (same `bundleId`). Registering a new `id` whose `name` is already used by
+another model of the app, or replacing an existing model with a `name` that
+another model of the app already uses, is rejected with `409` and nothing is
+written. Notes:
+
+- The name is compared after trimming surrounding whitespace, and the
+  comparison is case-sensitive (`GPT-4o` and `gpt-4o` are different names).
+- Different apps may use the same `name`.
+- Disabled models still occupy their name; the name becomes available again
+  after the model is unregistered with `DELETE`.
+- Re-registering an existing `id` without changing its `name` is never blocked
+  by this rule, so retries stay idempotent.
 
 Example request:
 
@@ -2893,8 +3035,17 @@ Response: `200 OK`
 ```json
 {
   "success": true,
-  "id": "example-gpt4o"
+  "id": "example-gpt4o",
+  "qualifiedId": "example-gpt4o@com.example.myapp"
 }
+```
+
+The model can then be called with its full ID:
+
+```bash
+curl -X POST http://localhost:8888/modelkit/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "example-gpt4o@com.example.myapp", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
 Example: registering a decision model. Only the identity and endpoint are
@@ -2918,17 +3069,23 @@ The stored model is reported by `GET /modelkit/app-models` as
 `"task": "decision"`, `"input": ["text"]`, `"output": ["decisions"]` with all
 capabilities `false`. It is then listed by `GET /modelkit/models` (but not by
 `GET /modelkit/chat/models`), and `POST /modelkit/decision` with
-`"model": "example-julia"` is forwarded to `http://127.0.0.1:8080/v1/systemone`
+`"model": "example-julia@com.example.myapp"` is forwarded to `http://127.0.0.1:8080/v1/systemone`
 with the registered `apiKey` as the upstream Bearer token and `model`
 rewritten to `Julia-1`.
 
 ##### PUT /modelkit/app-models/\<id\>
 
 Updates an existing app-registered model. Requires the Bearer token of the
-model's owner. Only the fields provided in the request body are updated;
+model's owner. The `<id>` path parameter is the `localId` (without `@bundleId`)
+and is looked up only in the caller's own namespace. Only the fields provided in the request body are updated;
 omitted fields retain their current values. The `apiKey` field is only
 overwritten when a non-empty value is provided. `appBundleId` cannot be
 changed (a different value is rejected with `400`).
+
+Renaming a model (changing `name`) follows the same per-app uniqueness rule as
+`POST`: if another model of the same app already uses the new `name`, the
+request is rejected with `409` and the model is left unchanged. Requests that
+do not change the name are never blocked by this rule.
 
 When `task` is changed, any of `input`, `output` and `capabilities` that the
 request does not provide are reset to the defaults of the new task instead of
@@ -2957,8 +3114,8 @@ Response: `200 OK`
 }
 ```
 
-Returns `401` without a valid token, `403` if the model belongs to another
-bundle, and `404` if the model is not found.
+Returns `401` without a valid token, and `404` if the `id` does not exist in the
+caller's own namespace (including when it exists only for another app).
 
 ##### DELETE /modelkit/app-models/\<id\>
 
@@ -2980,8 +3137,8 @@ Response: `200 OK`
 }
 ```
 
-Returns `401` without a valid token, `403` if the model belongs to another
-bundle, and `404` if the model is not found.
+Returns `401` without a valid token, and `404` if the `id` does not exist in the
+caller's own namespace (including when it exists only for another app).
 
 ##### POST /modelkit/app-models/\<id\>/toggle
 
@@ -3006,8 +3163,8 @@ Response: `200 OK`
 }
 ```
 
-Returns `401` without a valid token, `403` if the model belongs to another
-bundle, and `404` if the model is not found.
+Returns `401` without a valid token, and `404` if the `id` does not exist in the
+caller's own namespace (including when it exists only for another app).
 
 ### Error Responses
 

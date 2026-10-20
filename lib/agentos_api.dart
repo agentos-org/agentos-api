@@ -41,5 +41,8 @@ export 'src/services/toolkit/opentool_client.dart';
 export 'src/services/toolkit/app_open_tool_provider.dart';
 export 'src/services/harnesskit/harnesskit_client.dart';
 export 'src/services/modelkit/model_client.dart';
+export 'src/services/modelkit/app_model_id.dart';
+export 'src/services/modelkit/model_resolver.dart';
+export 'src/services/modelkit/model_list_guard.dart';
 export 'src/services/kernel/kernel_bootstrap.dart';
 export 'src/services/kernel/kernel_mode_service.dart';

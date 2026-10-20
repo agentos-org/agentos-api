@@ -14,6 +14,7 @@ import '../../middleware.dart';
 import '../../services/agentkit/agent_request_context_service.dart';
 import '../../services/agentkit/agentkit_service.dart';
 import '../../services/appkit/appkit_service.dart';
+import '../../services/modelkit/model_resolver.dart';
 
 class AgentKitController {
   AgentKitController({
@@ -1129,13 +1130,12 @@ class AgentKitController {
 
   Future<Map<String, dynamic>?> _resolveLlmConfigById(String id) async {
     final models = await _serviceLocator.getLlmModelList();
-    LlmModelInfo? matched;
-    for (final model in models) {
-      if (model.id == id) {
-        matched = model;
-        break;
-      }
+    // 精确匹配 id；兼容旧版本持久化下来的应用模型裸 localId（唯一时命中）。
+    final resolution = resolveModelId(models, id);
+    for (final warning in resolution.warnings) {
+      requestLogger.warning('AgentKit model resolution: $warning');
     }
+    final matched = resolution.model;
     if (matched == null) {
       return null;
     }

@@ -11,6 +11,7 @@ import '../../middleware.dart';
 import '../../models/cronkit/cronkit_models.dart';
 import '../../services/appkit/appkit_service.dart';
 import '../../services/cronkit/cronkit_model_ref_store.dart';
+import '../../services/modelkit/model_resolver.dart';
 
 class CronKitController {
   CronKitController({
@@ -629,13 +630,12 @@ class CronKitController {
 
   Future<LLMConfig?> _resolveLlmConfigById(String id) async {
     final models = await _serviceLocator.getLlmModelList();
-    LlmModelInfo? matched;
-    for (final model in models) {
-      if (model.id == id) {
-        matched = model;
-        break;
-      }
+    // 精确匹配 id；兼容旧版本已持久化的应用模型裸 localId（唯一时命中）。
+    final resolution = resolveModelId(models, id);
+    for (final warning in resolution.warnings) {
+      requestLogger.warning('CronKit model resolution: $warning');
     }
+    final matched = resolution.model;
     if (matched == null) {
       return null;
     }

@@ -6,7 +6,9 @@ import 'package:shelf_router/shelf_router.dart';
 
 import '../../locator.dart';
 import '../../middleware.dart';
+import '../../services/modelkit/app_model_id.dart';
 import '../../services/modelkit/model_client.dart';
+import '../../services/modelkit/model_list_guard.dart';
 import '../../services/appkit/appkit_service.dart';
 
 /// App model 写接口的请求错误：携带 HTTP 状态码，由各 handler 统一转成 JSON 响应。
@@ -136,8 +138,13 @@ class ModelKitController {
             'contextWindowSize': model.contextWindowSize,
           'isRemote': model.isRemote,
           'isCustom': model.isCustom,
+          // 互斥的来源分类：local / platform / custom / app。
+          // 使用端应优先读取它，而不是自行用上面的布尔值推导。
+          'source': model.source.wireName,
           if (model.isAppModel) 'isAppModel': true,
           if (model.appBundleId != null) 'appBundleId': model.appBundleId,
+          if (model.isAppModel && (model.appName ?? '').isNotEmpty)
+            'appName': model.appName,
         });
       }
 
@@ -153,40 +160,49 @@ class ModelKitController {
   /// Lists models in the **llama.cpp combined wire schema** used by
   /// `/chat/v1/models` and `/chat/models`.
   ///
-  /// The payload mirrors what llama.cpp emits (an OpenAI-style `object`/`data` block), 
+  /// The payload mirrors what llama.cpp emits (an OpenAI-style `object`/`data` block),
   /// but aggregates **all** available models — remote and local, every task — just like `/models`,
   /// instead of only the models loaded by a single llama backend.
   Future<Response> _listChatModels(Request request) async {
     try {
       final models = await _client.serviceLocator.getLlmModelList();
-      final openaiData = <Map<String, dynamic>>[];
       final created = DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
+      final chatModels = <LlmModelInfo>[];
       for (final model in models) {
         if (!await _isModelAvailable(model)) continue;
 
         final task = _resolveTask(model);
         if (task == null || task != ModelTask.chat) continue;
 
-        openaiData.add(<String, dynamic>{
-          'id': _menuModelLabel(model) ?? model.id,
-          'aliases': _aliases(model),
-          'tags': const <String>[],
-          'object': 'model',
-          'created': created,
-          'owned_by': model.provider,
-          'meta': <String, dynamic>{
-            if (model.contextWindowSize != null)
-              'n_ctx': model.contextWindowSize,
-          },
-        });
+        chatModels.add(model);
       }
 
+      // 菜单标签（`alias (name)` / `name`）在列表内不唯一时，冲突项回退为真实 id，
+      // 否则客户端回传标签后只能命中列表里的第一个，其余模型无法被精确寻址。
+      final menuIds = resolveMenuIds(
+        models: chatModels,
+        labels: [for (final model in chatModels) _menuModelLabel(model)],
+      );
+
+      final openaiData = <Map<String, dynamic>>[
+        for (var i = 0; i < chatModels.length; i++)
+          <String, dynamic>{
+            'id': menuIds[i],
+            'aliases': _aliases(chatModels[i]),
+            'tags': const <String>[],
+            'object': 'model',
+            'created': created,
+            'owned_by': chatModels[i].provider,
+            'meta': <String, dynamic>{
+              if (chatModels[i].contextWindowSize != null)
+                'n_ctx': chatModels[i].contextWindowSize,
+            },
+          },
+      ];
+
       return Response.ok(
-        jsonEncode({
-          'object': 'list',
-          'data': openaiData,
-        }),
+        jsonEncode({'object': 'list', 'data': openaiData}),
         headers: const {'content-type': 'application/json'},
       );
     } on Exception catch (error) {
@@ -351,11 +367,7 @@ class ModelKitController {
         );
       }
 
-      final responseBody = _postProcessResponse(
-        task,
-        path,
-        response.bodyBytes,
-      );
+      final responseBody = _postProcessResponse(task, path, response.bodyBytes);
       return Response(
         response.statusCode,
         body: responseBody,
@@ -436,9 +448,14 @@ class ModelKitController {
   ///
   /// 需要 AppKit Bearer token。模型归属于 token 对应的 bundleId：
   /// - body 中的 `appBundleId` 可省略；若提供则必须与 token 一致，否则 403；
-  /// - 同 id 已被其他 bundle 注册 → 409；
+  /// - `id`（localId）只在本 bundle 内有意义，必须符合 `[A-Za-z0-9._-]{1,64}`；
+  ///   token 对应的 bundleId 必须符合 `[A-Za-z0-9._-]{1,128}`，否则 400；
+  /// - 对外（`/modelkit/models`、路由）使用的 id 是 `localId@bundleId`（qualifiedId），
+  ///   所以不同应用可以使用同一个 localId，不存在“id 被其他应用占用”；
+  /// - 本 bundle 下已有其他 id 的模型使用了相同 name → 409（同一应用不能注册同名模型，
+  ///   不同应用之间不受限）；
   /// - 同 id 已由本 bundle 注册 → 按“整体替换”更新（保留启用/禁用状态），
-  ///   不会产生重复条目。
+  ///   不会产生重复条目。替换时 name 未变化不会触发同名检查。
   Future<Response> _registerAppModel(Request request) async {
     try {
       final callerBundleId = _requireCallerBundleId(request);
@@ -454,6 +471,15 @@ class ModelKitController {
             'id and name are required',
           );
         }
+        if (!AppModelId.isValidLocalId(id)) {
+          throw _AppModelRequestException(400, AppModelId.localIdRequirement());
+        }
+        if (!AppModelId.isValidBundleId(callerBundleId)) {
+          throw _AppModelRequestException(
+            400,
+            AppModelId.bundleIdRequirement(callerBundleId),
+          );
+        }
 
         final declaredBundleId = _optionalString(body, 'appBundleId') ?? '';
         if (declaredBundleId.isNotEmpty && declaredBundleId != callerBundleId) {
@@ -463,11 +489,17 @@ class ModelKitController {
           );
         }
 
-        final existing = _findAppModel(store, id);
-        if (existing != null && existing.appBundleId != callerBundleId) {
-          throw _AppModelRequestException(
-            409,
-            'app model id "$id" is already registered by another app',
+        // id 按 bundle 划分命名空间：只在调用方自己的模型里查找同 id 的记录。
+        final existing = _findAppModel(store, callerBundleId, id);
+
+        // 同一应用下不能出现同名模型。同 id 且 name 未变化的重复注册只是整体替换，
+        // 不新增名称占用，因此放行（也避免历史遗留的同名数据被锁死）。
+        if (existing == null || existing.name != name) {
+          _requireUniqueNameInApp(
+            store,
+            bundleId: callerBundleId,
+            name: name,
+            excludeId: id,
           );
         }
 
@@ -519,12 +551,14 @@ class ModelKitController {
         );
 
         final replaced =
-            existing != null && await store.updateAppModel(id, record);
+            existing != null &&
+            await store.updateAppModel(record.qualifiedId, record);
         if (!replaced) await store.addAppModel(record);
 
         return _appModelJson({
           'success': true,
           'id': id,
+          'qualifiedId': record.qualifiedId,
           if (existing != null) 'updated': true,
         });
       });
@@ -537,7 +571,8 @@ class ModelKitController {
 
   /// 更新应用模型（部分更新）
   ///
-  /// 仅模型所属 bundle 可更新：未知 id → 404，非所属 bundle → 403。
+  /// `id` 是调用方 bundle 内的 localId：只在调用方自己的模型里查找，找不到 → 404
+  /// （其他应用的同名 localId 属于另一个命名空间，对调用方不可见）。
   /// `appBundleId` 不可变更；`task` 变更时未显式给出的 input/output/capabilities
   /// 会按新任务的默认值重置，避免遗留旧任务（如 chat）的模态与能力。
   Future<Response> _updateAppModel(Request request, String id) async {
@@ -590,12 +625,24 @@ class ModelKitController {
               (taskChanged ? null : existing.reasoning),
         );
 
+        // 改名时同样不能与本应用下其他模型同名（否则可以通过 PUT 绕过注册时的检查）。
+        // 名称未变化则不检查，避免历史遗留的同名数据无法再更新其他字段。
+        final name = _nonEmptyOr(_optionalString(body, 'name'), existing.name);
+        if (name != existing.name) {
+          _requireUniqueNameInApp(
+            store,
+            bundleId: existing.appBundleId,
+            name: name,
+            excludeId: id,
+          );
+        }
+
         // apiKey 仅在显式给出非空值时覆盖，避免 PUT 误清除已保存的密钥。
         final newKey = _optionalString(body, 'apiKey') ?? '';
 
         final updated = AppModelData(
           id: id,
-          name: _nonEmptyOr(_optionalString(body, 'name'), existing.name),
+          name: name,
           alias: _optionalString(body, 'alias') ?? existing.alias,
           description:
               _optionalString(body, 'description') ?? existing.description,
@@ -621,7 +668,7 @@ class ModelKitController {
           ),
         );
 
-        if (!await store.updateAppModel(id, updated)) {
+        if (!await store.updateAppModel(updated.qualifiedId, updated)) {
           throw _AppModelRequestException(404, 'app model not found: $id');
         }
         return _appModelJson({'success': true});
@@ -633,15 +680,15 @@ class ModelKitController {
     }
   }
 
-  /// 第三方应用注销模型（仅所属 bundle 可注销）
+  /// 第三方应用注销模型（`id` 是调用方 bundle 内的 localId，找不到 → 404）
   Future<Response> _unregisterAppModel(Request request, String id) async {
     try {
       final callerBundleId = _requireCallerBundleId(request);
       final store = _requireAppModelStore();
 
       return await _serializeAppModelWrite(() async {
-        _requireOwnedAppModel(store, id, callerBundleId);
-        if (!await store.deleteAppModel(id)) {
+        final existing = _requireOwnedAppModel(store, id, callerBundleId);
+        if (!await store.deleteAppModel(existing.qualifiedId)) {
           throw _AppModelRequestException(404, 'app model not found: $id');
         }
         return _appModelJson({'success': true});
@@ -653,15 +700,15 @@ class ModelKitController {
     }
   }
 
-  /// 切换应用模型的禁用状态（仅所属 bundle 可切换）
+  /// 切换应用模型的禁用状态（`id` 是调用方 bundle 内的 localId，找不到 → 404）
   Future<Response> _toggleAppModel(Request request, String id) async {
     try {
       final callerBundleId = _requireCallerBundleId(request);
       final store = _requireAppModelStore();
 
       return await _serializeAppModelWrite(() async {
-        _requireOwnedAppModel(store, id, callerBundleId);
-        if (!await store.toggleAppModelDisabled(id)) {
+        final existing = _requireOwnedAppModel(store, id, callerBundleId);
+        if (!await store.toggleAppModelDisabled(existing.qualifiedId)) {
           throw _AppModelRequestException(404, 'app model not found: $id');
         }
         return _appModelJson({'success': true});
@@ -685,9 +732,14 @@ class ModelKitController {
     return _appModelStore?.appModels ?? const [];
   }
 
-  static AppModelData? _findAppModel(AppModelStore store, String id) {
+  /// 在 [bundleId] 的命名空间内按 localId 查找应用模型。
+  static AppModelData? _findAppModel(
+    AppModelStore store,
+    String bundleId,
+    String id,
+  ) {
     for (final model in store.appModels) {
-      if (model.id == id) return model;
+      if (model.appBundleId == bundleId && model.id == id) return model;
     }
     return null;
   }
@@ -725,23 +777,46 @@ class ModelKitController {
     return store;
   }
 
-  /// 取出 [id] 对应且属于 [callerBundleId] 的模型；未知 id → 404，非所属 → 403。
+  /// 取出调用方 bundle（[callerBundleId]）命名空间内 localId 为 [id] 的模型；
+  /// 找不到 → 404。其他应用的同名 localId 属于另一个命名空间，对调用方不可见，
+  /// 因此不存在“修改了别人的模型”的路径，也就不再需要 403。
   static AppModelData _requireOwnedAppModel(
     AppModelStore store,
     String id,
     String callerBundleId,
   ) {
-    final existing = _findAppModel(store, id);
+    final existing = _findAppModel(store, callerBundleId, id);
     if (existing == null) {
       throw _AppModelRequestException(404, 'app model not found: $id');
     }
-    if (existing.appBundleId != callerBundleId) {
-      throw const _AppModelRequestException(
-        403,
-        'Only the owner bundleId can modify this app model',
-      );
-    }
     return existing;
+  }
+
+  /// 同一个应用（[bundleId]）下不允许存在同名模型：若已有 id 不为 [excludeId]、
+  /// 但 name 相同的模型，抛出 409。
+  ///
+  /// - 仅限同一 bundle 内唯一，不同应用之间允许同名；
+  /// - 已禁用的模型仍占用名称；
+  /// - name 按 trim 后精确匹配（区分大小写），与 `id` 的比较方式一致。
+  ///
+  /// 必须在 [_serializeAppModelWrite] 的串行区内调用，才能与随后的写入构成原子操作。
+  static void _requireUniqueNameInApp(
+    AppModelStore store, {
+    required String bundleId,
+    required String name,
+    required String excludeId,
+  }) {
+    for (final model in store.appModels) {
+      if (model.appBundleId == bundleId &&
+          model.id != excludeId &&
+          model.name == name) {
+        throw _AppModelRequestException(
+          409,
+          'app model name "$name" is already registered by this app '
+          '(id "${model.id}")',
+        );
+      }
+    }
   }
 
   /// 串行执行 app model 写操作（见 [_appModelWriteTail]）。
