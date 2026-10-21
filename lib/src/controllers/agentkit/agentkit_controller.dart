@@ -41,6 +41,7 @@ class AgentKitController {
   static const Duration _callbackTombstoneTtl = Duration(minutes: 10);
   static const int _maxCallbackTombstones = 2048;
   final Map<String, Duration> _functionCallTimeoutsBySession = {};
+  final Map<String, Map<String, bool>> _modelCapabilitiesBySession = {};
   final Map<String, Completer<ToolReturn>> _pendingToolReturns = {};
   final Map<String, Completer<EventToolReturn>> _pendingStreamToolReturns = {};
   final Map<String, _CallbackTombstone> _callbackTombstones = {};
@@ -86,11 +87,16 @@ class AgentKitController {
       final liteAgentBody = await _buildLiteAgentCapabilityFromAgentKitBody(
         body,
       );
+      final modelCapabilities = _readModelCapabilities(liteAgentBody);
+      liteAgentBody.remove('_agentosModelCapabilities');
       _sanitizeCallbackTimeout(liteAgentBody);
       capability = Capability.fromJson(liteAgentBody);
       callbackTimeout = _callbackTimeoutFromCapability(capability);
       final session = await _sdk.initSession(capability: capability);
       _functionCallTimeoutsBySession[session.sessionId] = callbackTimeout;
+      if (modelCapabilities != null) {
+        _rememberModelCapabilities(session.sessionId, modelCapabilities);
+      }
       _rememberSessionStreamFunctions(session.sessionId, liteAgentBody);
       return _jsonResponse(session.toJson());
     } catch (e) {
@@ -106,6 +112,7 @@ class AgentKitController {
       final liteAgentBody = await _buildLiteAgentCapabilityFromAgentKitBody(
         body,
       );
+      liteAgentBody.remove('_agentosModelCapabilities');
       simpleCapability = SimpleCapability.fromJson(liteAgentBody);
       final session = await _sdk.initSimple(simpleCapability);
       return _jsonResponse(session.toJson());
@@ -138,6 +145,11 @@ class AgentKitController {
         injectFallbackWhenEmptyCore: false,
         logContext: 'chat',
       );
+      final modelCapabilities =
+          _readModelCapabilities(body) ??
+          _modelCapabilitiesBySession[sessionId];
+      body.remove('_agentosModelCapabilities');
+      if (modelCapabilities?['stream'] == false) body['isChunk'] = false;
       final userTask = UserTask.fromJson(body);
       requestLogger.info(
         'AgentKit /chat final resolved llmConfig: ${_encodeForLog(userTask.llmConfig?.toJson())}',
@@ -767,6 +779,7 @@ class AgentKitController {
       await _sdk.clear(session);
       _streamFunctionNamesBySession.remove(sessionId);
       _functionCallTimeoutsBySession.remove(sessionId);
+      _modelCapabilitiesBySession.remove(sessionId);
       return _jsonResponse({'status': 'ok'});
     } catch (e) {
       return _errorResponse(e, 'clear');
@@ -861,13 +874,25 @@ class AgentKitController {
     final config = kernel.getAvailableLlmConfig();
     if (config == null) return null;
 
+    final adapter = (config.adapter == null || config.adapter!.trim().isEmpty)
+        ? 'openai'
+        : config.adapter!;
+    final matchingModels = (await _serviceLocator.getLlmModelList())
+        .where(
+          (model) => model.name == config.model && model.provider == adapter,
+        )
+        .toList(growable: false);
+    final modelCapabilities = <String, bool>{
+      'tool_call': config.supportsToolCall,
+      'reasoning': config.supportsReasoning,
+      if (matchingModels.length == 1) 'stream': matchingModels.single.stream,
+    };
+
     final result = <String, dynamic>{
       // liteagent using `lite_oneapi`，real upstream provider is differentiated by `adapter`.
       // kernel build LLMConfig `provider=lite_oneapi` `adapter=model.provider`,
       'provider': 'lite_oneapi',
-      'adapter': (config.adapter == null || config.adapter!.trim().isEmpty)
-          ? 'openai'
-          : config.adapter,
+      'adapter': adapter,
       'baseUrl': config.baseUrl,
       'apiKey': config.apiKey,
       'model': config.model,
@@ -877,6 +902,7 @@ class AgentKitController {
       'topP': config.topP,
       'supportsToolCall': config.supportsToolCall,
       'supportsReasoning': config.supportsReasoning,
+      'modelCapabilities': modelCapabilities,
     };
     result.removeWhere((_, value) => value == null);
     return result;
@@ -890,6 +916,20 @@ class AgentKitController {
       capabilityBody,
       injectFallbackWhenMissing: true,
     );
+    final resolvedLlmConfig = _readLlmConfig(capabilityBody);
+    final modelCapabilities = _readModelCapabilities(capabilityBody);
+    final supportsReasoning =
+        modelCapabilities?['reasoning'] ??
+        resolvedLlmConfig?['supportsReasoning'];
+    final supportsToolCall =
+        modelCapabilities?['tool_call'] ??
+        resolvedLlmConfig?['supportsToolCall'];
+    if (supportsReasoning == false) {
+      capabilityBody['enableThinking'] = false;
+    }
+    if (supportsToolCall == false) {
+      capabilityBody.remove('callbackOpenTool');
+    }
     _normalizeSystemPromptForLiteAgent(capabilityBody);
     return capabilityBody;
   }
@@ -900,6 +940,7 @@ class AgentKitController {
     bool injectFallbackWhenEmptyCore = true,
     String? logContext,
   }) async {
+    bool? resolvedModelStreaming;
     final llmConfig = _readLlmConfig(body);
     final rawLlmConfig = llmConfig == null
         ? null
@@ -909,6 +950,10 @@ class AgentKitController {
       final fallbackLlmConfig = await _getAvailableLlmConfigJson();
       if (fallbackLlmConfig == null || fallbackLlmConfig.isEmpty) return;
       body['llmConfig'] = fallbackLlmConfig;
+      final fallbackCapabilities = _readModelCapabilities(fallbackLlmConfig);
+      if (fallbackCapabilities != null) {
+        body['_agentosModelCapabilities'] = fallbackCapabilities;
+      }
       _logLlmConfigResolution(
         context: logContext,
         source: 'server default (kernel available llmConfig)',
@@ -949,6 +994,9 @@ class AgentKitController {
         body.remove('llmConfig');
         return;
       }
+      resolvedModelStreaming = resolvedCore['modelCapabilities'] is Map
+          ? (resolvedCore['modelCapabilities'] as Map)['stream'] as bool?
+          : null;
       resolvedSource = 'userTask.llmConfig.modelId';
     } else if (hasAnyDirectCore) {
       final baseUrl = nonNullConfig['baseUrl'];
@@ -1033,6 +1081,21 @@ class AgentKitController {
         if (!_isCoreLlmField(entry.key)) entry.key: entry.value,
     };
     final merged = <String, dynamic>{...resolvedCore, ...extras};
+    final resolvedCapabilities = resolvedCore['modelCapabilities'];
+    if (resolvedCapabilities is Map) {
+      final toolCall = resolvedCapabilities['tool_call'];
+      final reasoning = resolvedCapabilities['reasoning'];
+      if (toolCall is bool) merged['supportsToolCall'] = toolCall;
+      if (reasoning is bool) merged['supportsReasoning'] = reasoning;
+      final stream = resolvedCapabilities['stream'];
+      if (stream is bool) resolvedModelStreaming = stream;
+      body['_agentosModelCapabilities'] = <String, bool>{
+        if (stream is bool) 'stream': stream,
+        if (toolCall is bool) 'tool_call': toolCall,
+        if (reasoning is bool) 'reasoning': reasoning,
+      };
+    }
+    merged.remove('modelCapabilities');
     merged.removeWhere((_, value) => value == null);
     if (merged['baseUrl'] is! String || merged['model'] is! String) {
       _logLlmConfigResolution(
@@ -1046,6 +1109,13 @@ class AgentKitController {
       return;
     }
     body['llmConfig'] = merged;
+    if (body['_agentosModelCapabilities'] is Map &&
+        (body['_agentosModelCapabilities'] as Map).isEmpty) {
+      body.remove('_agentosModelCapabilities');
+    }
+    if (resolvedModelStreaming != null && body.containsKey('isChunk')) {
+      body['isChunk'] = body['isChunk'] == true && resolvedModelStreaming;
+    }
     _logLlmConfigResolution(
       context: logContext,
       source: resolvedSource,
@@ -1157,9 +1227,36 @@ class AgentKitController {
       'apiKey': matched.apiKey ?? '',
       'model': matched.name,
       'contextWindowSize': matched.contextWindowSize,
+      'modelCapabilities': <String, bool>{
+        'stream': matched.stream,
+        'tool_call': matched.toolCall,
+        'reasoning': matched.reasoning,
+      },
     };
     result.removeWhere((_, value) => value == null);
     return result;
+  }
+
+  Map<String, bool>? _readModelCapabilities(Map<String, dynamic> body) {
+    final value =
+        body['_agentosModelCapabilities'] ?? body['modelCapabilities'];
+    if (value is! Map) return null;
+    return <String, bool>{
+      for (final key in const ['stream', 'tool_call', 'reasoning'])
+        if (value[key] is bool) key: value[key] as bool,
+    };
+  }
+
+  void _rememberModelCapabilities(String sessionId, Map<String, bool> values) {
+    _modelCapabilitiesBySession.remove(sessionId);
+    _modelCapabilitiesBySession[sessionId] = Map<String, bool>.unmodifiable(
+      values,
+    );
+    while (_modelCapabilitiesBySession.length > 1024) {
+      _modelCapabilitiesBySession.remove(
+        _modelCapabilitiesBySession.keys.first,
+      );
+    }
   }
 
   Future<String?> _resolveModelBaseUrl(LlmModelInfo model) async {

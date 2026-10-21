@@ -528,6 +528,96 @@ Always produce a short plan before tool use.
   });
 
   test(
+    'enforces model capabilities for AgentKit session and chat requests',
+    () async {
+      final fakeSdk = _FunctionCallLiteAgentSDK();
+      final controller = AgentKitController(
+        sdk: fakeSdk,
+        kernelFuture: Future.value(null),
+        serviceLocator: _FakeServiceLocator(
+          models: const [
+            LlmModelInfo(
+              id: 'limited-model',
+              name: 'Limited model',
+              alias: 'limited-model',
+              description: 'model with no optional capabilities',
+              parameters: '8B',
+              paramsB: 8,
+              quantization: 'q4',
+              sizeGB: 0,
+              minRAMGB: 0,
+              downloadUrl: '',
+              tags: ['chat'],
+              repoId: 'repo',
+              type: 'textGeneration',
+              contextWindowSize: 8192,
+              baseUrl: 'https://example.test/v1',
+              apiKey: 'model-key',
+              isCustom: true,
+              stream: false,
+              toolCall: false,
+              reasoning: false,
+            ),
+          ],
+        ),
+      );
+      final headers = <String, String>{
+        'authorization': 'Bearer user-token',
+        'content-type': 'application/json',
+      };
+
+      final initResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/initSession'),
+          headers: headers,
+          body: jsonEncode(<String, dynamic>{
+            'systemPrompt': 'hello',
+            'enableThinking': true,
+            'callbackOpenTool': <String, dynamic>{
+              'opentool': jsonEncode(<String, dynamic>{
+                'functions': [
+                  <String, dynamic>{'name': 'must_not_be_exposed'},
+                ],
+              }),
+            },
+            'llmConfig': <String, dynamic>{
+              'modelId': 'limited-model',
+              'supportsToolCall': true,
+              'supportsReasoning': true,
+            },
+          }),
+        ),
+      );
+      expect(initResponse.statusCode, 200);
+      expect(fakeSdk.capturedCapability?.enableThinking, false);
+      expect(fakeSdk.capturedCapability?.callbackOpenTool, isNull);
+      expect(fakeSdk.capturedCapability?.llmConfig?.supportsToolCall, false);
+      expect(fakeSdk.capturedCapability?.llmConfig?.supportsReasoning, false);
+
+      final chatResponse = await controller.router.call(
+        Request(
+          'POST',
+          Uri.parse('http://localhost/chat?sessionId=test-session'),
+          headers: headers,
+          body: jsonEncode(<String, dynamic>{
+            'content': [
+              <String, dynamic>{'type': 'text', 'message': 'hello'},
+            ],
+            'isChunk': true,
+          }),
+        ),
+      );
+      expect(chatResponse.statusCode, 200);
+      expect(fakeSdk.capturedUserTask?.isChunk, false);
+      final firstChunk = await chatResponse.read().first.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(utf8.decode(firstChunk), contains('event:functionCall'));
+    },
+  );
+
+  test(
     'injects kernel llmConfig for /initSession when request omits it',
     () async {
       final fakeSdk = _FakeLiteAgentSDK();
