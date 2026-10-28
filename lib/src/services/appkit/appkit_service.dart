@@ -19,11 +19,21 @@ class AppKitService {
 
   final Map<String, StreamController<EventDto>> _subscribers = {};
   final Map<String, List<EventDto>> _pendingEvents = {};
+  final Map<String, AppKitToolEventSubscription> _toolEventSubscriptions = {};
+  final _toolEventSubscriptionController =
+      StreamController<AppKitToolEventSubscriptionChange>.broadcast();
 
   final _appOfflineController = StreamController<String>.broadcast();
 
   /// Stream of bundleIds that have gone offline (SSE disconnected).
   Stream<String> get appOfflineStream => _appOfflineController.stream;
+
+  /// Tool lifecycle subscriptions currently attached to AppKit connections.
+  Stream<AppKitToolEventSubscriptionChange> get toolEventSubscriptionChanges =>
+      _toolEventSubscriptionController.stream;
+
+  Iterable<AppKitToolEventSubscription> get toolEventSubscriptions =>
+      List.unmodifiable(_toolEventSubscriptions.values);
 
   List<String> listApps() => List.unmodifiable(_apps);
 
@@ -80,7 +90,10 @@ class AppKitService {
     return true;
   }
 
-  Stream<EventDto> subscribe(String token) {
+  Stream<EventDto> subscribe(
+    String token, {
+    AppKitToolEventSubscription? toolEvents,
+  }) {
     final registered = _registeredAppForToken(token);
     if (registered == null) {
       return const Stream<EventDto>.empty();
@@ -93,6 +106,17 @@ class AppKitService {
     }
 
     late final StreamController<EventDto> controller;
+    if (toolEvents == null) {
+      _toolEventSubscriptions.remove(bundleId);
+    } else {
+      _toolEventSubscriptions[bundleId] = toolEvents.withBundleId(bundleId);
+    }
+    _toolEventSubscriptionController.add(
+      AppKitToolEventSubscriptionChange(
+        bundleId: bundleId,
+        subscription: _toolEventSubscriptions[bundleId],
+      ),
+    );
     controller = StreamController<EventDto>(
       onListen: () {
         controller.add(
@@ -112,7 +136,13 @@ class AppKitService {
         }
       },
       onCancel: () {
-        _subscribers.remove(bundleId);
+        if (identical(_subscribers[bundleId], controller)) {
+          _subscribers.remove(bundleId);
+          _toolEventSubscriptions.remove(bundleId);
+          _toolEventSubscriptionController.add(
+            AppKitToolEventSubscriptionChange(bundleId: bundleId),
+          );
+        }
         controller.close();
         _appOfflineController.add(bundleId);
         _appKitLogger.info('AppKitService: app went offline: $bundleId');
@@ -153,6 +183,39 @@ class AppKitService {
     }
   }
 
+  /// Broadcasts daemon lifecycle changes only to apps that opted in and only
+  /// to the tool IDs allowed by their subscription filter.
+  void publishToolLifecycleEvent({
+    required String type,
+    required String toolId,
+    required String status,
+    required String reason,
+    required Map<String, Object?> tool,
+  }) {
+    for (final subscription in _toolEventSubscriptions.values) {
+      if (!subscription.matches(toolId)) continue;
+      final event = createAppEvent(
+        type: type,
+        source: 'toolkit',
+        subject: toolId,
+        data: <String, dynamic>{
+          ...tool,
+          'id': toolId,
+          'status': status,
+          'reason': reason,
+        },
+      );
+      pushEvent(
+        subscription.bundleId,
+        EventDto(
+          id: event.id,
+          event: 'appEvent',
+          data: jsonEncode(event.toJson()),
+        ),
+      );
+    }
+  }
+
   AppEventDto createAppEvent({
     required String type,
     required String source,
@@ -177,6 +240,33 @@ class AppKitService {
   _RegisteredApp? _registeredAppForToken(String token) {
     return _tokenRegistry[token];
   }
+}
+
+final class AppKitToolEventSubscription {
+  final String bundleId;
+  final bool all;
+  final Set<String> toolIds;
+
+  AppKitToolEventSubscription({
+    required this.bundleId,
+    required this.all,
+    Set<String> toolIds = const {},
+  }) : toolIds = Set.unmodifiable(toolIds);
+
+  bool matches(String toolId) => all || toolIds.contains(toolId);
+
+  AppKitToolEventSubscription withBundleId(String value) =>
+      AppKitToolEventSubscription(bundleId: value, all: all, toolIds: toolIds);
+}
+
+final class AppKitToolEventSubscriptionChange {
+  final String bundleId;
+  final AppKitToolEventSubscription? subscription;
+
+  const AppKitToolEventSubscriptionChange({
+    required this.bundleId,
+    this.subscription,
+  });
 }
 
 class _RegisteredApp {

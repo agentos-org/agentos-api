@@ -1330,6 +1330,25 @@ SDK 的 App，AppKit 会在注册响应和订阅事件的 `server` 对象中同�
 
 需要 Bearer token（来自 `/appkit/register`）。
 
+订阅时可以选择 ToolKit 生命周期通知：
+
+```http
+GET /appkit/subscribe?toolEvents=all
+GET /appkit/subscribe?toolEvents=selected&toolIds=tool-a,tool-b
+```
+
+`toolEvents=all` 监听 ToolKit 当前可见的 OpenTool daemon 和 App 自有工具；
+`toolEvents=selected` 只监听 `toolIds` 中逗号分隔的 ID（也可以重复传入 `toolId`）。
+省略该参数时，SSE 保持原有的、发送给当前 App 的定向事件，不监听全局工具目录。订阅范围
+绑定到当前 SSE 连接，断线重连后需要重新订阅。断线期间不会缓存全局可用性通知。
+
+至少有一个带筛选条件的订阅连接时，Server 每五秒检查一次目录，并在状态变化时通过
+`appEvent` 推送 `source: "toolkit"`、类型为 `toolkit.tool.available` 或
+`toolkit.tool.unavailable` 的事件。`subject` 是 ToolKit ID；`data` 包含工具描述、当前
+`status` 和 `registered`、`recovered`、`stopped` 或 `removed` 等 `reason`。App 可以在建立
+连接后调用 `GET /toolkit/list` 初始化当前目录，再用这些事件刷新目录，避免每次事件都接收
+全量工具列表。
+
 响应：`200 OK`，`text/event-stream`。
 
 事件示例：

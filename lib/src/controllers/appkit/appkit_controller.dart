@@ -77,9 +77,31 @@ class AppKitController {
       requestLogger.warning('AppKit subscribe: invalid bearer token.');
       return unauthorizedResponse();
     }
+    final toolEventScope = request.url.queryParameters['toolEvents'];
+    AppKitToolEventSubscription? toolEvents;
+    if (toolEventScope != null) {
+      if (toolEventScope == 'all') {
+        toolEvents = AppKitToolEventSubscription(bundleId: '', all: true);
+      } else if (toolEventScope == 'selected') {
+        final toolIds = <String>{
+          ...(request.url.queryParametersAll['toolId'] ?? const <String>[]),
+          ...(request.url.queryParameters['toolIds']
+                  ?.split(',')
+                  .map((id) => id.trim()) ??
+              const <String>[]),
+        }..removeWhere((id) => id.isEmpty);
+        toolEvents = AppKitToolEventSubscription(
+          bundleId: '',
+          all: false,
+          toolIds: toolIds,
+        );
+      } else {
+        return Response(400, body: 'toolEvents must be "all" or "selected"');
+      }
+    }
     final bundleId = _service.bundleIdForToken(token);
     requestLogger.info('AppKit subscribe: accepted bundleId=$bundleId');
-    final source = _service.subscribe(token);
+    final source = _service.subscribe(token, toolEvents: toolEvents);
     final controller = StreamController<List<int>>();
     StreamSubscription<EventDto>? subscription;
     Timer? keepAlive;

@@ -1353,6 +1353,30 @@ the daemon contract remains V2-only.
 
 Requires Bearer token (token from `/appkit/register`).
 
+Optional ToolKit lifecycle notifications can be selected on the subscription:
+
+```http
+GET /appkit/subscribe?toolEvents=all
+GET /appkit/subscribe?toolEvents=selected&toolIds=tool-a,tool-b
+```
+
+`toolEvents=all` watches every OpenTool daemon and App-owned ToolKit entry
+visible to ToolKit. `toolEvents=selected` watches only the comma-separated IDs
+in `toolIds` (repeated `toolId` query parameters are also accepted). If omitted,
+the stream keeps its existing app-targeted events and does not watch the global
+tool catalog. The selection is bound to this SSE connection; clients should
+subscribe again after reconnecting. Global availability events are not queued
+while disconnected.
+
+The server checks the catalog every five seconds while at least one filtered
+subscription is connected and emits transitions as `appEvent`s with
+`source: "toolkit"` and type `toolkit.tool.available` or
+`toolkit.tool.unavailable`. Their `subject` is the ToolKit ID; `data` contains
+the tool descriptor, current `status`, and a `reason` such as `registered`,
+`recovered`, `stopped`, or `removed`. Apps can call `GET /toolkit/list` after
+connecting to initialize their current view, then use these events to refresh
+the catalog without receiving every ToolKit entry on every event.
+
 Response: `200 OK`, `text/event-stream`.
 
 Event examples:

@@ -40,6 +40,9 @@ class OpenToolAvailabilityService implements OpenToolAvailabilityTracker {
     _serviceStatusSubscription = serviceLocator.serviceStatusStream.listen(
       _handleServiceStatus,
     );
+    _toolEventSubscription = appKitService.toolEventSubscriptionChanges.listen(
+      _handleToolEventSubscription,
+    );
   }
 
   final AgentOSServiceLocator _serviceLocator;
@@ -52,8 +55,11 @@ class OpenToolAvailabilityService implements OpenToolAvailabilityTracker {
   final Map<String, Map<String, OpenToolServerDeclarationDto>>
   _bundleDeclarations = {};
   final Map<_TrackedToolKey, _TrackedTool> _trackedTools = {};
+  final Map<String, AppKitToolEventSubscription> _toolEventSubscribers = {};
+  final Map<String, _ObservedTool> _observedTools = {};
 
   StreamSubscription<ServiceStatusEvent>? _serviceStatusSubscription;
+  StreamSubscription<AppKitToolEventSubscriptionChange>? _toolEventSubscription;
   Timer? _timer;
   ServiceState? _daemonState;
   bool _checking = false;
@@ -113,11 +119,16 @@ class OpenToolAvailabilityService implements OpenToolAvailabilityTracker {
 
   @override
   Future<void> checkNow() async {
-    if (_disposed || _checking || _trackedTools.isEmpty) {
+    if (_disposed ||
+        _checking ||
+        (_trackedTools.isEmpty && _toolEventSubscribers.isEmpty)) {
       return;
     }
     _checking = true;
     try {
+      if (_toolEventSubscribers.isNotEmpty) {
+        await _publishSubscribedAppToolChanges();
+      }
       final daemonState = _daemonState;
       if (daemonState == ServiceState.starting ||
           daemonState == ServiceState.stopped ||
@@ -126,12 +137,17 @@ class OpenToolAvailabilityService implements OpenToolAvailabilityTracker {
           scope: 'daemon',
           reason: _daemonUnavailableReason(daemonState!),
         );
+        _markSubscribedToolsUnavailable(
+          _daemonUnavailableReason(daemonState),
+          source: 'daemon',
+        );
         return;
       }
 
       final gateway = await _createGateway().timeout(lookupTimeout);
       if (gateway == null) {
         _markAllUnavailable(scope: 'daemon', reason: 'daemonUnavailable');
+        _markSubscribedToolsUnavailable('daemonUnavailable', source: 'daemon');
         return;
       }
 
@@ -140,10 +156,12 @@ class OpenToolAvailabilityService implements OpenToolAvailabilityTracker {
         tools = await gateway.listTools().timeout(lookupTimeout);
       } catch (_) {
         _markAllUnavailable(scope: 'daemon', reason: 'daemonUnavailable');
+        _markSubscribedToolsUnavailable('daemonUnavailable', source: 'daemon');
         return;
       }
 
       final toolsById = {for (final tool in tools) tool.id: tool};
+      await _publishSubscribedToolChanges(gateway, toolsById);
       final readiness = <String, Future<bool>>{};
       final trackedSnapshot = Map<_TrackedToolKey, _TrackedTool>.from(
         _trackedTools,
@@ -182,9 +200,212 @@ class OpenToolAvailabilityService implements OpenToolAvailabilityTracker {
       }
     } catch (_) {
       _markAllUnavailable(scope: 'daemon', reason: 'daemonUnavailable');
+      _markSubscribedToolsUnavailable('daemonUnavailable', source: 'daemon');
     } finally {
       _checking = false;
     }
+  }
+
+  void _handleToolEventSubscription(AppKitToolEventSubscriptionChange change) {
+    final subscription = change.subscription;
+    if (subscription == null) {
+      _toolEventSubscribers.remove(change.bundleId);
+    } else {
+      _toolEventSubscribers[change.bundleId] = subscription;
+      unawaited(checkNow());
+    }
+    _ensureTimer();
+    _stopTimerIfIdle();
+  }
+
+  Future<void> _publishSubscribedToolChanges(
+    OpenToolDaemonGateway gateway,
+    Map<String, ToolDto> currentTools,
+  ) async {
+    if (_toolEventSubscribers.isEmpty) return;
+    final watchedIds = <String>{
+      for (final subscription in _toolEventSubscribers.values)
+        if (subscription.all) ...currentTools.keys else ...subscription.toolIds,
+    };
+    watchedIds.addAll(
+      _observedTools.keys.where(
+        (toolId) =>
+            _observedTools[toolId]!.source == 'daemon' &&
+            _toolEventSubscribers.values.any(
+              (subscription) => subscription.matches(toolId),
+            ),
+      ),
+    );
+
+    for (final toolId in _observedTools.keys.toList()) {
+      if (_observedTools[toolId]!.source != 'daemon') continue;
+      if (currentTools.containsKey(toolId)) continue;
+      final previous = _observedTools.remove(toolId)!;
+      if (!watchedIds.contains(toolId)) continue;
+      if (previous.status == 'available') {
+        _publishSubscribedToolEvent(
+          toolId: previous.toolId,
+          data: previous.data,
+          type: AppEventType.toolkitToolUnavailable,
+          status: 'unavailable',
+          reason: 'removed',
+        );
+      }
+    }
+
+    for (final toolId in watchedIds) {
+      final tool = currentTools[toolId];
+      if (tool == null) continue;
+      final ready =
+          tool.status == OpenToolRegistrationStatus.running &&
+          await _isReady(gateway, toolId);
+      final nextStatus = ready ? 'available' : 'unavailable';
+      final previous = _observedTools[toolId];
+      final reason = previous == null
+          ? (ready ? 'registered' : 'notReady')
+          : previous.status == nextStatus
+          ? null
+          : (ready ? 'recovered' : 'stopped');
+      _observedTools[toolId] = _ObservedTool(
+        toolId: toolId,
+        data: tool.toJson(),
+        source: 'daemon',
+        status: nextStatus,
+      );
+      if (reason == null) continue;
+      _publishSubscribedToolEvent(
+        toolId: toolId,
+        data: tool.toJson(),
+        type: ready
+            ? AppEventType.toolkitToolAvailable
+            : AppEventType.toolkitToolUnavailable,
+        status: nextStatus,
+        reason: reason,
+      );
+    }
+  }
+
+  Future<void> _publishSubscribedAppToolChanges() async {
+    final provider = _serviceLocator.appOpenToolProvider;
+    if (provider == null) return;
+
+    late final List<Map<String, Object?>> listedTools;
+    try {
+      listedTools = await provider.listTools(all: true).timeout(lookupTimeout);
+    } catch (_) {
+      // A temporary provider outage must not look like all App tools vanished.
+      return;
+    }
+    final currentTools = <String, Map<String, Object?>>{
+      for (final tool in listedTools)
+        if (tool['id'] is String && (tool['id'] as String).isNotEmpty)
+          tool['id'] as String: tool,
+    };
+    final watchedIds = <String>{
+      for (final subscription in _toolEventSubscribers.values)
+        if (subscription.all) ...currentTools.keys else ...subscription.toolIds,
+    };
+    watchedIds.addAll(
+      _observedTools.keys.where(
+        (toolId) =>
+            _observedTools[toolId]!.source == 'app' &&
+            _toolEventSubscribers.values.any(
+              (subscription) => subscription.matches(toolId),
+            ),
+      ),
+    );
+
+    for (final toolId in _observedTools.keys.toList()) {
+      if (_observedTools[toolId]!.source != 'app' ||
+          currentTools.containsKey(toolId)) {
+        continue;
+      }
+      final previous = _observedTools.remove(toolId)!;
+      if (!watchedIds.contains(toolId)) continue;
+      if (previous.status == 'available') {
+        _publishSubscribedToolEvent(
+          toolId: toolId,
+          data: previous.data,
+          type: AppEventType.toolkitToolUnavailable,
+          status: 'unavailable',
+          reason: 'removed',
+        );
+      }
+    }
+
+    for (final toolId in watchedIds) {
+      final tool = currentTools[toolId];
+      if (tool == null) continue;
+      final rawStatus = tool['status']?.toString().trim().toLowerCase();
+      final ready =
+          rawStatus == null ||
+          rawStatus.isEmpty ||
+          rawStatus == 'running' ||
+          rawStatus == 'available';
+      final nextStatus = ready ? 'available' : 'unavailable';
+      final previous = _observedTools[toolId];
+      final reason = previous == null
+          ? (ready ? 'registered' : 'notReady')
+          : previous.status == nextStatus
+          ? null
+          : (ready ? 'recovered' : 'stopped');
+      _observedTools[toolId] = _ObservedTool(
+        toolId: toolId,
+        data: tool,
+        source: 'app',
+        status: nextStatus,
+      );
+      if (reason == null) continue;
+      _publishSubscribedToolEvent(
+        toolId: toolId,
+        data: tool,
+        type: ready
+            ? AppEventType.toolkitToolAvailable
+            : AppEventType.toolkitToolUnavailable,
+        status: nextStatus,
+        reason: reason,
+      );
+    }
+  }
+
+  void _markSubscribedToolsUnavailable(
+    String reason, {
+    required String source,
+  }) {
+    for (final entry in _observedTools.entries.toList()) {
+      if (entry.value.source != source || entry.value.status != 'available') {
+        continue;
+      }
+      _observedTools[entry.key] = _ObservedTool(
+        toolId: entry.value.toolId,
+        data: entry.value.data,
+        source: source,
+        status: 'unavailable',
+      );
+      _publishSubscribedToolEvent(
+        toolId: entry.value.toolId,
+        data: entry.value.data,
+        type: AppEventType.toolkitToolUnavailable,
+        status: 'unavailable',
+        reason: reason,
+      );
+    }
+  }
+
+  void _publishSubscribedToolEvent({
+    required String toolId,
+    required Map<String, Object?> data,
+    required String type,
+    required String status,
+    required String reason,
+  }) {
+    _appKitService.publishToolLifecycleEvent(
+      type: type,
+      toolId: toolId,
+      status: status,
+      reason: reason,
+      tool: data,
+    );
   }
 
   Future<bool> _isReady(OpenToolDaemonGateway gateway, String toolId) async {
@@ -207,12 +428,14 @@ class OpenToolAvailabilityService implements OpenToolAvailabilityTracker {
           reason: 'daemonStopped',
           message: event.message,
         );
+        _markSubscribedToolsUnavailable('daemonStopped', source: 'daemon');
       case ServiceState.error:
         _markAllUnavailable(
           scope: 'daemon',
           reason: 'daemonError',
           message: event.message,
         );
+        _markSubscribedToolsUnavailable('daemonError', source: 'daemon');
       case ServiceState.running:
         unawaited(checkNow());
       case ServiceState.starting:
@@ -221,6 +444,7 @@ class OpenToolAvailabilityService implements OpenToolAvailabilityTracker {
           reason: 'daemonStarting',
           message: event.message,
         );
+        _markSubscribedToolsUnavailable('daemonStarting', source: 'daemon');
     }
   }
 
@@ -338,14 +562,16 @@ class OpenToolAvailabilityService implements OpenToolAvailabilityTracker {
   }
 
   void _ensureTimer() {
-    if (_timer != null || checkInterval <= Duration.zero) {
+    if (_timer != null ||
+        checkInterval <= Duration.zero ||
+        (_trackedTools.isEmpty && _toolEventSubscribers.isEmpty)) {
       return;
     }
     _timer = Timer.periodic(checkInterval, (_) => unawaited(checkNow()));
   }
 
   void _stopTimerIfIdle() {
-    if (_trackedTools.isNotEmpty) {
+    if (_trackedTools.isNotEmpty || _toolEventSubscribers.isNotEmpty) {
       return;
     }
     _timer?.cancel();
@@ -362,9 +588,27 @@ class OpenToolAvailabilityService implements OpenToolAvailabilityTracker {
     _timer = null;
     await _serviceStatusSubscription?.cancel();
     _serviceStatusSubscription = null;
+    await _toolEventSubscription?.cancel();
+    _toolEventSubscription = null;
     _trackedTools.clear();
+    _toolEventSubscribers.clear();
+    _observedTools.clear();
     _bundleDeclarations.clear();
   }
+}
+
+class _ObservedTool {
+  const _ObservedTool({
+    required this.toolId,
+    required this.data,
+    required this.source,
+    required this.status,
+  });
+
+  final String toolId;
+  final Map<String, Object?> data;
+  final String source;
+  final String status;
 }
 
 class _TrackedToolKey {
