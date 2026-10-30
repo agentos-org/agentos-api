@@ -58,7 +58,6 @@ Handler createGatewayHandler({
   void Function(AuthKitBridge bridge)? onAuthKitBridgeReady,
   HarnessKitClient? harnessKitClient,
   HarnessKitClientRegistry? harnessKitClientRegistry,
-  Map<String, bool>? harnessKitAppToolkits,
   void Function(String token)? onHarnessKitReady,
   NotifyKitService? notifyKitService,
   void Function(NotifyKitService service)? onNotifyKitReady,
@@ -74,7 +73,6 @@ Handler createGatewayHandler({
     onAuthKitBridgeReady: onAuthKitBridgeReady,
     harnessKitClient: harnessKitClient,
     harnessKitClientRegistry: harnessKitClientRegistry,
-    harnessKitAppToolkits: harnessKitAppToolkits,
     onHarnessKitReady: onHarnessKitReady,
     notifyKitService: notifyKitService,
     onNotifyKitReady: onNotifyKitReady,
@@ -117,7 +115,6 @@ Router createGatewayRouter({
   void Function(AuthKitBridge bridge)? onAuthKitBridgeReady,
   HarnessKitClient? harnessKitClient,
   HarnessKitClientRegistry? harnessKitClientRegistry,
-  Map<String, bool>? harnessKitAppToolkits,
   void Function(String token)? onHarnessKitReady,
   NotifyKitService? notifyKitService,
   void Function(NotifyKitService service)? onNotifyKitReady,
@@ -199,11 +196,9 @@ Router createGatewayRouter({
   router.mount('${ApiConfig.toolkitPath}/', toolKitController.router.call);
 
   // HarnessKit API forwards every AppKit-authenticated request to the shared
-  // host runtime. App bundles retain their identity for data scoping and tool
-  // policy; custom hosts can still provide explicit client overrides.
-  if (harnessKitClient != null ||
-      harnessKitClientRegistry != null ||
-      harnessKitAppToolkits != null) {
+  // host runtime. App bundle identity is retained for data scoping, and each
+  // run can provide its own tool policy; custom hosts can inject client overrides.
+  if (harnessKitClient != null || harnessKitClientRegistry != null) {
     // The sidecar needs a valid AppKit credential when it calls the Gateway's
     // ToolKit. This token is internal to the current Gateway process and is
     // never returned by the public SDK surface.
@@ -216,7 +211,6 @@ Router createGatewayRouter({
     final harnessKitController = HarnessKitController(
       client: harnessKitClient,
       clientRegistry: harnessKitClientRegistry,
-      harnessKitAppToolkits: harnessKitAppToolkits,
       appKitService: appKitService,
     );
     router.mount(

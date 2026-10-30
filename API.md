@@ -27,18 +27,18 @@ For `/discoverykit/*` and `/transferkit/*`, the bearer token must be an
 AppKit-issued token from `POST /appkit/register`.
 
 For `/harnesskit/*`, the bearer token must be an AppKit-issued token from
-`POST /appkit/register`. The built-in Harness and installable process Apps that
-declare `harnessKit` share one host runtime and database after their backend
-health check succeeds. The Gateway replaces the AppKit token with the
-sidecar-only token and logically isolates external Apps' threads, runs, and
-event access by the authenticated `bundleId`. The built-in Harness and Shell
-sidebar keep using the default namespace and share their existing history.
-Only the built-in Harness App can access runtime controls and the global
-operational snapshot. Apps call this Gateway API and do not provide a Harness
-HTTP server. AppDaemon revokes an App's access when its backend stops or exits;
-it does not stop the shared runtime. Legacy threads without recorded App
-ownership remain in the default namespace and are not automatically assigned
-to an external App.
+`POST /appkit/register`. Every valid AppKit token can use the shared host
+runtime; Apps do not declare `harnessKit` or register separately. The Gateway
+replaces the AppKit token with the sidecar-only token and logically isolates
+external Apps' threads, runs, and event access by the authenticated
+`bundleId`. The built-in Harness and Shell sidebar keep using the default
+namespace and share their existing history. Only the built-in Harness App can
+access runtime controls and the global operational snapshot. Apps call this
+Gateway API and do not provide a Harness HTTP server. Each run supplies its own
+tool policy. AppKit token validity controls access; stopping an App backend does
+not stop the shared runtime. Legacy threads without recorded App ownership
+remain in the default namespace and are not automatically assigned to an
+external App.
 
 ```
 Authorization: Bearer <token>

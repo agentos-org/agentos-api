@@ -10,23 +10,19 @@ import '../../services/harnesskit/harnesskit_client.dart';
 /// Gateway bridge for AppKit-authenticated HarnessKit requests.
 ///
 /// Every valid AppKit bundle uses the shared host runtime unless the host has
-/// registered an explicit client override. Bundle identity scopes app data
-/// and tool policy; it is not an access allow-list. The App process never
-/// serves the HarnessKit protocol.
+/// registered an explicit client override. Bundle identity scopes app data;
+/// each run carries its own tool policy. The App process never serves the
+/// HarnessKit protocol.
 class HarnessKitController {
   HarnessKitController({
     HarnessKitClient? client,
     HarnessKitClientRegistry? clientRegistry,
-    Map<String, bool>? harnessKitAppToolkits,
     required AppKitService appKitService,
     this.bundleId = defaultHarnessKitBundleId,
   }) : _client = client,
        _clientRegistry = clientRegistry,
-       _harnessKitAppToolkits = harnessKitAppToolkits,
        _appKitService = appKitService {
-    if (client == null &&
-        clientRegistry == null &&
-        harnessKitAppToolkits == null) {
+    if (client == null && clientRegistry == null) {
       throw ArgumentError(
         'A HarnessKit client or client registry must be provided',
       );
@@ -35,7 +31,6 @@ class HarnessKitController {
 
   final HarnessKitClient? _client;
   final HarnessKitClientRegistry? _clientRegistry;
-  final Map<String, bool>? _harnessKitAppToolkits;
   final AppKitService _appKitService;
   final String bundleId;
   final Map<String, String> _scopedRunOwners = <String, String>{};
@@ -121,14 +116,7 @@ class HarnessKitController {
         path: scopedPath,
         headers: request.headers,
         queryParameters: scopedQuery,
-        body: _applyAppToolPolicy(
-          method: request.method,
-          path: scopedPath,
-          body: scopedBody,
-          toolkitEnabled: isHarnessApp
-              ? true
-              : _harnessKitAppToolkits?[appBundleId] ?? true,
-        ),
+        body: scopedBody,
         streamResponse: _isStreamingRequest(request, path),
         actorBundleId: appBundleId,
       );
@@ -247,43 +235,6 @@ class HarnessKitController {
       return buffer;
     });
     return bytes.isEmpty ? null : bytes;
-  }
-
-  List<int>? _applyAppToolPolicy({
-    required String method,
-    required String path,
-    required List<int>? body,
-    required bool toolkitEnabled,
-  }) {
-    if (toolkitEnabled ||
-        method.toUpperCase() != 'POST' ||
-        !RegExp(r'^/v1/threads/[^/]+/(runs|commands)$').hasMatch(path)) {
-      return body;
-    }
-
-    Object? decoded;
-    try {
-      decoded = body == null || body.isEmpty
-          ? <String, Object?>{}
-          : jsonDecode(utf8.decode(body));
-    } on FormatException {
-      return body;
-    }
-    if (decoded is! Map) return body;
-
-    final requestBody = decoded.map<String, Object?>(
-      (key, value) => MapEntry(key.toString(), value),
-    );
-    final rawPolicy = requestBody['toolPolicy'];
-    final toolPolicy = rawPolicy is Map
-        ? rawPolicy.map<String, Object?>(
-            (key, value) => MapEntry(key.toString(), value),
-          )
-        : <String, Object?>{};
-    // A manifest-level opt-out must override any caller-supplied allow-list.
-    toolPolicy['allowedToolIds'] = const <String>[];
-    requestBody['toolPolicy'] = toolPolicy;
-    return utf8.encode(jsonEncode(requestBody));
   }
 }
 

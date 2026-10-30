@@ -27,8 +27,8 @@ sidebar keep sharing their existing default namespace. Apps can read the
 current engine status, while switching the shared engine and reading the
 global operational snapshot remain host-management operations. Apps call
 `/harnesskit/*` with their AppKit token and do not implement a Harness HTTP
-server. Hosts can set `harnessKit.toolkit: false` to disable tools for a
-specific App. Custom hosts may inject HarnessKit clients through
+server. Each run can restrict its available tools through `toolPolicy`. Custom
+hosts may inject HarnessKit clients through
 `HarnessKitClientRegistry`.
 
 # Running the sample
