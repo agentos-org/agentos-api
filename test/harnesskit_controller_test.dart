@@ -54,7 +54,7 @@ void main() {
   });
 
   test(
-    'HarnessKit requires an AppKit token and forwards the sidecar token',
+    'HarnessKit accepts every AppKit token and forwards the sidecar token',
     () async {
       final missing = await http.get(
         Uri.parse('$gatewayUrl/harnesskit/healthz'),
@@ -72,7 +72,10 @@ void main() {
         Uri.parse('$gatewayUrl/harnesskit/healthz'),
         headers: {'authorization': 'Bearer $otherToken'},
       );
-      expect(other.statusCode, 401);
+      expect(other.statusCode, 200);
+      final otherPayload = jsonDecode(other.body) as Map<String, dynamic>;
+      expect(otherPayload['path'], '/healthz');
+      expect(otherPayload['authorization'], 'Bearer $internalToken');
 
       final registration = await http.post(
         Uri.parse('$gatewayUrl/appkit/register'),

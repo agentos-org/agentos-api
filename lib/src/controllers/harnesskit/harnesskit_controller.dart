@@ -7,11 +7,12 @@ import '../../middleware.dart';
 import '../../services/appkit/appkit_service.dart';
 import '../../services/harnesskit/harnesskit_client.dart';
 
-/// Gateway bridge for authenticated HarnessKit App bundles.
+/// Gateway bridge for AppKit-authenticated HarnessKit requests.
 ///
-/// Requests must carry a valid AppKit bundle token. The built-in Harness uses
-/// the shared host runtime; opted-in process Apps are forwarded to that same
-/// runtime. The App process never serves the HarnessKit protocol.
+/// Every valid AppKit bundle uses the shared host runtime unless the host has
+/// registered an explicit client override. Bundle identity scopes app data
+/// and tool policy; it is not an access allow-list. The App process never
+/// serves the HarnessKit protocol.
 class HarnessKitController {
   HarnessKitController({
     HarnessKitClient? client,
@@ -68,10 +69,13 @@ class HarnessKitController {
     }
     final isHarnessApp = appBundleId == bundleId;
     final scope = isHarnessApp ? null : _HarnessKitBundleScope(appBundleId);
-    final isRegisteredHarnessKitApp =
-        _harnessKitAppToolkits?.containsKey(appBundleId) ?? false;
+    final isEngineControlPath = RegExp(
+      r'^/v1/runtime/harness-engine/*$',
+    ).hasMatch(path);
+    final isEngineStatusRead =
+        request.method.toUpperCase() == 'GET' && isEngineControlPath;
     if (!isHarnessApp &&
-        (RegExp(r'^/v1/runtime/harness-engine/*$').hasMatch(path) ||
+        ((isEngineControlPath && !isEngineStatusRead) ||
             path == '/v1/ops/snapshot')) {
       requestLogger.warning(
         'HarnessKit: host runtime access denied for $appBundleId.',
@@ -90,11 +94,19 @@ class HarnessKitController {
     }
     final client = isHarnessApp
         ? _client ?? _clientRegistry?.resolve(appBundleId)
-        : _clientRegistry?.resolve(appBundleId) ??
-              (isRegisteredHarnessKitApp ? _client : null);
+        : _clientRegistry?.resolve(appBundleId) ?? _client;
     if (client == null) {
-      requestLogger.warning('HarnessKit: no runtime for authorized bundle.');
-      return unauthorizedResponse();
+      requestLogger.warning('HarnessKit: runtime is not configured.');
+      return Response(
+        503,
+        body: jsonEncode({
+          'error': {
+            'code': 'harness_unavailable',
+            'message': 'HarnessKit runtime is not configured',
+          },
+        }),
+        headers: const {'content-type': 'application/json'},
+      );
     }
 
     try {

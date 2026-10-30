@@ -19,15 +19,16 @@ Detailed HTTP API reference:
 
 ## HarnessKit runtime routing
 
-AgentOS Runtime manages one host-wide Harness process and runtime. Installable
-process Apps that declare `harnessKit` are registered with the Gateway after
-their backend is healthy, then share that process and database with the built-in
-Harness App. The Gateway scopes external Apps' threads, runs, and event access
-by the authenticated AppKit `bundleId`; the built-in Harness and Shell sidebar
-keep sharing their existing default namespace. Only the built-in Harness App
-may access runtime controls and the global operational snapshot. Apps call
+AgentOS Runtime manages one host-wide Harness process and runtime. Every App
+with a valid AppKit token can use it without declaring `harnessKit` or being
+registered separately. The Gateway scopes external Apps' threads, runs, and
+event access by the AppKit `bundleId`; the built-in Harness App and Shell
+sidebar keep sharing their existing default namespace. Apps can read the
+current engine status, while switching the shared engine and reading the
+global operational snapshot remain host-management operations. Apps call
 `/harnesskit/*` with their AppKit token and do not implement a Harness HTTP
-server. Custom hosts may still inject HarnessKit clients through
+server. Hosts can set `harnessKit.toolkit: false` to disable tools for a
+specific App. Custom hosts may inject HarnessKit clients through
 `HarnessKitClientRegistry`.
 
 # Running the sample

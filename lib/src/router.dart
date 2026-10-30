@@ -198,9 +198,9 @@ Router createGatewayRouter({
   );
   router.mount('${ApiConfig.toolkitPath}/', toolKitController.router.call);
 
-  // HarnessKit API forwards AppKit-authenticated requests to the shared host
-  // runtime. Opted-in App bundles retain their identity in the forwarded
-  // request; custom hosts can still provide explicit client overrides.
+  // HarnessKit API forwards every AppKit-authenticated request to the shared
+  // host runtime. App bundles retain their identity for data scoping and tool
+  // policy; custom hosts can still provide explicit client overrides.
   if (harnessKitClient != null ||
       harnessKitClientRegistry != null ||
       harnessKitAppToolkits != null) {

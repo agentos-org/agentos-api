@@ -19,12 +19,12 @@
 
 ## HarnessKit runtime 路由
 
-AgentOS Runtime 托管唯一的 HarnessKit sidecar 和 runtime。声明 `harnessKit` 的安装型进程 App
-在健康检查通过后由 AppDaemon 登记到 Gateway；它与内置 Harness 共用同一进程和数据库，
-Gateway 会依据已认证的 AppKit `bundleId` 隔离外部 App 的线程、运行结果和事件访问；内置
-Harness 与侧边栏继续使用默认空间，共享现有记录。App 使用 AppKit token 调用 Gateway 的
-`/harnesskit/*`，不需要实现 Harness HTTP API。只有内置 Harness App 能访问全局运行时控制；
-切换共享引擎会作用于所有接入 App 的后续请求。自定义宿主仍可通过
+AgentOS Runtime 托管唯一的 HarnessKit sidecar 和 runtime。任何完成 AppKit 注册的 App 都可
+使用同一进程和数据库，无需声明 `harnessKit` 或额外登记。Gateway 依据 AppKit token 对应的
+`bundleId` 隔离外部 App 的线程、运行结果和事件访问；内置 Harness 与侧边栏继续使用默认空间，
+共享现有记录。App 使用 AppKit token 调用 Gateway 的 `/harnesskit/*`，不需要实现 Harness HTTP
+API。所有 App 可读取当前引擎状态；切换共享引擎和读取全局运维快照仍属于宿主管理操作。
+宿主可为指定 App 设置 `harnessKit.toolkit: false` 来禁用其工具。自定义宿主仍可通过
 `HarnessKitClientRegistry` 注入 client。
 升级前没有记录 App 归属的历史线程会留在默认空间，不会自动迁移到外部 App。
 
