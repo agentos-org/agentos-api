@@ -4,7 +4,7 @@ version: 0.4.0
 repository: https://github.com/agentos-org/agentos-api
 
 environment:
-  sdk: ">=3.8.0 <4.0.0"
+  sdk: ">=3.13.0 <4.0.0"
 
 dependencies:
   shelf: ^1.4.2
@@ -17,8 +17,8 @@ dependencies:
   unique_id_dart: ^1.0.0
   pub_semver: ^2.2.0
   liteagent_sdk_dart: ^0.4.0
-  opentool_dart: ^2.1.0
-  opentool_daemon: ^0.5.0
+  opentool_dart: ^3.0.0
+  opentool_daemon: ^0.5.3
   agentos_kernel: ^0.2.0
 
 dev_dependencies:
