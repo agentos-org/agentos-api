@@ -16,10 +16,10 @@ dependencies:
   path: ^1.9.0
   unique_id_dart: ^1.0.0
   pub_semver: ^2.2.0
-  liteagent_sdk_dart: ^0.4.0
+  liteagent_sdk_dart: ^0.4.1
   opentool_dart: ^3.0.0
   opentool_daemon: ^0.5.3
-  agentos_kernel: ^0.2.0
+  agentos_kernel: ^0.2.1
 
 dev_dependencies:
   http: ^1.2.2
@@ -27,4 +27,3 @@ dev_dependencies:
   test: ^1.25.6
   build_runner: ^2.4.8
   json_serializable: ^6.7.1
-  hive_generator: ^2.0.1
