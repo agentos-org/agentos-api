@@ -672,6 +672,17 @@ enum TransferState {
   cancelled,
 }
 
+/// Who initiated the cancellation of a [TransferSession].
+///
+/// Only meaningful when [TransferSession.state] is [TransferState.cancelled].
+enum TransferCancelSource {
+  /// Cancelled by this device (e.g. the user tapped cancel).
+  local,
+
+  /// Cancelled by the remote peer (sender or receiver on the other side).
+  peer,
+}
+
 /// Per-file transfer state.
 enum FileTransferState { pending, transferring, completed, failed }
 
@@ -686,6 +697,10 @@ class TransferSession {
   final String? targetBundleId;
   final List<TransferFileInfo> files;
   String? errorMessage;
+
+  /// Who cancelled this session. Set only when [state] is
+  /// [TransferState.cancelled]; not serialized by [toJson].
+  TransferCancelSource? cancelSource;
 
   /// Per-file progress: key is fileName, value is 0.0~1.0.
   final Map<String, double> fileProgress;
@@ -703,6 +718,7 @@ class TransferSession {
     this.targetBundleId,
     required this.files,
     this.errorMessage,
+    this.cancelSource,
     Map<String, double>? fileProgress,
     Map<String, FileTransferState>? fileStates,
   }) : fileProgress = fileProgress ?? {},
