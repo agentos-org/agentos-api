@@ -204,4 +204,8 @@ class AppEventType {
 
   /// AuthKit user login state changed (login / logout / account switch).
   static const String authkitUserChanged = 'authkit.user.changed';
+
+  /// The user activated (clicked) a NotifyKit notification published by this
+  /// App in the AgentOS shell. The App decides how to navigate to `subject`.
+  static const String notificationActivated = 'notification.activated';
 }

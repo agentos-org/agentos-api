@@ -1441,6 +1441,23 @@ which a declaration that returned `starting` becomes callable, and stop using a
 tool after `toolkit.tool.unavailable` until `toolkit.tool.available` arrives.
 The `app.command.requested` type is reserved for future commands sent to apps.
 
+When the user activates (clicks) a notification that an App published through
+NotifyKit in the AgentOS Desktop shell, the shell launches or focuses the App
+and then emits `notification.activated` on that App's AppKit channel:
+
+```text
+id: evt-...
+event: appEvent
+data: {"version":1,"id":"evt-...","type":"notification.activated","source":"notifykit","time":"2026-07-15T10:40:00.000Z","subject":"job-123","data":{"notificationId":"ntf-...","eventType":"task.completed","subjectId":"job-123"}}
+
+```
+
+`subject` is the `subjectId` the App supplied to NotifyKit, or the notification
+id when none was supplied. The shell never interprets `subjectId`; the App
+decides how to navigate to it. Because AppKit queues events for an App that has
+not subscribed yet, an App that was not running when the user clicked still
+receives the event right after `welcome`.
+
 If the token is missing or invalid, returns `401`.
 
 ## NotifyKit
@@ -1475,6 +1492,12 @@ without a subject are collapsed when their content repeats within the short
 deduplication window. The response contains the platform-owned notification
 record and its aggregate count. `429` means the App source exceeded its rate
 limit.
+
+AgentOS Desktop forwards NotifyKit notifications to the native macOS /
+Windows notification center while its window is not in the foreground. This is
+a presentation detail owned by the shell: Apps cannot request buttons, sounds,
+or persistence. Clicking a native notification opens the publishing App and
+emits `notification.activated` to it (see AppKit events above).
 
 ## AuthKit
 

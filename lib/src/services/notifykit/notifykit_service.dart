@@ -50,10 +50,18 @@ class NotifyKitService {
   final Map<String, List<DateTime>> _sourceEvents = <String, List<DateTime>>{};
   final StreamController<NotifyKitSnapshot> _events =
       StreamController<NotifyKitSnapshot>.broadcast();
+  final StreamController<NotifyKitNotification> _published =
+      StreamController<NotifyKitNotification>.broadcast();
   DateTime? _lastSeenAt;
   bool _disposed = false;
 
   Stream<NotifyKitSnapshot> get stream => _events.stream;
+
+  /// Emits every accepted publication (a new record or a folded repeat) as the
+  /// platform-owned record. Unlike [stream], this carries exactly the delta,
+  /// so shell presenters (for example native OS notifications) do not need to
+  /// diff snapshots. It is a broadcast stream without replay.
+  Stream<NotifyKitNotification> get published => _published.stream;
 
   NotifyKitSnapshot snapshot({int limit = 100}) {
     final groups = _buildGroups();
@@ -124,6 +132,7 @@ class NotifyKitService {
     if (_disposed) return;
     _disposed = true;
     await _events.close();
+    await _published.close();
   }
 
   NotifyKitNotification _publish({
@@ -181,6 +190,7 @@ class NotifyKitService {
       _items.removeAt(0);
     }
     _emit(snapshot());
+    if (!_disposed && !_published.isClosed) _published.add(notification);
     return notification;
   }
 

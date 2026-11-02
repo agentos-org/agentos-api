@@ -183,6 +183,38 @@ class AppKitService {
     }
   }
 
+  /// Tells [bundleId] that the user activated one of its NotifyKit
+  /// notifications in the shell.
+  ///
+  /// The event is delivered like any other `appEvent`: immediately when the App
+  /// is subscribed, otherwise queued (bounded) and replayed right after
+  /// `welcome` once the App connects. That makes "click notification -> shell
+  /// launches the App -> App receives the activation" work for an App that was
+  /// not running when the user clicked.
+  ///
+  /// `subject` is the App-provided `subjectId` when present, otherwise the
+  /// notification id. Only identifiers the App itself supplied (or the opaque
+  /// notification id) are forwarded; no other App's content is exposed.
+  AppEventDto publishNotificationActivated(
+    String bundleId, {
+    required String notificationId,
+    required String eventType,
+    String? subjectId,
+  }) {
+    final event = createAppEvent(
+      type: AppEventType.notificationActivated,
+      source: 'notifykit',
+      subject: subjectId ?? notificationId,
+      data: <String, dynamic>{
+        'notificationId': notificationId,
+        'eventType': eventType,
+        'subjectId': ?subjectId,
+      },
+    );
+    publishAppEvent(bundleId, event);
+    return event;
+  }
+
   /// Broadcasts daemon lifecycle changes only to apps that opted in and only
   /// to the tool IDs allowed by their subscription filter.
   void publishToolLifecycleEvent({

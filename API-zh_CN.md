@@ -1409,6 +1409,21 @@ register 返回 `starting` 的声明，App 应以 `toolkit.provision.succeeded` 
 正式可调用的时点；收到 `toolkit.tool.unavailable` 后停止使用该 tool，直到收到
 `toolkit.tool.available`。`app.command.requested` 类型预留给未来发送到 App 的指令。
 
+当用户在 AgentOS Desktop 中点击了 App 通过 NotifyKit 发布的通知时，桌面会先启动或
+激活该 App，然后在该 App 的 AppKit 通道上推送 `notification.activated`：
+
+```text
+id: evt-...
+event: appEvent
+data: {"version":1,"id":"evt-...","type":"notification.activated","source":"notifykit","time":"2026-07-15T10:40:00.000Z","subject":"job-123","data":{"notificationId":"ntf-...","eventType":"task.completed","subjectId":"job-123"}}
+
+```
+
+`subject` 是 App 提交给 NotifyKit 的 `subjectId`；未提供时为通知 id。桌面不会解释
+`subjectId`，由 App 自行决定如何定位到对应内容。由于 AppKit 会为尚未订阅的 App 暂存
+事件，用户点击时 App 尚未运行的情况下，App 在连接成功后也会在 `welcome` 之后立即
+收到该事件。
+
 如果 token 缺失或无效，直接返回 `401`。
 
 ## NotifyKit
@@ -1439,6 +1454,11 @@ App 不能传入优先级、分组 ID、去重 key 或展示策略。
 带有相同 `subjectId` 的重复事件会合并为一条。没有 subject 的事件在短去重窗口内
 内容重复时也会合并。响应中的通知记录和累计次数均由平台生成；`429` 表示该 App
 超过了通知速率限制。
+
+AgentOS Desktop 会在主窗口不在前台时，把 NotifyKit 通知转发到 macOS / Windows
+原生通知中心。这属于桌面壳自己的展示策略：App 不能要求按钮、提示音或常驻显示。
+点击原生通知会打开发布该通知的 App，并向其推送 `notification.activated`（见上文
+AppKit 事件）。
 
 ## AuthKit
 

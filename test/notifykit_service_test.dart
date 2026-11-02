@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:agentos_api/agentos_api.dart';
 import 'package:shelf/shelf.dart';
 import 'package:test/test.dart';
@@ -147,6 +149,84 @@ void main() {
       ),
     );
     expect(service.snapshot().hasUnread, isTrue);
+  });
+
+  test('published emits one delta per accepted publication', () async {
+    final received = <NotifyKitNotification>[];
+    final subscription = service.published.listen(received.add);
+
+    final first = service.publishSystem(
+      source: 'nearby_transfer',
+      eventType: 'transfer.completed',
+      title: 'Received',
+      message: '2 files',
+      level: NotifyKitLevel.success,
+      subjectId: 'session-1',
+    );
+    final folded = service.publishSystem(
+      source: 'nearby_transfer',
+      eventType: 'transfer.completed',
+      title: 'Received',
+      message: '3 files',
+      level: NotifyKitLevel.success,
+      subjectId: 'session-1',
+    );
+    // markSeen publishes a snapshot but must not create a delta.
+    service.markSeen();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(received, hasLength(2));
+    expect(received.first.id, first.id);
+    expect(received.last.id, folded.id);
+    expect(received.last.count, 2);
+    expect(received.last.message, '3 files');
+    expect(received.last.category, 'transfer');
+    expect(received.last.sourceType, 'system');
+    await subscription.cancel();
+  });
+
+  test('AppKit queues notification.activated until the App subscribes', () async {
+    final appKit = AppKitService();
+    final token = appKit
+        .registerBundle(AppBundleDto(bundleId: 'com.example.app'))
+        .token;
+
+    final event = appKit.publishNotificationActivated(
+      'com.example.app',
+      notificationId: 'ntf-1',
+      eventType: 'task.completed',
+      subjectId: 'job-123',
+    );
+    expect(event.type, AppEventType.notificationActivated);
+    expect(event.subject, 'job-123');
+
+    final received = <EventDto>[];
+    final subscription = appKit.subscribe(token).listen(received.add);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(received.map((item) => item.event), ['welcome', 'appEvent']);
+    final data = jsonDecode(received.last.data) as Map<String, dynamic>;
+    expect(data['type'], 'notification.activated');
+    expect(data['source'], 'notifykit');
+    expect(data['subject'], 'job-123');
+    expect(data['data'], {
+      'notificationId': 'ntf-1',
+      'eventType': 'task.completed',
+      'subjectId': 'job-123',
+    });
+
+    // Subscribed Apps receive subsequent activations immediately and fall back
+    // to the notification id when the App supplied no subject.
+    appKit.publishNotificationActivated(
+      'com.example.app',
+      notificationId: 'ntf-2',
+      eventType: 'sync.completed',
+    );
+    await Future<void>.delayed(Duration.zero);
+    final second = jsonDecode(received.last.data) as Map<String, dynamic>;
+    expect(second['subject'], 'ntf-2');
+    expect((second['data'] as Map).containsKey('subjectId'), isFalse);
+    await subscription.cancel();
   });
 
   test(

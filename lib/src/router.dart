@@ -61,6 +61,7 @@ Handler createGatewayHandler({
   void Function(String token)? onHarnessKitReady,
   NotifyKitService? notifyKitService,
   void Function(NotifyKitService service)? onNotifyKitReady,
+  void Function(AppKitService service)? onAppKitReady,
 }) {
   final router = createGatewayRouter(
     serviceLocator: serviceLocator,
@@ -76,6 +77,7 @@ Handler createGatewayHandler({
     onHarnessKitReady: onHarnessKitReady,
     notifyKitService: notifyKitService,
     onNotifyKitReady: onNotifyKitReady,
+    onAppKitReady: onAppKitReady,
   );
 
   var pipeline = const Pipeline();
@@ -118,6 +120,7 @@ Router createGatewayRouter({
   void Function(String token)? onHarnessKitReady,
   NotifyKitService? notifyKitService,
   void Function(NotifyKitService service)? onNotifyKitReady,
+  void Function(AppKitService service)? onAppKitReady,
 }) {
   final instanceId = _createGatewayInstanceId();
   requestLogger.info('Creating gateway router instanceId=$instanceId');
@@ -132,6 +135,9 @@ Router createGatewayRouter({
 
   // AppKit service (shared instance for token-bundleId resolution)
   final appKitService = AppKitService();
+  // Lets the host push shell-originated events (for example
+  // `notification.activated`) to Apps through their AppKit SSE channel.
+  onAppKitReady?.call(appKitService);
 
   // AgentKit API (LiteAgent SDK, requires Token)
   final agentKitController = AgentKitController(
