@@ -64,28 +64,16 @@ class HarnessKitController {
     }
     final isHarnessApp = appBundleId == bundleId;
     final scope = isHarnessApp ? null : _HarnessKitBundleScope(appBundleId);
-    final isEngineControlPath = RegExp(
-      r'^/v1/runtime/harness-engine/*$',
-    ).hasMatch(path);
+    final isEngineControlPath = RegExp(r'^/v1/runtime/harness-engine/*$')
+        .hasMatch(path);
     final isEngineStatusRead =
         request.method.toUpperCase() == 'GET' && isEngineControlPath;
     if (!isHarnessApp &&
         ((isEngineControlPath && !isEngineStatusRead) ||
-            path == '/v1/ops/snapshot')) {
-      requestLogger.warning(
-        'HarnessKit: host runtime access denied for $appBundleId.',
-      );
-      return Response(
-        403,
-        body: jsonEncode({
-          'error': {
-            'code': 'harness_host_access_forbidden',
-            'message':
-                'Only the built-in Harness App can access host runtime controls',
-          },
-        }),
-        headers: const {'content-type': 'application/json'},
-      );
+            path == '/v1/ops/snapshot' ||
+            RegExp(r'^/v1/workspaces(?:/|$)').hasMatch(path) ||
+            RegExp(r'^/admin/api/harness(?:/|$)').hasMatch(path))) {
+      return _hostAccessDenied(appBundleId);
     }
     final client = isHarnessApp
         ? _client ?? _clientRegistry?.resolve(appBundleId)
@@ -106,11 +94,41 @@ class HarnessKitController {
 
     try {
       final requestBody = await _readBodyBytes(request);
+      if (!isHarnessApp && _containsHostWorkspaceBinding(path, requestBody)) {
+        return _hostAccessDenied(appBundleId);
+      }
       final scopedPath = scope?.scopeRequestPath(path) ?? path;
       final scopedQuery =
           scope?.scopeRequestQuery(path, request.url.queryParameters) ??
           request.url.queryParameters;
-      final scopedBody = scope?.scopeRequestBody(requestBody) ?? requestBody;
+      if (scope != null &&
+          _mayExecuteThreadWork(request.method, path, requestBody)) {
+        final threadPath = scopedPath.substring(0, scopedPath.lastIndexOf('/'));
+        final thread = await client.send(
+          method: 'GET',
+          path: threadPath,
+          actorBundleId: appBundleId,
+        );
+        if (thread.statusCode != 404) {
+          if (thread.statusCode != 200 || thread.bodyBytes == null) {
+            throw StateError('Cannot verify the thread workspace binding');
+          }
+          final snapshot = jsonDecode(utf8.decode(thread.bodyBytes!));
+          if (snapshot is! Map) {
+            throw StateError('Cannot verify the thread workspace binding');
+          }
+          if (snapshot['workspaceContext'] != null) {
+            return _hostAccessDenied(appBundleId);
+          }
+        }
+      }
+      final scopedBody =
+          scope?.scopeRequestBody(
+            requestBody,
+            method: request.method,
+            path: path,
+          ) ??
+          requestBody;
       final response = await client.send(
         method: request.method,
         path: scopedPath,
@@ -191,6 +209,60 @@ class HarnessKitController {
 
   String _runOwnerKey(String appBundleId, String runtimeRunId) =>
       '$appBundleId\u0000$runtimeRunId';
+
+  Response _hostAccessDenied(String appBundleId) {
+    requestLogger.warning(
+      'HarnessKit: host runtime access denied for $appBundleId.',
+    );
+    return Response(
+      403,
+      body: jsonEncode({
+        'error': {
+          'code': 'harness_host_access_forbidden',
+          'message':
+              'Only the built-in Harness App can access host runtime controls',
+        },
+      }),
+      headers: const {'content-type': 'application/json'},
+    );
+  }
+
+  bool _containsHostWorkspaceBinding(String path, List<int>? body) {
+    if (body == null ||
+        body.isEmpty ||
+        !RegExp(r'^/v1/threads/[^/]+/(?:runs|commands)$').hasMatch(path)) {
+      return false;
+    }
+    try {
+      final value = jsonDecode(utf8.decode(body));
+      if (value is! Map) return false;
+      return value['type'] == 'set_thread_workspace' ||
+          value['workspaceId'] != null;
+    } on FormatException {
+      return false;
+    }
+  }
+
+  bool _mayExecuteThreadWork(String method, String path, List<int>? body) {
+    if (method.toUpperCase() != 'POST' ||
+        !RegExp(r'^/v1/threads/[^/]+/(?:runs|commands)$').hasMatch(path)) {
+      return false;
+    }
+    if (path.endsWith('/runs')) return true;
+    if (body == null || body.isEmpty) return true;
+    try {
+      final value = jsonDecode(utf8.decode(body));
+      if (value is! Map) return true;
+      return !const {
+        'stop_turn',
+        'pause_run',
+        'discard_draft',
+        'reorder_draft',
+      }.contains(value['type']);
+    } on FormatException {
+      return true;
+    }
+  }
 
   Stream<List<int>> _scopeEventStream(
     Stream<List<int>> source,
@@ -361,7 +433,11 @@ final class _HarnessKitBundleScope {
     return knownThreadId != null && knownThreadId.startsWith(_prefix);
   }
 
-  List<int>? scopeRequestBody(List<int>? body) {
+  List<int>? scopeRequestBody(
+    List<int>? body, {
+    required String method,
+    required String path,
+  }) {
     if (body == null || body.isEmpty) return body;
     try {
       final decoded = jsonDecode(utf8.decode(body));
@@ -369,13 +445,22 @@ final class _HarnessKitBundleScope {
       final value = decoded.map<String, Object?>(
         (key, value) => MapEntry(key.toString(), value),
       );
-      for (final key in const <String>['threadId']) {
+      for (final key in <String>[
+        'threadId',
+        if (method.toUpperCase() == 'POST' &&
+            RegExp(r'^/v1/threads/*$').hasMatch(path))
+          'sourceThreadId',
+      ]) {
         final id = value[key];
         if (id is String) value[key] = _toRuntimeId(id);
       }
-      for (final key in const <String>['runId', 'commandId', 'requestId']) {
+      for (final key in const <String>['commandId', 'requestId']) {
         final id = value[key];
         if (id is String) value[key] = _toRuntimeId(id);
+      }
+      final runId = value['runId'];
+      if (runId is String) {
+        value['runId'] = _toRuntimeScopedId(runId);
       }
       final targetRunId = value['targetRunId'];
       if (targetRunId is String) {
@@ -393,7 +478,7 @@ final class _HarnessKitBundleScope {
     required int statusCode,
     required List<int>? body,
   }) {
-    if (body == null || body.isEmpty || statusCode < 200 || statusCode >= 300) {
+    if (body == null || body.isEmpty) {
       return body;
     }
     Object? decoded;
@@ -406,6 +491,14 @@ final class _HarnessKitBundleScope {
     final value = decoded.map<String, Object?>(
       (key, value) => MapEntry(key.toString(), value),
     );
+    final rejectedReceipt =
+        statusCode == 400 &&
+        RegExp(r'^/v1/threads/[^/]+/commands$').hasMatch(path) &&
+        value['commandId'] is String &&
+        value['status'] == 'rejected';
+    if ((statusCode < 200 || statusCode >= 300) && !rejectedReceipt) {
+      return body;
+    }
 
     if (method.toUpperCase() == 'GET' && path == '/v1/threads') {
       final threads = value['threads'];
@@ -420,16 +513,17 @@ final class _HarnessKitBundleScope {
               final scopedThread = thread.map<String, Object?>(
                 (key, value) => MapEntry(key.toString(), value),
               );
-              scopedThread['threadId'] = _toPublicScopedId(
-                scopedThread['threadId']! as String,
-              );
-              _rewriteProtocolFields(scopedThread);
+              _rewriteThreadSnapshot(scopedThread);
               return scopedThread;
             })
             .toList();
       }
     } else {
-      _rewriteProtocolFields(value);
+      if (value['messages'] is List && value['threadId'] is String) {
+        _rewriteThreadSnapshot(value);
+      } else {
+        _rewriteProtocolFields(value);
+      }
       final summary = value['summary'];
       if (summary is Map) {
         final summaryMap = summary.map<String, Object?>(
@@ -440,6 +534,50 @@ final class _HarnessKitBundleScope {
       }
     }
     return utf8.encode(jsonEncode(value));
+  }
+
+  void _rewriteThreadSnapshot(Map<String, Object?> thread) {
+    _rewriteProtocolFields(thread);
+    final summaries = thread['runSummaries'];
+    if (summaries is List) {
+      thread['runSummaries'] = summaries.map((summary) {
+        if (summary is! Map) return summary;
+        final scoped = summary.map<String, Object?>(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+        _rewriteProtocolFields(scoped);
+        return scoped;
+      }).toList();
+    }
+    final messages = thread['messages'];
+    if (messages is List) {
+      thread['messages'] = messages.map((message) {
+        if (message is! Map) return message;
+        final scoped = message.map<String, Object?>(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+        final metadata = scoped['metadata'];
+        if (metadata is Map) {
+          final scopedMetadata = metadata.map<String, Object?>(
+            (key, value) => MapEntry(key.toString(), value),
+          );
+          final runId = scopedMetadata['harnessRunId'];
+          if (runId is String) {
+            scopedMetadata['harnessRunId'] = _toPublicRunId(runId);
+          }
+          final outcome = scopedMetadata['harnessOutcome'];
+          if (outcome is Map) {
+            final scopedOutcome = outcome.map<String, Object?>(
+              (key, value) => MapEntry(key.toString(), value),
+            );
+            _rewriteProtocolFields(scopedOutcome);
+            scopedMetadata['harnessOutcome'] = scopedOutcome;
+          }
+          scoped['metadata'] = scopedMetadata;
+        }
+        return scoped;
+      }).toList();
+    }
   }
 
   void _rewriteProtocolFields(Map<String, Object?> value) {

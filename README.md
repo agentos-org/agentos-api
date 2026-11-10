@@ -25,7 +25,9 @@ registered separately. The Gateway scopes external Apps' threads, runs, and
 event access by the AppKit `bundleId`; the built-in Harness App and Shell
 sidebar keep sharing their existing default namespace. Apps can read the
 current engine status, while switching the shared engine and reading the
-global operational snapshot remain host-management operations. Apps call
+global operational snapshot, managing host workspaces, binding threads to host
+workspaces, and changing host Harness settings remain host-management operations.
+External Apps can fork only their own threads. Apps call
 `/harnesskit/*` with their AppKit token and do not implement a Harness HTTP
 server. Each run can restrict its available tools through `toolPolicy`. Custom
 hosts may inject HarnessKit clients through

@@ -33,7 +33,9 @@ replaces the AppKit token with the sidecar-only token and logically isolates
 external Apps' threads, runs, and event access by the authenticated
 `bundleId`. The built-in Harness and Shell sidebar keep using the default
 namespace and share their existing history. Only the built-in Harness App can
-access runtime controls and the global operational snapshot. Apps call this
+access runtime controls, the global operational snapshot, host workspace APIs,
+workspace bindings, and host Harness settings. External Apps may fork only
+their own scoped threads. Apps call this
 Gateway API and do not provide a Harness HTTP server. Each run supplies its own
 tool policy. AppKit token validity controls access; stopping an App backend does
 not stop the shared runtime. Legacy threads without recorded App ownership

@@ -28,7 +28,8 @@ AgentOS 只运行一个宿主级 Harness runtime。任何有效 AppKit token 都
 AppKit token，并将已验证的 AppKit `bundleId` 作为 actor 身份转发。App 只调用 Gateway API，不需要
 提供 Harness HTTP 服务。Gateway 在共享 runtime 和数据库内按 `bundleId` 为外部 App 隔离线程、
 运行记录及事件访问；内置 Harness 与侧边栏沿用默认命名空间，因此继续共享原有记录。只有内置
-Harness App 能访问 runtime 控制和全局运维快照；切换引擎会影响所有接入 App 的后续请求。每次运行
+Harness App 能访问 runtime 控制、全局运维快照、宿主工作区及绑定和宿主 Harness 设置；外部 App
+只能分支自己作用域内的会话。切换引擎会影响所有接入 App 的后续请求。每次运行
 可通过请求中的 `toolPolicy` 限定可用工具。访问权限由 AppKit token 的有效性决定，停止 App 后端
 不会停止共享 runtime。升级前没有记录 App 归属的历史线程会保留在默认空间，不会自动归属到某个外部 App。
 

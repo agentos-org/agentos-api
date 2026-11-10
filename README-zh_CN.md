@@ -23,7 +23,8 @@ AgentOS Runtime 托管唯一的 HarnessKit sidecar 和 runtime。任何完成 Ap
 使用同一进程和数据库，无需声明 `harnessKit` 或额外登记。Gateway 依据 AppKit token 对应的
 `bundleId` 隔离外部 App 的线程、运行结果和事件访问；内置 Harness 与侧边栏继续使用默认空间，
 共享现有记录。App 使用 AppKit token 调用 Gateway 的 `/harnesskit/*`，不需要实现 Harness HTTP
-API。所有 App 可读取当前引擎状态；切换共享引擎和读取全局运维快照仍属于宿主管理操作。
+API。所有 App 可读取当前引擎状态；切换共享引擎、读取全局运维快照、管理或绑定宿主工作区
+以及修改宿主 Harness 设置均属于宿主管理操作。外部 App 只能分支自己的会话。
 调用方可通过每次请求中的 `toolPolicy.allowedToolIds` 限制本次运行可用的工具。自定义宿主仍可
 通过 `HarnessKitClientRegistry` 注入 client。
 升级前没有记录 App 归属的历史线程会留在默认空间，不会自动迁移到外部 App。
